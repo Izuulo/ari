@@ -1140,19 +1140,47 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> R
     ]
 }
 
-/// The last 12 samples that carry a value, as (t, value), oldest first.
+const TREND_MS: u64 = 30 * 60_000;
+
+/// Samples from the 30 min before the newest one that carry a value, as (t, value).
 fn recent(
     samples: &[crate::burn::Sample],
     f: fn(&crate::burn::Sample) -> Option<f64>,
 ) -> Vec<(u64, f64)> {
-    let mut v: Vec<_> = samples
+    let v: Vec<_> = samples.iter().filter_map(|s| Some((s.t, f(s)?))).collect();
+    let from = v
         .iter()
-        .rev()
-        .filter_map(|s| Some((s.t, f(s)?)))
-        .take(12)
+        .map(|p| p.0)
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(TREND_MS);
+    v.into_iter().filter(|p| p.0 >= from).collect()
+}
+
+/// 12 equal time buckets over the window, empty ones carrying the last value; none if flat.
+fn trend(pts: &[(u64, f64)]) -> Option<String> {
+    let from = pts.iter().map(|p| p.0).max()?.saturating_sub(TREND_MS);
+    let mut buckets = [None; 12];
+    for &(t, v) in pts {
+        buckets[((t.saturating_sub(from) * 12 / TREND_MS) as usize).min(11)] = Some(v);
+    }
+    let mut last = None;
+    let v: Vec<f64> = buckets
+        .iter()
+        .filter_map(|b| {
+            last = b.or(last);
+            last
+        })
         .collect();
-    v.reverse();
-    v
+    (v.len() >= 3 && v.iter().any(|x| *x != v[0])).then(|| crate::bar::spark(&v))
+}
+
+/// $/h from the first to the last point, over at least 10 min.
+fn rate(pts: &[(u64, f64)]) -> Option<f64> {
+    let first = pts.iter().min_by_key(|p| p.0)?;
+    let last = pts.iter().max_by_key(|p| p.0)?;
+    let span = last.0.saturating_sub(first.0);
+    (span >= 10 * 60_000).then(|| ((last.1 - first.1) / (span as f64 / 3.6e6)).max(0.0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1161,10 +1189,8 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         (Some(used), Some(size)) => format!("  {}/{}", tokens_k(used), tokens_k(size)),
         _ => String::new(),
     };
-    let ctxs = recent(&x.samples, |s| s.ctx);
-    if ctxs.len() >= 3 {
-        let v: Vec<f64> = ctxs.iter().map(|p| p.1).collect();
-        ctx_tail += &format!(" {}", crate::bar::spark(&v));
+    if let Some(t) = trend(&recent(&x.samples, |s| s.ctx)) {
+        ctx_tail += &format!(" {t}");
     }
     let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
@@ -1392,17 +1418,13 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
         None => "—".into(),
     };
     let costs = recent(&x.samples, |s| s.cost);
-    let hours = costs
-        .last()
-        .zip(costs.first())
-        .map_or(0.0, |(l, f)| (l.0 - f.0) as f64 / 3.6e6);
-    let cost = if costs.len() >= 3 && hours > 0.0 {
-        let rate = ((costs[costs.len() - 1].1 - costs[0].1) / hours).max(0.0);
-        let v: Vec<f64> = costs.iter().map(|p| p.1).collect();
-        format!("{cost} · ${rate:.2}/h {}", crate::bar::spark(&v))
-    } else {
-        cost
-    };
+    let mut cost = cost;
+    if let Some(r) = rate(&costs) {
+        cost += &format!(" · ${r:.2}/h");
+    }
+    if let Some(t) = trend(&costs) {
+        cost += &format!(" {t}");
+    }
     rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
 }
@@ -1746,20 +1768,21 @@ mod tests {
 
     #[test]
     fn trends() {
-        let mk = |n: usize| Extras {
-            samples: (0..n as u64)
-                .map(|i| crate::burn::Sample {
-                    t: i * 1_800_000,
-                    ctx: Some(10.0 * (i + 1) as f64),
-                    cost: Some(1.0 + i as f64),
+        let mk = |pts: Vec<(u64, f64, f64)>| Extras {
+            samples: pts
+                .into_iter()
+                .map(|(t, ctx, cost)| crate::burn::Sample {
+                    t,
+                    ctx: Some(ctx),
+                    cost: Some(cost),
                     ..Default::default()
                 })
                 .collect(),
             ..Default::default()
         };
         let u = Usage {
-            cost_usd: Some(3.0),
-            ctx_pct: Some(30.0),
+            cost_usd: Some(5.0),
+            ctx_pct: Some(46.0),
             ..Default::default()
         };
         let go = |x: &Extras| {
@@ -1776,17 +1799,52 @@ mod tests {
                 false,
             ))
         };
-        let out = go(&mk(3));
-        let ctx = out.lines().find(|l| l.contains("ctx")).unwrap();
+        let row = |out: &str, k: &str| out.lines().find(|l| l.contains(k)).unwrap().to_string();
+        let sparks = |l: &str| l.chars().filter(|c| "▁▂▃▄▅▆▇█".contains(*c)).count();
+        // A sample every 6 s for 40 min: flat for 10 min, then ctx rising and
+        // cost stepping $0.83 every 5 min ($10/h, but a burst in the last minute).
+        let min = 60_000;
+        let pts = |flat_ctx: bool| {
+            (0..=400u64)
+                .map(|i| i * 6_000)
+                .map(|t| {
+                    let on = t.saturating_sub(10 * min);
+                    let ctx = if flat_ctx {
+                        46.0
+                    } else {
+                        20.0 + on as f64 / 1e5
+                    };
+                    (t, ctx, (on / (5 * min)) as f64 * 10.0 / 12.0)
+                })
+                .collect::<Vec<_>>()
+        };
+        let out = go(&mk(pts(false)));
+        let cost = row(&out, "cost");
         assert!(
-            ctx.contains(&format!("30% {}", crate::bar::spark(&[10., 20., 30.]))),
-            "{ctx}"
+            cost.contains("$5.00 · $10.00/h ▁"),
+            "older samples ignored: {cost}"
         );
-        let cost = out.lines().find(|l| l.contains("cost")).unwrap();
-        assert!(cost.contains("$3.00 · $2.00/h ▁▄█"), "{cost}");
-        let out = go(&mk(2));
-        assert!(!out.contains("/h"), "{out}");
-        assert!(!out.contains('▁'), "{out}");
+        assert!(cost.trim_end_matches([' ', '│']).ends_with('█'), "{cost}");
+        assert_eq!(sparks(&cost), 12, "{cost}");
+        let ctx = row(&out, "ctx");
+        assert!(ctx.contains(" ▁") && sparks(&ctx) == 12, "{ctx}");
+        let flat = go(&mk(pts(true)));
+        assert_eq!(sparks(&row(&flat, "ctx")), 0, "flat ctx draws no sparkline");
+        // Under 10 min of samples: no rate.
+        let short = go(&mk(pts(false)
+            .into_iter()
+            .filter(|p| p.0 >= 31 * min)
+            .collect()));
+        assert!(!short.contains("/h"), "{short}");
+        // Two points: no sparkline either.
+        let two = go(&mk(vec![(0, 10.0, 1.0), (60_000, 20.0, 2.0)]));
+        assert!(!two.contains('▁'), "{two}");
+        // Out-of-order timestamps must not panic.
+        go(&mk(vec![
+            (5 * min, 30.0, 3.0),
+            (1_000, 10.0, 1.0),
+            (20 * min, 20.0, 2.0),
+        ]));
     }
 
     fn render_x(st: &State, x: &Extras, w: u16, h: u16) -> String {
