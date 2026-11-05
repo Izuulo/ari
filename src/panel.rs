@@ -194,6 +194,15 @@ pub fn lines(
         color,
         inner: w.saturating_sub(4),
     };
+    // Wide panes split into two columns (not the recap view): agents/errors | usage/session/turns.
+    let two = w >= 120 && !(view.recap && x.recap.is_some());
+    let col = |inner| Ctx { color, inner };
+    let (lc, rc) = if two {
+        let l = (w - 7) / 2;
+        (col(l), col(w - 7 - l))
+    } else {
+        (col(c.inner), col(c.inner))
+    };
     let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
@@ -241,23 +250,23 @@ pub fn lines(
         },
         Section {
             title: Some("agents"),
-            rows: agents(st, x, &c, view, now),
+            rows: agents(st, x, &lc, view, now),
         },
         Section {
             title: Some("errors"),
-            rows: errors(st, &c, view, now),
+            rows: errors(st, &lc, view, now),
         },
         Section {
             title: Some("usage"),
-            rows: usage(st, u, x, cfg, &c, now),
+            rows: usage(st, u, x, cfg, &rc, now),
         },
         Section {
             title: Some("session"),
-            rows: session(st, u, x, cfg, &c, now),
+            rows: session(st, u, x, cfg, &rc, now),
         },
         Section {
             title: Some("turns"),
-            rows: turns(st, x, &c, now),
+            rows: turns(st, x, &rc, now),
         },
     ];
     sections.retain(|s| s.title != Some("turns") || !s.rows.is_empty());
@@ -271,7 +280,18 @@ pub fn lines(
         });
         sections.extend(recap_sections(r, &c, false));
     }
-    collapse(&mut sections, height as usize);
+    let cols = if two {
+        let mut right = sections.split_off(3);
+        let mut left = sections.split_off(1);
+        // Each column gets the height left under the full-width header rows.
+        let h = (height as usize).saturating_sub(sections[0].rows.len());
+        collapse(&mut left, h);
+        collapse(&mut right, h);
+        Some((left, right))
+    } else {
+        collapse(&mut sections, height as usize);
+        None
+    };
 
     let border = c.dim("");
     let bstyle = border.style;
@@ -309,7 +329,10 @@ pub fn lines(
     title.push(Span::styled("─".repeat(fill), bstyle));
     title.extend(tail);
     title.push(Span::styled(right, bstyle));
-    frame(title, sections, &c, w, cfg.ascii)
+    match cols {
+        Some((l, r)) => frame_two(title, sections.remove(0), l, r, &c, w, cfg.ascii),
+        None => frame(title, sections, &c, w, cfg.ascii),
+    }
 }
 
 /// The box around the sections: `title` is the full top row, then `├─ name ─┤` headers,
@@ -338,6 +361,76 @@ fn frame(title: Row, sections: Vec<Section>, c: &Ctx, w: usize, ascii: bool) -> 
     }
     out.push(Line::from(Span::styled(
         format!("╰{}╯", "─".repeat(w.saturating_sub(2))),
+        bstyle,
+    )));
+    if ascii {
+        crate::ascii::map_lines(out)
+    } else {
+        out
+    }
+}
+
+/// [`frame`] with two columns under the full-width `top`:
+/// `│ left │ right │`, headers joined as `├─ agents ──┼─ usage ──┤`, bottom `╰──┴──╯`.
+fn frame_two(
+    title: Row,
+    top: Section,
+    left: Vec<Section>,
+    right: Vec<Section>,
+    c: &Ctx,
+    w: usize,
+    ascii: bool,
+) -> Vec<Line<'static>> {
+    let bstyle = c.dim("").style;
+    let lw = (w - 7) / 2;
+    let rw = w - 7 - lw;
+    let mut out = frame(title, vec![top], c, w, false);
+    out.pop(); // the bottom edge; ours has the divider in it
+    // A column as cells `cw + 2` wide: (is a header, spans).
+    let cells = |secs: Vec<Section>, cw: usize| {
+        let mut v: Vec<(bool, Row)> = Vec::new();
+        for sec in secs {
+            if let Some(t) = sec.title {
+                let head = format!("─ {t} ");
+                let fill = (cw + 2).saturating_sub(head.width());
+                v.push((
+                    true,
+                    vec![Span::styled(format!("{head}{}", "─".repeat(fill)), bstyle)],
+                ));
+            }
+            for row in sec.rows {
+                let row = fit(row, cw);
+                let pad = cw.saturating_sub(row_width(&row));
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(row);
+                spans.push(Span::raw(" ".repeat(pad + 1)));
+                v.push((false, spans));
+            }
+        }
+        v
+    };
+    let (l, r) = (cells(left, lw), cells(right, rw));
+    for i in 0..l.len().max(r.len()) {
+        let blank = |cw: usize| (false, vec![Span::raw(" ".repeat(cw + 2))]);
+        let (lh, lrow) = l.get(i).cloned().unwrap_or_else(|| blank(lw));
+        let (rh, rrow) = r.get(i).cloned().unwrap_or_else(|| blank(rw));
+        let mid = match (lh, rh) {
+            (true, true) if i == 0 => "┬",
+            (true, true) => "┼",
+            (true, false) => "┤",
+            (false, true) => "├",
+            (false, false) => "│",
+        };
+        let edge = |h: bool, a: &'static str| Span::styled(if h { a } else { "│" }, bstyle);
+        let mut spans = vec![edge(lh, "├")];
+        spans.extend(lrow);
+        spans.push(Span::styled(mid, bstyle));
+        spans.extend(rrow);
+        spans.push(edge(rh, "┤"));
+        out.push(Line::from(spans));
+    }
+    out.push(Line::from(Span::styled(
+        format!("╰{}┴{}╯", "─".repeat(lw + 2), "─".repeat(rw + 2)),
         bstyle,
     )));
     if ascii {
@@ -2290,6 +2383,60 @@ mod tests {
         let text = to_plain(&asc);
         assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
         insta::assert_snapshot!("ascii", text);
+    }
+
+    #[test]
+    fn two_columns_when_wide() {
+        let (st, u) = multi();
+        let at = |w: u16, ascii: bool| {
+            let cfg = Config {
+                ascii,
+                ..Config::default()
+            };
+            lines(
+                &st,
+                &u,
+                &Extras::default(),
+                &cfg,
+                View::default(),
+                NOW,
+                "12:41",
+                w,
+                40,
+                false,
+            )
+        };
+        let wide = at(140, false);
+        for l in &wide {
+            assert_eq!(l.width(), 140, "{:?}", to_plain(std::slice::from_ref(l)));
+        }
+        let text = to_plain(&wide);
+        assert!(
+            text.lines()
+                .any(|l| l.contains("─ agents ") && l.contains("─ usage ")),
+            "{text}"
+        );
+        let asc = at(140, true);
+        assert_eq!(asc.len(), wide.len());
+        for l in &asc {
+            assert_eq!(l.width(), 140);
+        }
+        let narrow = to_plain(&at(119, false));
+        assert!(
+            !narrow
+                .lines()
+                .any(|l| l.contains("─ agents ") && l.contains("─ usage ")),
+            "{narrow}"
+        );
+        assert!(narrow.contains("├─ agents ─"), "{narrow}");
+        insta::assert_snapshot!("wide_140", text);
+    }
+
+    #[test]
+    fn short_wide_collapses_per_column() {
+        let (st, u) = multi();
+        let out = render(&st, &u, View::default(), 140, 12);
+        assert!(out.lines().count() <= 12, "{out}");
     }
 
     #[test]
