@@ -208,6 +208,30 @@ pub fn update(dir: &Path, st: &State, transcript: Option<&str>) -> TokenCache {
     c
 }
 
+/// The main transcript: from the statusline payload, else what the hook saw first.
+pub fn transcript_for(dir: &Path, u: &crate::usage::Usage) -> Option<String> {
+    u.transcript_path.clone().or_else(|| {
+        let meta: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("meta.json")).ok()?).ok()?;
+        meta.get("transcript")?.as_str().map(String::from)
+    })
+}
+
+/// For the statusline: read transcripts at most once per 2 s, otherwise use the cache.
+pub fn update_debounced(dir: &Path, st: &State, u: &crate::usage::Usage) -> TokenCache {
+    let fresh = std::fs::metadata(dir.join("tokens.json"))
+        .and_then(|m| m.modified())
+        .is_ok_and(|t| {
+            t.elapsed()
+                .is_ok_and(|e| e < std::time::Duration::from_secs(2))
+        });
+    if fresh {
+        cached(dir)
+    } else {
+        update(dir, st, transcript_for(dir, u).as_deref())
+    }
+}
+
 /// Dollars saved by cache reads versus paying full input price (≈, see DECISIONS D18).
 pub fn savings(l: &Ledger, cost_usd: Option<f64>, prices: &BTreeMap<String, Price>) -> Option<f64> {
     if l.cache_read == 0 {
