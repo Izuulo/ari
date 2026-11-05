@@ -183,40 +183,39 @@ fn waiting(mode: &Mode) -> Vec<Line<'static>> {
     ]
 }
 
+/// One session in `ari watch --all`.
+struct Entry {
+    /// Urgency: the verdict's order (NEEDS YOU first), unhooked idle sessions last.
+    rank: u8,
+    verdict: String,
+    style: Style,
+    project: String,
+    title: Option<String>,
+    detail: String,
+    ctx: Option<f64>,
+    cost: Option<f64>,
+    age_ms: u64,
+}
+
 fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Line<'static>> {
-    let live: Vec<SessionInfo> = sessions::list(root)
+    use unicode_width::UnicodeWidthStr;
+    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    let paint = |s: Style| if color { s } else { Style::default() };
+    let dim = Style::new().add_modifier(Modifier::DIM);
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    // Rate limits are per account: show the freshest session's once, not one per row.
+    let mut limits = None;
+    let mut total = 0.0;
+    let mut entries = Vec::new();
+    for s in sessions::list(root)
         .into_iter()
         .filter(|s| sessions::is_live(s, now))
-        .collect();
-    let mut out = vec![Line::from(Span::styled(
-        format!(
-            "ARI · {} live session{}",
-            live.len(),
-            if live.len() == 1 { "" } else { "s" }
-        ),
-        Style::new().add_modifier(Modifier::BOLD),
-    ))];
-    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    // Fixed-width label column: project, then Claude Code's title for the session.
-    let col = (width as usize / 3).clamp(12, 36);
-    for s in live {
+    {
         let u = load_usage(&s.dir);
-        let project = u
-            .project
-            .clone()
-            .or_else(|| {
-                s.cwd
-                    .as_deref()
-                    .and_then(|c| c.rsplit('/').next())
-                    .map(String::from)
-            })
-            .unwrap_or_else(|| s.id.chars().take(8).collect());
-        let label = match &u.session_name {
-            Some(n) => format!("{project} · {n}"),
-            None => project.clone(),
-        };
-        let label = crate::event::truncate(&label, col);
-        let pad = col.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
+        if limits.is_none() && (u.five_h.is_some() || u.seven_d.is_some()) {
+            limits = Some((u.five_h, u.seven_d));
+        }
+        total += u.cost_usd.unwrap_or(0.0);
         let st = state::load_session(&s.dir);
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
@@ -224,46 +223,166 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
             conflicts: crate::conflicts::cached(root, &s.dir, now),
             ..Default::default()
         };
-        let row = bar::render(
-            &st,
-            &u,
-            &x,
-            cfg,
-            now,
-            (width as usize).saturating_sub(col + 2),
-            false,
-        );
-        // Color the verdict like the panel does, so busy sessions stand out from idle ones.
-        let style = if st.first_t > 0 {
-            panel::verdict_style(st.verdict_with(now, cfg.thresholds.stuck_repeats))
+        // The row's own columns and the header carry these; "no plan yet" and "✗ 0" are noise in a list.
+        let mut row_cfg = cfg.clone();
+        row_cfg.max_width = 0;
+        row_cfg.ascii = false;
+        row_cfg
+            .hide
+            .extend(["5h", "7d", "ctx", "cost", "tokens"].map(String::from));
+        if st.tasks_done().1 == 0 {
+            row_cfg.hide.push("tasks".into());
+        }
+        if st.open_errors() == 0 {
+            row_cfg.hide.push("errors".into());
+        }
+        let row = bar::render(&st, &u, &x, &row_cfg, now, 10_000, false);
+        let (verdict, detail) = row.split_once(" │ ").unwrap_or((row.as_str(), ""));
+        let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
+        let (rank, style) = if st.first_t > 0 {
+            (v as u8, panel::verdict_style(v))
         } else if x.looks_active() {
-            Style::new()
-                .fg(ratatui::style::Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            (
+                Verdict::OnTrack as u8,
+                Style::new()
+                    .fg(ratatui::style::Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            Style::new().add_modifier(Modifier::DIM)
+            (Verdict::Idle as u8 + 1, dim)
         };
-        let (verdict, rest) = row
-            .split_once(" │ ")
-            .map_or((row.as_str(), ""), |(a, b)| (a, b));
-        let rest = if rest.is_empty() {
-            String::new()
-        } else {
-            format!(" │ {rest}")
-        };
-        let (head, tail) = label.split_at(project.len().min(label.len()));
-        out.push(Line::from(vec![
-            Span::styled(head.to_string(), Style::new().add_modifier(Modifier::BOLD)),
-            Span::styled(tail.to_string(), Style::new().add_modifier(Modifier::DIM)),
-            Span::raw(" ".repeat(pad + 2)),
-            Span::styled(
-                verdict.to_string(),
-                if color { style } else { Style::default() },
-            ),
-            Span::raw(rest),
-        ]));
+        entries.push(Entry {
+            rank,
+            verdict: verdict.to_string(),
+            style,
+            project: u
+                .project
+                .clone()
+                .or_else(|| s.cwd.as_deref()?.rsplit('/').next().map(String::from))
+                .unwrap_or_else(|| s.id.chars().take(8).collect()),
+            title: u.session_name.clone(),
+            // What it's asking beats what it was doing.
+            detail: match (&st.needs_you, rank == Verdict::NeedsYou as u8) {
+                (Some(ask), true) => ask.clone(),
+                _ => detail.replace(" │ ", " · "),
+            },
+            ctx: u.ctx_pct,
+            cost: u.cost_usd,
+            // Every open session's statusline rewrites usage.json, so its mtime says nothing.
+            age_ms: x
+                .transcript_age_ms
+                .or((st.last_t > 0).then(|| now.saturating_sub(st.last_t)))
+                .unwrap_or(now.saturating_sub(s.last_ms)),
+        });
     }
-    out
+    // Stable: equally urgent sessions keep most-recent-first.
+    entries.sort_by_key(|e| e.rank);
+
+    let w = width as usize;
+    let needs = entries
+        .iter()
+        .filter(|e| e.rank == Verdict::NeedsYou as u8)
+        .count();
+    let mut head = vec![
+        Span::styled("ARI", paint(bold)),
+        Span::raw(format!(
+            " · {} live session{}",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" }
+        )),
+    ];
+    if needs > 0 {
+        head.push(Span::raw(" · "));
+        head.push(Span::styled(
+            format!("{needs} need{} you", if needs == 1 { "s" } else { "" }),
+            paint(panel::verdict_style(Verdict::NeedsYou)),
+        ));
+    }
+    let mut acct = Vec::new();
+    if let Some((five, seven)) = limits {
+        for (name, l) in [("5h", five), ("7d", seven)] {
+            if let Some(l) = l {
+                let reset = if l.resets_at > 0 {
+                    format!(" {}", bar::countdown(l.resets_at, now))
+                } else {
+                    String::new()
+                };
+                acct.push(format!("{name} {:.0}%{reset}", l.pct));
+            }
+        }
+    }
+    if total > 0.0 {
+        acct.push(format!("${total:.2} total"));
+    }
+    let acct = acct.join(" · ");
+    let used: usize = head.iter().map(|s| s.content.width()).sum();
+    if !acct.is_empty() && used + 2 + acct.width() <= w {
+        head.push(Span::raw(" ".repeat(w - used - acct.width())));
+        head.push(Span::styled(acct, paint(dim)));
+    }
+    let mut out = vec![Line::from(head), Line::from("")];
+
+    // Columns: verdict │ project · title │ what it's doing │ ctx, cost, last active.
+    let vw = entries
+        .iter()
+        .map(|e| e.verdict.width())
+        .max()
+        .unwrap_or(0)
+        .min(22);
+    let right = if w >= 70 { 26 } else { 0 };
+    let label = |e: &Entry| match &e.title {
+        Some(t) => format!("{} · {t}", e.project),
+        None => e.project.clone(),
+    };
+    let lw = entries
+        .iter()
+        .map(|e| label(e).width())
+        .max()
+        .unwrap_or(0)
+        // Which session it is matters more than what it's doing: the label gets room first.
+        .min(36)
+        .min(w.saturating_sub(vw + right + 4 + 12))
+        .max(12);
+    let room = w.saturating_sub(vw + lw + right + 4);
+    for e in &entries {
+        let quiet = e.rank >= Verdict::Done as u8;
+        let mut spans = vec![
+            Span::styled(e.verdict.clone(), paint(e.style)),
+            Span::raw(" ".repeat(vw.saturating_sub(e.verdict.width()) + 2)),
+        ];
+        let text = crate::event::truncate(&label(e), lw);
+        let (p, t) = text.split_at(e.project.len().min(text.len()));
+        spans.push(Span::styled(
+            p.to_string(),
+            paint(if quiet { dim } else { bold }),
+        ));
+        spans.push(Span::styled(t.to_string(), paint(dim)));
+        let detail = crate::event::truncate(&e.detail, room);
+        spans.push(Span::raw(" ".repeat(lw.saturating_sub(text.width()) + 2)));
+        if right > 0 {
+            spans.push(Span::styled(
+                format!("{detail:<room$}", room = room),
+                paint(if quiet { dim } else { Style::default() }),
+            ));
+            let ctx = e.ctx.map(|p| format!("ctx {p:.0}%")).unwrap_or_default();
+            let cost = e.cost.map(|c| format!("${c:.2}")).unwrap_or_default();
+            spans.push(Span::styled(
+                format!("  {ctx:>7} {cost:>8} {:>4} ago", panel::age(e.age_ms)),
+                paint(dim),
+            ));
+        } else {
+            spans.push(Span::styled(
+                detail,
+                paint(if quiet { dim } else { Style::default() }),
+            ));
+        }
+        out.push(Line::from(spans));
+    }
+    if cfg.ascii {
+        crate::ascii::map_lines(out)
+    } else {
+        out
+    }
 }
 
 fn fail(msg: &str) -> ! {
@@ -417,6 +536,58 @@ fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    #[test]
+    fn all_list_puts_needs_you_first_and_limits_in_the_header() {
+        let root = std::env::temp_dir().join(format!("ari-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let now = hook::now_ms();
+        let session = |id: &str, title: &str, events: &[String]| {
+            let d = root.join("sessions").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("events.jsonl"), events.join("\n") + "\n").unwrap();
+            let u = serde_json::json!({"session_id": id, "session_name": title,
+                "workspace": {"project_dir": "/x/proj"}, "cost": {"total_cost_usd": 1.5},
+                "rate_limits": {"seven_day": {"used_percentage": 58.0, "resets_at": 0}}});
+            std::fs::write(d.join("usage.json"), u.to_string()).unwrap();
+        };
+        let ev = |dt: u64, rest: &str| format!(r#"{{"t":{},{rest}}}"#, now - dt);
+        let start = ev(60_000, r#""e":"SessionStart""#);
+        let prompt = ev(50_000, r#""e":"UserPromptSubmit","msg":"go""#);
+        session(
+            "aaaa",
+            "asks",
+            &[
+                start.clone(),
+                prompt.clone(),
+                ev(
+                    40_000,
+                    r#""e":"Notification","kind":"permission_prompt","msg":"Claude needs your permission to use Bash""#,
+                ),
+            ],
+        );
+        session("bbbb", "works", &[start, prompt]);
+        let out = panel::to_plain(&all_lines(&root, &config::Config::default(), now, 110));
+        let _ = std::fs::remove_dir_all(&root);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains("2 live sessions · 1 needs you"), "{out}");
+        assert!(lines[0].ends_with("7d 58% · $3.00 total"), "{out}");
+        assert!(
+            lines[2].starts_with("◉ NEEDS YOU")
+                && lines[2].contains("proj · asks")
+                && lines[2].contains("Claude needs your permission to use Bash"),
+            "{out}"
+        );
+        assert!(
+            lines[3].contains("proj · works") && lines[3].contains("$1.50"),
+            "{out}"
+        );
+        assert_eq!(
+            out.matches("7d").count(),
+            1,
+            "limits once, not per row: {out}"
+        );
+    }
 
     #[test]
     fn recap_rebuilds_only_on_new_events_and_not_too_often() {

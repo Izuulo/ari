@@ -109,7 +109,7 @@ pub fn dur(ms: u64) -> String {
     }
 }
 
-fn age(ms: u64) -> String {
+pub fn age(ms: u64) -> String {
     let s = ms / 1000;
     match s {
         0..60 => format!("{s}s"),
