@@ -3,8 +3,8 @@ source: src/panel.rs
 expression: "render(&State::default(), &Usage::default(), View::default(), 46, 40)"
 ---
 ╭─ ARI (-_-)zz ────────────────────── 12:41 ─╮
-│ ◌ IDLE                                     │
-│ no plan yet                                │
+│ ◌ no hooks yet                             │
+│ start a new Claude Code session, or /relo… │
 ├─ agents ───────────────────────────────────┤
 │ no activity yet                            │
 ├─ errors ───────────────────────────────────┤

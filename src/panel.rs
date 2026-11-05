@@ -294,6 +294,13 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
 
 fn header(st: &State, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
     let mut rows = Vec::new();
+    if st.first_t == 0 {
+        rows.push(vec![c.dim("◌ no hooks yet")]);
+        rows.push(vec![
+            c.dim("start a new Claude Code session, or /reload-plugins"),
+        ]);
+        return rows;
+    }
     let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
     let mut row = vec![left];
     if let Some(label) = &st.label {
@@ -671,6 +678,7 @@ mod tests {
         let mut st = State {
             turn_active: true,
             turns: 2,
+            first_t: NOW - 600_000,
             label: Some("auth refactor".into()),
             last_t: NOW,
             ..Default::default()
