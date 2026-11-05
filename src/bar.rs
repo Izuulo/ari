@@ -206,16 +206,13 @@ pub fn render(
         segs.push(now);
     }
 
-    if from_hooks("tasks") {
-        let (done, total) = st.tasks_done();
-        segs.push(if total == 0 {
-            paint(color, "2", "no plan yet")
-        } else {
-            format!(
-                "{} {done}/{total}",
-                cells(done as f64 / total as f64, 10, '█', '░')
-            )
-        });
+    let (done, total) = st.tasks_done();
+    // No task list: say nothing rather than spend the row on "no plan yet".
+    if from_hooks("tasks") && total > 0 {
+        segs.push(format!(
+            "{} {done}/{total}",
+            cells(done as f64 / total as f64, 10, '█', '░')
+        ));
     }
     let agents = st.running_agents(now_ms);
     if from_hooks("agents") && agents > 0 {
@@ -556,6 +553,32 @@ mod tests {
             !row.contains('$') && !row.contains("7d") && !row.contains("agents"),
             "{row}"
         );
+    }
+
+    #[test]
+    fn no_task_list_takes_no_room() {
+        let (mut st, u) = sample();
+        let with = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        assert!(with.contains("4/7"), "{with}");
+        st.tasks.clear();
+        let row = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        assert!(!row.contains("plan") && !row.contains('░'), "{row}");
     }
 
     #[test]

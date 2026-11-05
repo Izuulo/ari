@@ -223,16 +223,13 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
             conflicts: crate::conflicts::cached(root, &s.dir, now),
             ..Default::default()
         };
-        // The row's own columns and the header carry these; "no plan yet" and "✗ 0" are noise in a list.
+        // The row's own columns and the header carry these; "✗ 0" is noise in a list.
         let mut row_cfg = cfg.clone();
         row_cfg.max_width = 0;
         row_cfg.ascii = false;
         row_cfg
             .hide
             .extend(["5h", "7d", "ctx", "cost", "tokens"].map(String::from));
-        if st.tasks_done().1 == 0 {
-            row_cfg.hide.push("tasks".into());
-        }
         if st.open_errors() == 0 {
             row_cfg.hide.push("errors".into());
         }
