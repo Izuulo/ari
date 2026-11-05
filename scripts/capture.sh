@@ -12,6 +12,7 @@ work=$(cd "$(mktemp -d)" && pwd -P)
 proj="$work/proj" out="$root/fixtures/$name"
 mkdir -p "$proj" "$out"
 : > "$out/raw.jsonl"
+echo "project: $proj"
 
 python3 -I - "$bin" "$out/raw.jsonl" "$work/state" > "$work/settings.json" <<'PY'
 import json, shlex, sys
