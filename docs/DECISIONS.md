@@ -16,6 +16,8 @@ Where the PRD and the Claude Code docs disagree, the docs win. Checked against C
 | D8 | Hook timeout "short" | `timeout` is in **seconds**. `async: true` exists. | Synchronous hooks, `timeout: 1`. Sync keeps event order intact for loop detection; the binary runs in ~1–2 ms. |
 | D9 | Statusline runs "frequently" | Event-driven, debounced 300 ms; goes quiet while main session is idle. Optional `refreshInterval` (seconds, min 1). | `ari setup` adds `refreshInterval: 2` only if the user has none, so stale agents and spinners still update. |
 | D10 | `ari hook <event>` | Every payload carries `hook_event_name`. | `ari hook` reads the event name from the payload; a trailing arg is accepted and ignored. |
+| D12 | `Stop` = turn end | Observed (v2.1.318): `Stop` fires while a background subagent is still running; `background_tasks` lists it as `running`. Main-agent events carry no `agent_id`. | Hook records `bg` (running background tasks) on `Stop`; the reducer treats `bg > 0` as still working. |
+| D13 | `meta.json` holds last activity | — | Last activity is the `events.jsonl` mtime, so hooks never rewrite `meta.json`. |
 | D11 | Repo `finneritter/ari` | — | GitHub user is now `Izuulo`: repo is `Izuulo/ari`, plugin install is `/plugin marketplace add Izuulo/ari`. |
 
 ## Project decisions
