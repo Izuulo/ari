@@ -247,7 +247,7 @@ pub fn lines(
         },
         Section {
             title: Some("session"),
-            rows: session(st, u, x, cfg, &c),
+            rows: session(st, u, x, cfg, &c, now),
         },
     ];
     if view.recap
@@ -942,7 +942,30 @@ fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
     Some(row)
 }
 
-fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
+/// Cold warning and recent miss for the cache row; empty when there's nothing to say.
+fn cache_suffix(u: &Usage, now: u64) -> String {
+    let Some(c) = &u.cache else {
+        return String::new();
+    };
+    let within = |t: u64| (t * 1000).saturating_sub(now) <= 10 * 60_000;
+    let mut out = String::new();
+    match c.expires_at {
+        Some(e) if c.warm && within(e) => {
+            let m = ((e * 1000).saturating_sub(now) / 60_000).max(1);
+            out += &format!(" · cold in {m}m");
+        }
+        _ if !c.warm && c.observed => out += " · cold",
+        _ => {}
+    }
+    if let (Some(t), Some(why)) = (c.last_miss_at, &c.last_miss)
+        && now.saturating_sub(t * 1000) <= 10 * 60_000
+    {
+        out += &format!(" · last miss: {why}");
+    }
+    out
+}
+
+fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
     let mut rows = Vec::new();
     if let Some(t) = &x.tokens
         && t.total().total() > 0
@@ -962,7 +985,7 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )),
         ]);
         if let Some(hit) = total.hit() {
-            let label = format!(" {:.0}% hit", hit * 100.0);
+            let label = format!(" {:.0}% hit{}", hit * 100.0, cache_suffix(u, now));
             let n = c.inner.saturating_sub(8 + label.width()).min(20);
             rows.push(vec![
                 c.dim("cache   "),
@@ -1455,6 +1478,71 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains("· 0s"), "{out}");
+    }
+
+    fn cache_row(c: Option<crate::usage::CacheState>) -> String {
+        use crate::tokens::{Ledger, TokenCache};
+        let (st, mut u) = multi();
+        u.cache = c;
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: Ledger {
+                    input: 1,
+                    cache_read: 99,
+                    output: 5,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        let r: String = out
+            .lines()
+            .find(|l| l.contains("cache   "))
+            .unwrap()
+            .trim_end_matches('│')
+            .trim_end()
+            .to_string();
+        r
+    }
+
+    #[test]
+    fn cache_suffix() {
+        use crate::usage::CacheState;
+        let s = NOW / 1000;
+        let warm = |exp: u64| CacheState {
+            warm: true,
+            observed: true,
+            expires_at: Some(exp),
+            ..Default::default()
+        };
+        assert!(cache_row(Some(warm(s + 4 * 60 + 10))).ends_with("% hit · cold in 4m"));
+        assert!(cache_row(Some(warm(s + 20 * 60))).ends_with("% hit"));
+        let cold = CacheState {
+            observed: true,
+            ..Default::default()
+        };
+        assert!(cache_row(Some(cold)).ends_with("% hit · cold"));
+        let miss = CacheState {
+            warm: true,
+            last_miss_at: Some(s - 120),
+            last_miss: Some("ttl_expired_1h".into()),
+            ..Default::default()
+        };
+        assert!(cache_row(Some(miss)).ends_with("% hit · last miss: ttl_expired_1h"));
+        assert!(cache_row(None).ends_with("% hit"));
     }
 
     #[test]

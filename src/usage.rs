@@ -30,6 +30,21 @@ pub struct Usage {
     pub effort: Option<String>,
     pub fast: bool,
     pub worktree: Option<String>,
+    /// Prompt-cache state; absent on older Claude Code.
+    pub cache: Option<CacheState>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct CacheState {
+    pub warm: bool,
+    /// Claude Code has seen caching happen (`caching_observed`).
+    pub observed: bool,
+    /// Unix epoch seconds.
+    pub expires_at: Option<u64>,
+    /// Unix epoch seconds.
+    pub last_miss_at: Option<u64>,
+    pub last_miss: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -89,6 +104,19 @@ pub fn from_value(v: &Value) -> Usage {
         effort: s("/effort/level"),
         fast: v.pointer("/fast_mode").and_then(Value::as_bool) == Some(true),
         worktree: s("/workspace/git_worktree").or_else(|| s("/worktree/name")),
+        cache: v
+            .pointer("/prompt_cache")
+            .filter(|c| c.is_object())
+            .map(|_| CacheState {
+                warm: v.pointer("/prompt_cache/warm").and_then(Value::as_bool) == Some(true),
+                observed: v
+                    .pointer("/prompt_cache/caching_observed")
+                    .and_then(Value::as_bool)
+                    == Some(true),
+                expires_at: u("/prompt_cache/expires_at"),
+                last_miss_at: u("/prompt_cache/last_miss_at"),
+                last_miss: s("/prompt_cache/last_miss_cause/causes/0"),
+            }),
         pr: u("/pr/number").map(|number| Pr {
             number,
             review_state: s("/pr/review_state"),
@@ -158,6 +186,25 @@ mod tests {
             (u.project.as_deref(), u.session_name.as_deref()),
             (Some("tankobon"), Some("next milestone"))
         );
+    }
+
+    #[test]
+    fn prompt_cache() {
+        let c = |v| from_value(&v).cache;
+        assert_eq!(
+            c(
+                json!({"prompt_cache": {"warm": true, "caching_observed": true, "expires_at": 1793920160,
+                "last_miss_at": null, "last_miss_cause": {"causes": ["ttl_expired_1h"]}}})
+            ),
+            Some(CacheState {
+                warm: true,
+                observed: true,
+                expires_at: Some(1793920160),
+                last_miss_at: None,
+                last_miss: Some("ttl_expired_1h".into())
+            })
+        );
+        assert_eq!(c(json!({})), None);
     }
 
     #[test]
