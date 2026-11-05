@@ -420,7 +420,7 @@ fn list_lines(
             Span::raw(" ".repeat(vw.saturating_sub(e.verdict.width()) + 2)),
         ];
         let text = crate::event::truncate(&label(e), lw);
-        let (p, t) = text.split_at(e.project.len().min(text.len()));
+        let (p, t) = text.split_at(text.floor_char_boundary(e.project.len()));
         spans.push(Span::styled(
             p.to_string(),
             paint(if quiet { dim } else { bold }),
@@ -903,5 +903,32 @@ mod key_tests {
         assert!(head.contains("5h 77%") && !head.contains("11%"), "{head}");
         let once = list_lines(&es, None, &cfg, 0, 100);
         assert_eq!(once.len(), 4, "no hint without a selection");
+        let ascii = config::Config {
+            ascii: true,
+            ..Default::default()
+        };
+        let out = list_lines(&es, Some(1), &ascii, 0, 100);
+        assert!(!rev(&out[2]) && rev(&out[3]), "--ascii keeps the selection");
+    }
+
+    #[test]
+    fn long_project_names_truncate_on_a_char_boundary() {
+        for (n, w) in [(35, 120), (36, 120), (37, 120), (12, 50), (13, 50)] {
+            let e = Entry {
+                rank: 0,
+                verdict: "ON TRACK".into(),
+                style: Style::default(),
+                project: "p".repeat(n),
+                title: Some("a session name".into()),
+                detail: String::new(),
+                ctx: None,
+                cost: None,
+                age_ms: 0,
+                dir: PathBuf::new(),
+                limits: None,
+            };
+            let out = list_lines(&[e], None, &config::Config::default(), 0, w);
+            assert!(panel::to_plain(&out).contains('…'), "{n} at {w}");
+        }
     }
 }
