@@ -227,9 +227,7 @@ pub fn lines(
                         )],
                     );
                 }
-                if st.first_t != 0
-                    && let Some(b) = badges(st, u, &c)
-                {
+                if let Some(b) = badges(st, u, &c) {
                     rows.insert(1.min(rows.len()), b);
                 }
                 rows
@@ -1245,6 +1243,24 @@ mod tests {
         let l: Vec<_> = out.lines().collect();
         assert!(l[2].contains("MR !3 changes requested"), "{out}");
         assert!(!out.contains("pr      "), "{out}");
+    }
+
+    #[test]
+    fn badges_show_without_hooks() {
+        let u = Usage {
+            model: Some("Opus".into()),
+            pr: Some(crate::usage::Pr {
+                number: 14,
+                review_state: Some("approved".into()),
+                mr: false,
+            }),
+            ..Default::default()
+        };
+        let out = render(&State::default(), &u, View::default(), 70, 40);
+        let l: Vec<_> = out.lines().collect();
+        assert!(l[1].contains("no hooks yet"), "{out}");
+        assert!(l[2].contains("Opus · PR #14 approved"), "{out}");
+        assert!(l[3].contains("start a new Claude Code session"), "{out}");
     }
 
     #[test]
