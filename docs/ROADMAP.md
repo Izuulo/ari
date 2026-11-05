@@ -6,7 +6,6 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 
 | Idea | Why | Data |
 |---|---|---|
-| Interactive list: arrow keys + `enter` opens that session's full panel | One pane to manage every session | Have it |
 | Group by repo, with a per-repo summary row | Several sessions in one repo read as one project | Have it (repo name) |
 | Desktop notification when any session flips to NEEDS YOU or BLOCKED | Don't have to watch the pane at all | Have it; new: notifier (osascript / notify-send) |
 | How long each session has been waiting on you | "NEEDS YOU · 6m" says how urgent it is | Have it (notification time) |
@@ -18,13 +17,7 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Idea | Why | Data |
 |---|---|---|
 | Git branch and uncommitted file count | Which branch Claude is changing | New: run `git` in the statusline, debounced |
-| Lines added and removed | Size of the change at a glance | Have it (`cost.total_lines_*`) |
-| Model, effort level, fast mode | Why a session is slow or expensive | Have it |
-| Worktree name | Tell parallel worktree sessions apart | Have it (`workspace.git_worktree`) |
-| Background shells and scheduled wake-ups by name | "dev server running", "checks again at 15:00" | Have it (`background_tasks`, `session_crons` on Stop) |
 | What a permission prompt is asking for | Decide without switching windows | Have it (notification message) |
-| Turn timeline: one line per turn with duration, cost and outcome | See where time and money went | Have it |
-| Compaction count and what each one cost | Spot sessions that keep compacting | Have it |
 | Spend limit (gateway users) | Budget alongside rate limits | Have it (`rate_limits.spend_limit`) |
 
 ## 3. Smarter interpretation
@@ -36,7 +29,7 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Repeated permission prompts for the same tool | Suggest an allow rule | Have it |
 | Subagent tree with nesting and per-branch cost | Deep agent fan-outs | Partly (spawn depth is in transcripts) |
 
-## 4. Other harnesses and providers (M6)
+## 4. Other harnesses and providers (M7)
 
 | Idea | Why | Data |
 |---|---|---|
@@ -48,7 +41,15 @@ Shipped from the hub list: sort by urgency, account limits once in the header, a
 
 Shipped from this list in M5: test pass/fail counts, files touched (in `ari recap`), done-but-tests-failing. Since: pull request number and review state.
 
-## 5. Platform and polish
+## 5. Later plans
+
+| Idea | Why | Data |
+|---|---|---|
+| In-app pane via a plugin mod | The panel beside the chat without a second terminal | New: Claude Code's mod API |
+| Subagent rows via `subagentStatusLine` | Per-agent status inside Claude Code's own agent list | Have it (agent events); new: the setting |
+| Hooks `PermissionRequest`, `PermissionDenied`, `Pre/PostModelSwitch` | Exact permission waits and model changes instead of guessing from notifications | New: register the hooks |
+
+## 6. Platform and polish
 
 | Idea | Why | Data |
 |---|---|---|

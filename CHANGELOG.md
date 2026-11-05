@@ -19,6 +19,20 @@
 - The statusline row leaves out `no plan yet` when there's no task list, so the row is shorter; the panel still says it.
 - Fix: with several sessions in one folder, `ari watch` could follow an idle one. Activity now comes from the hook log and transcript, not the statusline's constant `usage.json` writes.
 - The panel's session section shows the branch's open pull request and its review state (`pr #14 · changes requested`), or a GitLab merge request (`mr !3`).
+- Filtered test runs (`3 filtered out`, `N deselected`) no longer set the headline count or the trend unless they failed.
+- The time split adds up: idle time starts after an API error and after a Stop with background tasks, and leftover time shows as `other N%` when it is 5% or more.
+- Less panel noise: no `no plan yet` row, `cost of mistakes` drops `· 0s`, and long agent kinds are cut so columns align.
+- Badges row under the verdict: model, effort, fast, permission mode (`PLAN`, `AUTO`, `EDITS`, `DON'T ASK`, `BYPASS`), `⎇ worktree`, `PR #14 open` (`MR !3` on GitLab) and `+120 −8`. It also shows for sessions without hooks.
+- The cache row says more: `· cold in 4m`, `· cold`, `· last miss: <cause>`.
+- Background tasks (`↳ shell: npm run dev`) and scheduled jobs (`◷ */5 * * * * · check deploy`) show under the main agent.
+- Resume line: `↻ resumed after 3h · cache cold · ~$0.40 to rebuild` until the next Stop.
+- `turns` section: one row per turn (time, duration, calls, failures, cost, prompt) with compactions (`⟲ 14:20 compacted (auto) · ctx 91% → 18%`). It fills spare height and is trimmed first.
+- Trends: a context sparkline, cost per hour and a cost sparkline.
+- Away summary: Claude Code's one-line session summary shows when a session is idle or done, and in quiet `--all` rows.
+- The panel uses two columns at 120 columns or wider.
+- `ari watch --all` is interactive: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back, `q` quits.
+- `ari doctor` reports hooks that failed in the last 24 hours (any plugin's), grouped.
+- Long agent lists: the fold row names what's hidden (`✓ 27 more done · 24 general-purpose · …`), and `a` groups finished agents per kind and model.
 
 ## 0.1.0 - 2026-11-05
 

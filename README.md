@@ -54,7 +54,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 ╰──────────────────────────────────────────────────────╯
 ```
 
-Keys: `q` quit, `e` more errors, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
+Keys: `q` quit, `e` more errors, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
 
 ### What a session got done: `ari recap`
 
