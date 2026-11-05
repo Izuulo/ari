@@ -28,6 +28,7 @@ Prefer the in-app flow? `/plugin marketplace add Izuulo/ari`, then `/plugin inst
 |---|---|
 | `◉ NEEDS YOU` | Claude is waiting on a permission prompt or your input |
 | `✗ BLOCKED` | The turn ended on an API error, or right after a failure it never fixed |
+| `↻ STUCK` | Going in circles: the same command failing again and again, or the same call repeated with nothing changing in between |
 | `↻ RETRYING` | Something just failed and Claude is still working on it |
 | `● ON TRACK` | Working, nothing failing |
 | `✓ DONE` | Turn finished and every task is complete |
@@ -59,6 +60,8 @@ Run `ari watch` in a second pane (`tmux split-window ari watch` works fine). It 
 ╰──────────────────────────────────────────────────────╯
 ```
 
+The session section adds total tokens, cache hit rate and roughly what caching saved you; each agent shows its own token spend; and when the 5-hour limit is filling faster than it resets, you get `▲ at this pace: 5h limit in ~55m`.
+
 `ari watch --all` lists every live session; `--session <id>` pins one; `--once` prints the panel and exits. Keys: `q` quit, `e` more errors, `a` all agents, `tab` next session. Set `bell = true` in the config to ring when Claude needs you.
 
 ## Config
@@ -67,7 +70,7 @@ Run `ari watch` in a second pane (`tmux split-window ari watch` works fine). It 
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-hide = ["cost"]             # segments to drop: tasks agents errors ctx 5h 7d cost
+hide = ["cost"]             # segments to drop: tasks agents errors ctx 5h 7d cost tokens
 face = true                 # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 max_width = 0               # 0 = terminal width
@@ -80,7 +83,14 @@ timeout_ms = 300            # a chained command slower than this is skipped
 [thresholds]
 ctx_warn = 60               # context % turns yellow
 ctx_crit = 80               # and red
+stuck_repeats = 3           # repeats before STUCK
+
+[prices.claude-opus-5-5]    # optional, $ per million tokens, for the cache-savings estimate
+input = 0.0
+cache_read = 0.0
 ```
+
+Without `[prices]`, savings are estimated from the session's own cost.
 
 `NO_COLOR` is respected. Glyphs carry the meaning, so nothing relies on color alone.
 
@@ -96,7 +106,7 @@ ctx_crit = 80               # and red
 
 ## Coming next
 
-Stuck-loop detection, token totals per agent, cache savings and a rate-limit burn-rate warning. See [docs/PRD.md](docs/PRD.md).
+`ari demo` (try it without Claude), `--ascii` mode, `ari doctor`, and prebuilt binaries. See [docs/PRD.md](docs/PRD.md).
 
 ## License
 
