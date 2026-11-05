@@ -1,4 +1,4 @@
-# ARI - All Relivant Information
+# ARI - All Relevant Information
 
 Stop asking Claude how it's going.
 
