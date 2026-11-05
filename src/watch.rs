@@ -120,10 +120,16 @@ impl App {
         if self.dir.is_none() {
             return waiting(&self.mode);
         }
+        let mut x = self.x.clone();
+        x.transcript_age_ms = self
+            .dir
+            .as_deref()
+            .and_then(|d| tokens::transcript_for(d, &self.usage))
+            .and_then(|t| tokens::transcript_age(&t, now));
         panel::lines(
             &self.st,
             &self.usage,
-            &self.x,
+            &x,
             &self.cfg,
             self.view,
             now,
@@ -168,6 +174,11 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         ),
         Style::new().add_modifier(Modifier::BOLD),
     ))];
+    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    // The label column already names the project.
+    let mut cfg = cfg.clone();
+    cfg.hide.push("project".into());
+    let cfg = &cfg;
     // Fixed-width label column: project, then Claude Code's title for the session.
     let col = (width as usize / 3).clamp(12, 36);
     for s in live {
@@ -188,21 +199,49 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         };
         let label = crate::event::truncate(&label, col);
         let pad = col.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
+        let st = state::load_session(&s.dir);
+        let x = bar::Extras {
+            transcript_age_ms: tokens::transcript_for(&s.dir, &u)
+                .and_then(|t| tokens::transcript_age(&t, now)),
+            ..Default::default()
+        };
         let row = bar::render(
-            &state::load_session(&s.dir),
+            &st,
             &u,
-            &bar::Extras::default(),
+            &x,
             cfg,
             now,
             (width as usize).saturating_sub(col + 2),
             false,
         );
+        // Color the verdict like the panel does, so busy sessions stand out from idle ones.
+        let style = if st.first_t > 0 {
+            panel::verdict_style(st.verdict_with(now, cfg.thresholds.stuck_repeats))
+        } else if x.looks_active() {
+            Style::new()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().add_modifier(Modifier::DIM)
+        };
+        let (verdict, rest) = row
+            .split_once(" │ ")
+            .map_or((row.as_str(), ""), |(a, b)| (a, b));
+        let rest = if rest.is_empty() {
+            String::new()
+        } else {
+            format!(" │ {rest}")
+        };
         let (head, tail) = label.split_at(project.len().min(label.len()));
         out.push(Line::from(vec![
             Span::styled(head.to_string(), Style::new().add_modifier(Modifier::BOLD)),
             Span::styled(tail.to_string(), Style::new().add_modifier(Modifier::DIM)),
             Span::raw(" ".repeat(pad + 2)),
-            Span::raw(row),
+            Span::styled(
+                verdict.to_string(),
+                if color { style } else { Style::default() },
+            ),
+            Span::raw(rest),
         ]));
     }
     out

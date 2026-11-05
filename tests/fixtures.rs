@@ -139,6 +139,7 @@ fn multi_panel_with_tokens() {
     let x = Extras {
         tokens: Some(tokens::update(&tmp, &s, main.to_str())),
         burn_eta: Some(55 * 60_000),
+        transcript_age_ms: None,
     };
     let u = Usage {
         cost_usd: Some(0.12),

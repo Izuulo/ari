@@ -7,8 +7,8 @@ expression: text
 | ###########--------- 4/7 tasks                 |
 | > now: hook up token refresh                   |
 +- agents ---------------------------------------+
-| | main      editing src/auth/session.rs        |
-| +-| Explore grep refresh_token - 14 calls - 1. |
+| | main      $ cargo test - 8s                  |
+| +-| Explore grep refresh_token 3s - 14 calls . |
 | +-v tests   done 38s - 12 passed               |
 | +-o Plan    stale 6m - reading big.log         |
 +- errors ---------------------------------------+
