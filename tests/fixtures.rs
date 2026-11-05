@@ -47,3 +47,69 @@ fn basic_verdicts() {
     }
     insta::assert_snapshot!(out.join("\n"));
 }
+
+/// The multi-agent fixture, frozen at three moments: after the failure,
+/// while both subagents run, and at the end.
+#[test]
+fn multi_panel() {
+    use ari_cli::{config::Config, panel, state::State, usage::Usage};
+    let events = fixture("multi");
+    let at = |pred: &dyn Fn(&State, &ari_cli::event::Event) -> bool| {
+        let mut s = State::default();
+        for ev in &events {
+            s.apply(ev);
+            if pred(&s, ev) {
+                return (s, ev.t);
+            }
+        }
+        (s, events.last().unwrap().t)
+    };
+    let frames = [
+        ("after failure", at(&|_, e| e.ok == Some(false))),
+        (
+            "two agents",
+            at(&|s, _| {
+                s.running_agents(u64::MAX / 2) == 0
+                    && s.agents
+                        .iter()
+                        .filter(|a| a.id != "main" && !a.done && a.calls > 0)
+                        .count()
+                        == 2
+            }),
+        ),
+        ("end", at(&|_, _| false)),
+    ];
+    let out: Vec<String> = frames
+        .iter()
+        .map(|(name, (s, t))| {
+            let lines = panel::lines(
+                s,
+                &Usage::default(),
+                &Config::default(),
+                panel::View::default(),
+                *t,
+                "12:00",
+                56,
+                60,
+                false,
+            );
+            format!("--- {name} ---\n{}", panel::to_plain(&lines))
+        })
+        .collect();
+    insta::assert_snapshot!(out.join("\n"));
+}
+
+#[test]
+fn multi_verdicts() {
+    use ari_cli::state::State;
+    let mut s = State::default();
+    let mut seen = Vec::new();
+    for ev in &fixture("multi") {
+        s.apply(ev);
+        let v = s.verdict(ev.t).label();
+        if seen.last() != Some(&v) {
+            seen.push(v);
+        }
+    }
+    assert_eq!(seen, ["IDLE", "ON TRACK", "RETRYING", "ON TRACK", "DONE"]);
+}

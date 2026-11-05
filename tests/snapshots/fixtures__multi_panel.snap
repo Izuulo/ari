@@ -1,0 +1,60 @@
+---
+source: tests/fixtures.rs
+expression: "out.join(\"\\n\")"
+---
+--- after failure ---
+╭─ ARI (>_<) ────────────────────────────────── 12:00 ─╮
+│ ↻ RETRYING  milestone: Do these steps in order, usi… │
+│ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
+│ ▸ now: build                                         │
+├─ agents ─────────────────────────────────────────────┤
+│ ⠏ main   $ python3 test_calc.py                      │
+├─ errors ─────────────────────────────────────────────┤
+│ ✗ 0s   python3 test_calc.py · AssertionError         │
+├─ usage ──────────────────────────────────────────────┤
+│ ctx —                                                │
+│ 5h  —                                                │
+│ 7d  —                                                │
+├─ session ────────────────────────────────────────────┤
+│ cost  —                                              │
+│ turns 1                                              │
+╰──────────────────────────────────────────────────────╯
+--- two agents ---
+╭─ ARI (•_•) ────────────────────────────────── 12:00 ─╮
+│ ● ON TRACK  milestone: Do these steps in order, usi… │
+│ ██████████░░░░░░░░░░ 2/4 tasks                       │
+│ ▸ now: survey                                        │
+├─ agents ─────────────────────────────────────────────┤
+│ ⠦ main      agent Explore: Describe test_calc.py     │
+│ ├─⠦ Explore reading calc.py · 1 call · 1s            │
+│ └─⠦ Explore reading test_calc.py · 1 call · 0s       │
+├─ errors ─────────────────────────────────────────────┤
+│ ✓ 6s   python3 test_calc.py · AssertionError         │
+│        fixed by main                                 │
+├─ usage ──────────────────────────────────────────────┤
+│ ctx —                                                │
+│ 5h  —                                                │
+│ 7d  —                                                │
+├─ session ────────────────────────────────────────────┤
+│ cost  —                                              │
+│ turns 1                                              │
+╰──────────────────────────────────────────────────────╯
+--- end ---
+╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
+│ ✓ DONE  milestone: Do these steps in order, using t… │
+│ ████████████████████ 4/4 tasks                       │
+├─ agents ─────────────────────────────────────────────┤
+│ ◌ main      idle                                     │
+│ ├─✓ Explore done 2s · `calc.py` defines an `add(a, … │
+│ └─✓ Explore done 1s · The file imports `add` from a… │
+├─ errors ─────────────────────────────────────────────┤
+│ ✓ 10s  python3 test_calc.py · AssertionError         │
+│        fixed by main                                 │
+├─ usage ──────────────────────────────────────────────┤
+│ ctx —                                                │
+│ 5h  —                                                │
+│ 7d  —                                                │
+├─ session ────────────────────────────────────────────┤
+│ cost  —                                              │
+│ turns 1                                              │
+╰──────────────────────────────────────────────────────╯

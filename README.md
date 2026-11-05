@@ -16,6 +16,8 @@ claude plugin install ari --marketplace Izuulo/ari           # hooks that feed i
 ari setup                                                    # add ARI's row to your statusline
 ```
 
+`cargo install` puts `ari` in `~/.cargo/bin`; make sure that's on your `PATH` (hooks find `ari` through it, and stay silent if they can't).
+
 Prefer the in-app flow? `/plugin marketplace add Izuulo/ari`, then `/plugin install ari@ari`, then `/ari:setup`.
 
 `ari setup` shows you exactly what it will change and asks first. It keeps your current statusline and runs it alongside ARI's row; `ari uninstall` puts it back byte for byte.
@@ -35,6 +37,30 @@ Then: task progress from Claude's own task list (`no plan yet` when there isn't 
 
 A failed command counts as fixed when the same command (or a write to the same file) later succeeds.
 
+## The full panel
+
+Run `ari watch` in a second pane (`tmux split-window ari watch` works fine). It follows the most recent Claude Code session in the current directory:
+
+```
+╭─ ARI (•_•) ────────────────────────────────── 13:03 ─╮
+│ ● ON TRACK                 milestone: calculator fix │
+│ ██████████░░░░░░░░░░ 2/4 tasks                       │
+│ ▸ now: survey                                        │
+├─ agents ─────────────────────────────────────────────┤
+│ ⠦ main      agent Explore: Describe test_calc.py     │
+│ ├─⠦ Explore reading calc.py · 1 call · 1s            │
+│ └─⠦ Explore reading test_calc.py · 1 call · 0s       │
+├─ errors ─────────────────────────────────────────────┤
+│ ✓ 10s  python3 test_calc.py · AssertionError         │
+│        fixed by main                                 │
+├─ usage ──────────────────────────────────────────────┤
+│ ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ 71%  142k/200k              │
+│ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m                │
+╰──────────────────────────────────────────────────────╯
+```
+
+`ari watch --all` lists every live session; `--session <id>` pins one; `--once` prints the panel and exits. Keys: `q` quit, `e` more errors, `a` all agents, `tab` next session. Set `bell = true` in the config to ring when Claude needs you.
+
 ## Config
 
 `~/.config/ari/config.toml`, every key optional:
@@ -42,6 +68,8 @@ A failed command counts as fixed when the same command (or a write to the same f
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
 hide = ["cost"]             # segments to drop: tasks agents errors ctx 5h 7d cost
+face = true                 # the little (•_•) in the panel header
+bell = false                # ring the terminal bell when Claude needs you (ari watch)
 max_width = 0               # 0 = terminal width
 retention_days = 7          # session logs older than this are deleted
 
@@ -68,7 +96,7 @@ ctx_crit = 80               # and red
 
 ## Coming next
 
-`ari watch`: a full TUI panel with the agent tree, error history and usage detail; stuck-loop detection; cache savings and rate-limit burn rate. See [docs/PRD.md](docs/PRD.md).
+Stuck-loop detection, token totals per agent, cache savings and a rate-limit burn-rate warning. See [docs/PRD.md](docs/PRD.md).
 
 ## License
 

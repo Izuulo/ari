@@ -136,3 +136,16 @@ fn unwritable_state_dir_is_silent() {
     std::fs::write(s.join("ari"), "a file, not a dir").unwrap();
     assert_silent(&hook(&s, &pre_tool("s1", "ls")));
 }
+
+#[test]
+fn first_event_writes_meta_once() {
+    let s = tmp("meta-first");
+    assert_silent(&hook(&s, &pre_tool("s1", "ls")));
+    let meta = s.join("ari/sessions/s1/meta.json");
+    let first = std::fs::read_to_string(&meta).unwrap();
+    assert!(first.contains(r#""cwd":"/p""#), "{first}");
+    let start =
+        serde_json::json!({"session_id": "s1", "hook_event_name": "SessionStart", "cwd": "/other"});
+    assert_silent(&hook(&s, start.to_string().as_bytes()));
+    assert_eq!(std::fs::read_to_string(&meta).unwrap(), first);
+}
