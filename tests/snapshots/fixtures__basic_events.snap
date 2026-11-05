@@ -3,50 +3,50 @@ source: tests/fixtures.rs
 expression: lines
 ---
 {"t":1793899403786,"e":"SessionStart","kind":"startup","path":"/home/user/.claude/projects/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq40000gn-T-tmp-0gSDsjpDg3-proj/65b17efa-ad3e-4a4b-8764-8f0d81cea1de.jsonl"}
-{"t":1793899404465,"e":"UserPromptSubmit","msg":"Do these steps in order, using the tools named: 1. Use TaskCreate to create three tasks: \"write script\", \"run script\", \"explore files\". 2. Use TaskUpdate to mark \"write script\" in_progress. Use Write…"}
-{"t":1793899407359,"e":"PreToolUse","tool":"ToolSearch","id":"toolu_01DP1PeQFFniKmP9ySY3rc45","act":"ToolSearch","sig":"ToolSearch","h":6852949981321772887}
-{"t":1793899407390,"e":"PostToolUse","tool":"ToolSearch","id":"toolu_01DP1PeQFFniKmP9ySY3rc45","act":"ToolSearch","sig":"ToolSearch","h":6852949981321772887,"ok":true,"dur":3}
-{"t":1793899409053,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01SKiyZPRSsnsoFwJDWR7DBX","act":"updating plan","sig":"TaskCreate","h":7297517868600706970}
+{"t":1793899404465,"e":"UserPromptSubmit","msg":"Do these steps in order, using the tools named: 1. Use TaskCreate to create three tasks: \"write script\", \"run script\", \"explore files\". 2. Use TaskUpdate to mark \"write script\" in_progress. Use Write…","pm":"dontAsk"}
+{"t":1793899407359,"e":"PreToolUse","tool":"ToolSearch","id":"toolu_01DP1PeQFFniKmP9ySY3rc45","act":"ToolSearch","sig":"ToolSearch","h":6852949981321772887,"pm":"dontAsk"}
+{"t":1793899407390,"e":"PostToolUse","tool":"ToolSearch","id":"toolu_01DP1PeQFFniKmP9ySY3rc45","act":"ToolSearch","sig":"ToolSearch","h":6852949981321772887,"ok":true,"dur":3,"pm":"dontAsk"}
+{"t":1793899409053,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01SKiyZPRSsnsoFwJDWR7DBX","act":"updating plan","sig":"TaskCreate","h":7297517868600706970,"pm":"dontAsk"}
 {"t":1793899409074,"e":"TaskCreated","task":{"id":"1","subject":"write script"}}
-{"t":1793899409087,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01SKiyZPRSsnsoFwJDWR7DBX","act":"updating plan","sig":"TaskCreate","h":7297517868600706970,"ok":true,"task":{"id":"1","subject":"write script","status":"pending"},"dur":14}
-{"t":1793899409317,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01DJEdYwoeiTzzqjGHJtGZiE","act":"updating plan","sig":"TaskCreate","h":343042457665707031}
+{"t":1793899409087,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01SKiyZPRSsnsoFwJDWR7DBX","act":"updating plan","sig":"TaskCreate","h":7297517868600706970,"ok":true,"task":{"id":"1","subject":"write script","status":"pending"},"dur":14,"pm":"dontAsk"}
+{"t":1793899409317,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01DJEdYwoeiTzzqjGHJtGZiE","act":"updating plan","sig":"TaskCreate","h":343042457665707031,"pm":"dontAsk"}
 {"t":1793899409338,"e":"TaskCreated","task":{"id":"2","subject":"run script"}}
-{"t":1793899409353,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01DJEdYwoeiTzzqjGHJtGZiE","act":"updating plan","sig":"TaskCreate","h":343042457665707031,"ok":true,"task":{"id":"2","subject":"run script","status":"pending"},"dur":12}
-{"t":1793899409536,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01QsivmmnQqr6pRwko1drTc9","act":"updating plan","sig":"TaskCreate","h":5950972815683997234}
+{"t":1793899409353,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01DJEdYwoeiTzzqjGHJtGZiE","act":"updating plan","sig":"TaskCreate","h":343042457665707031,"ok":true,"task":{"id":"2","subject":"run script","status":"pending"},"dur":12,"pm":"dontAsk"}
+{"t":1793899409536,"e":"PreToolUse","tool":"TaskCreate","id":"toolu_01QsivmmnQqr6pRwko1drTc9","act":"updating plan","sig":"TaskCreate","h":5950972815683997234,"pm":"dontAsk"}
 {"t":1793899409554,"e":"TaskCreated","task":{"id":"3","subject":"explore files"}}
-{"t":1793899409563,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01QsivmmnQqr6pRwko1drTc9","act":"updating plan","sig":"TaskCreate","h":5950972815683997234,"ok":true,"task":{"id":"3","subject":"explore files","status":"pending"},"dur":11}
-{"t":1793899410986,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01H4Apawmv3Ue5s3FqEvDXmq","act":"updating plan","sig":"TaskUpdate","h":9509003683197396077}
-{"t":1793899411005,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01H4Apawmv3Ue5s3FqEvDXmq","act":"updating plan","sig":"TaskUpdate","h":9509003683197396077,"ok":true,"task":{"id":"1","status":"in_progress"},"dur":1}
-{"t":1793899412925,"e":"PreToolUse","tool":"Write","id":"toolu_01PoUzTDDbWMHs3M4mGwifai","act":"editing hello.py","sig":"Write:/home/user/proj/hello.py","h":2826534294566133474}
-{"t":1793899412954,"e":"PostToolUse","tool":"Write","id":"toolu_01PoUzTDDbWMHs3M4mGwifai","act":"editing hello.py","sig":"Write:/home/user/proj/hello.py","h":2826534294566133474,"ok":true,"dur":5}
-{"t":1793899415133,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01PdA8M6S1TRHQo63BDoeqXY","act":"updating plan","sig":"TaskUpdate","h":10954497887812620727}
+{"t":1793899409563,"e":"PostToolUse","tool":"TaskCreate","id":"toolu_01QsivmmnQqr6pRwko1drTc9","act":"updating plan","sig":"TaskCreate","h":5950972815683997234,"ok":true,"task":{"id":"3","subject":"explore files","status":"pending"},"dur":11,"pm":"dontAsk"}
+{"t":1793899410986,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01H4Apawmv3Ue5s3FqEvDXmq","act":"updating plan","sig":"TaskUpdate","h":9509003683197396077,"pm":"dontAsk"}
+{"t":1793899411005,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01H4Apawmv3Ue5s3FqEvDXmq","act":"updating plan","sig":"TaskUpdate","h":9509003683197396077,"ok":true,"task":{"id":"1","status":"in_progress"},"dur":1,"pm":"dontAsk"}
+{"t":1793899412925,"e":"PreToolUse","tool":"Write","id":"toolu_01PoUzTDDbWMHs3M4mGwifai","act":"editing hello.py","sig":"Write:/home/user/proj/hello.py","h":2826534294566133474,"pm":"dontAsk"}
+{"t":1793899412954,"e":"PostToolUse","tool":"Write","id":"toolu_01PoUzTDDbWMHs3M4mGwifai","act":"editing hello.py","sig":"Write:/home/user/proj/hello.py","h":2826534294566133474,"ok":true,"dur":5,"pm":"dontAsk"}
+{"t":1793899415133,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01PdA8M6S1TRHQo63BDoeqXY","act":"updating plan","sig":"TaskUpdate","h":10954497887812620727,"pm":"dontAsk"}
 {"t":1793899415156,"e":"TaskCompleted","task":{"id":"1","subject":"write script","status":"completed"}}
-{"t":1793899415168,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01PdA8M6S1TRHQo63BDoeqXY","act":"updating plan","sig":"TaskUpdate","h":10954497887812620727,"ok":true,"task":{"id":"1","status":"completed"},"dur":11}
-{"t":1793899415330,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01JGLGViKLwXDPGuoGcbtkk3","act":"updating plan","sig":"TaskUpdate","h":11442586140365593440}
-{"t":1793899415349,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01JGLGViKLwXDPGuoGcbtkk3","act":"updating plan","sig":"TaskUpdate","h":11442586140365593440,"ok":true,"task":{"id":"2","status":"in_progress"},"dur":1}
-{"t":1793899415875,"e":"PreToolUse","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559}
-{"t":1793899417129,"e":"PostToolUseFailure","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559,"ok":false,"kind":"exit 1","msg":"SyntaxError: unexpected EOF while parsing","dur":1231}
-{"t":1793899419193,"e":"PreToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078}
-{"t":1793899419219,"e":"PostToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"ok":true,"dur":3}
-{"t":1793899419807,"e":"PreToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064}
-{"t":1793899419851,"e":"PostToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064,"ok":true,"dur":30}
-{"t":1793899421296,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01HFB4JwEfgMTRarcqVLCTTb","act":"updating plan","sig":"TaskUpdate","h":10330145707455771182}
+{"t":1793899415168,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01PdA8M6S1TRHQo63BDoeqXY","act":"updating plan","sig":"TaskUpdate","h":10954497887812620727,"ok":true,"task":{"id":"1","status":"completed"},"dur":11,"pm":"dontAsk"}
+{"t":1793899415330,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01JGLGViKLwXDPGuoGcbtkk3","act":"updating plan","sig":"TaskUpdate","h":11442586140365593440,"pm":"dontAsk"}
+{"t":1793899415349,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01JGLGViKLwXDPGuoGcbtkk3","act":"updating plan","sig":"TaskUpdate","h":11442586140365593440,"ok":true,"task":{"id":"2","status":"in_progress"},"dur":1,"pm":"dontAsk"}
+{"t":1793899415875,"e":"PreToolUse","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559,"pm":"dontAsk"}
+{"t":1793899417129,"e":"PostToolUseFailure","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559,"ok":false,"kind":"exit 1","msg":"SyntaxError: unexpected EOF while parsing","dur":1231,"pm":"dontAsk"}
+{"t":1793899419193,"e":"PreToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"pm":"dontAsk"}
+{"t":1793899419219,"e":"PostToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"ok":true,"dur":3,"pm":"dontAsk"}
+{"t":1793899419807,"e":"PreToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064,"pm":"dontAsk"}
+{"t":1793899419851,"e":"PostToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064,"ok":true,"dur":30,"pm":"dontAsk"}
+{"t":1793899421296,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01HFB4JwEfgMTRarcqVLCTTb","act":"updating plan","sig":"TaskUpdate","h":10330145707455771182,"pm":"dontAsk"}
 {"t":1793899421315,"e":"TaskCompleted","task":{"id":"2","subject":"run script","status":"completed"}}
-{"t":1793899421324,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01HFB4JwEfgMTRarcqVLCTTb","act":"updating plan","sig":"TaskUpdate","h":10330145707455771182,"ok":true,"task":{"id":"2","status":"completed"},"dur":10}
-{"t":1793899421491,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01SXm7UKpFzg9TZyijVrgBKZ","act":"updating plan","sig":"TaskUpdate","h":10814570387264301743}
-{"t":1793899421517,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01SXm7UKpFzg9TZyijVrgBKZ","act":"updating plan","sig":"TaskUpdate","h":10814570387264301743,"ok":true,"task":{"id":"3","status":"in_progress"},"dur":1}
-{"t":1793899422395,"e":"PreToolUse","tool":"Agent","id":"toolu_01VnHwGNV2o1CeVsN5Kc36i1","act":"agent Explore: List files and read hello.py","sig":"Agent","h":857371574028956762}
-{"t":1793899422484,"e":"PostToolUse","tool":"Agent","id":"toolu_01VnHwGNV2o1CeVsN5Kc36i1","act":"agent Explore: List files and read hello.py","sig":"Agent","h":857371574028956762,"ok":true,"dur":43}
+{"t":1793899421324,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01HFB4JwEfgMTRarcqVLCTTb","act":"updating plan","sig":"TaskUpdate","h":10330145707455771182,"ok":true,"task":{"id":"2","status":"completed"},"dur":10,"pm":"dontAsk"}
+{"t":1793899421491,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01SXm7UKpFzg9TZyijVrgBKZ","act":"updating plan","sig":"TaskUpdate","h":10814570387264301743,"pm":"dontAsk"}
+{"t":1793899421517,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01SXm7UKpFzg9TZyijVrgBKZ","act":"updating plan","sig":"TaskUpdate","h":10814570387264301743,"ok":true,"task":{"id":"3","status":"in_progress"},"dur":1,"pm":"dontAsk"}
+{"t":1793899422395,"e":"PreToolUse","tool":"Agent","id":"toolu_01VnHwGNV2o1CeVsN5Kc36i1","act":"agent Explore: List files and read hello.py","sig":"Agent","h":857371574028956762,"pm":"dontAsk"}
+{"t":1793899422484,"e":"PostToolUse","tool":"Agent","id":"toolu_01VnHwGNV2o1CeVsN5Kc36i1","act":"agent Explore: List files and read hello.py","sig":"Agent","h":857371574028956762,"ok":true,"dur":43,"pm":"dontAsk"}
 {"t":1793899422486,"e":"SubagentStart","a":"a4176d06206b87c3a","at":"Explore"}
-{"t":1793899424925,"e":"Stop","msg":"The Explore subagent is still running, so I can't mark \"explore files\" completed or reply \"done\" yet. Progress so far:","bg":1}
-{"t":1793899425029,"e":"PreToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Bash","id":"toolu_018dUMft2jvZyHCMhNYRAi3D","act":"$ ls -la /home/user/proj","sig":"Bash:ls -la","h":13506629152313184320}
-{"t":1793899425053,"e":"PostToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Bash","id":"toolu_018dUMft2jvZyHCMhNYRAi3D","act":"$ ls -la /home/user/proj","sig":"Bash:ls -la","h":13506629152313184320,"ok":true,"dur":11}
-{"t":1793899425427,"e":"PreToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Read","id":"toolu_01Lg4tkiPtjn3c9Pmg6RemEC","act":"reading hello.py","sig":"Read:/home/user/proj/hello.py","h":7157180850531310929}
-{"t":1793899425452,"e":"PostToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Read","id":"toolu_01Lg4tkiPtjn3c9Pmg6RemEC","act":"reading hello.py","sig":"Read:/home/user/proj/hello.py","h":7157180850531310929,"ok":true,"dur":3}
-{"t":1793899427586,"e":"SubagentStop","a":"a4176d06206b87c3a","at":"Explore","msg":"The directory contains one file, `hello.py` (12 bytes, no other files besides the `.` and `..` entries), and `hello.py` contains a single line, `print('hi')`, …","path":"/home/user/.claude/projects/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq40000gn-T-tmp-0gSDsjpDg3-proj/65b17efa-ad3e-4a4b-8764-8f0d81cea1de/subagents/agent-a4176d06206b87c3a.jsonl"}
-{"t":1793899427636,"e":"UserPromptSubmit","msg":"<task-notification> <task-id>a4176d06206b87c3a</task-id> <tool-use-id>toolu_01VnHwGNV2o1CeVsN5Kc36i1</tool-use-id> <output-file>/private/tmp/claude-501/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq…"}
-{"t":1793899429339,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01JLJXhvMKeVVwn88RhEh4uy","act":"updating plan","sig":"TaskUpdate","h":9648649708768893045}
+{"t":1793899424925,"e":"Stop","msg":"The Explore subagent is still running, so I can't mark \"explore files\" completed or reply \"done\" yet. Progress so far:","bg":1,"bgs":["subagent: List files and read hello.py"],"crons":[],"pm":"dontAsk"}
+{"t":1793899425029,"e":"PreToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Bash","id":"toolu_018dUMft2jvZyHCMhNYRAi3D","act":"$ ls -la /home/user/proj","sig":"Bash:ls -la","h":13506629152313184320,"pm":"dontAsk"}
+{"t":1793899425053,"e":"PostToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Bash","id":"toolu_018dUMft2jvZyHCMhNYRAi3D","act":"$ ls -la /home/user/proj","sig":"Bash:ls -la","h":13506629152313184320,"ok":true,"dur":11,"pm":"dontAsk"}
+{"t":1793899425427,"e":"PreToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Read","id":"toolu_01Lg4tkiPtjn3c9Pmg6RemEC","act":"reading hello.py","sig":"Read:/home/user/proj/hello.py","h":7157180850531310929,"pm":"dontAsk"}
+{"t":1793899425452,"e":"PostToolUse","a":"a4176d06206b87c3a","at":"Explore","tool":"Read","id":"toolu_01Lg4tkiPtjn3c9Pmg6RemEC","act":"reading hello.py","sig":"Read:/home/user/proj/hello.py","h":7157180850531310929,"ok":true,"dur":3,"pm":"dontAsk"}
+{"t":1793899427586,"e":"SubagentStop","a":"a4176d06206b87c3a","at":"Explore","msg":"The directory contains one file, `hello.py` (12 bytes, no other files besides the `.` and `..` entries), and `hello.py` contains a single line, `print('hi')`, …","bgs":["subagent: List files and read hello.py"],"crons":[],"path":"/home/user/.claude/projects/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq40000gn-T-tmp-0gSDsjpDg3-proj/65b17efa-ad3e-4a4b-8764-8f0d81cea1de/subagents/agent-a4176d06206b87c3a.jsonl","pm":"dontAsk"}
+{"t":1793899427636,"e":"UserPromptSubmit","msg":"<task-notification> <task-id>a4176d06206b87c3a</task-id> <tool-use-id>toolu_01VnHwGNV2o1CeVsN5Kc36i1</tool-use-id> <output-file>/private/tmp/claude-501/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq…","pm":"dontAsk"}
+{"t":1793899429339,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01JLJXhvMKeVVwn88RhEh4uy","act":"updating plan","sig":"TaskUpdate","h":9648649708768893045,"pm":"dontAsk"}
 {"t":1793899429352,"e":"TaskCompleted","task":{"id":"3","subject":"explore files","status":"completed"}}
-{"t":1793899429359,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01JLJXhvMKeVVwn88RhEh4uy","act":"updating plan","sig":"TaskUpdate","h":9648649708768893045,"ok":true,"task":{"id":"3","status":"completed"},"dur":6}
-{"t":1793899430580,"e":"Stop","msg":"done","bg":0}
+{"t":1793899429359,"e":"PostToolUse","tool":"TaskUpdate","id":"toolu_01JLJXhvMKeVVwn88RhEh4uy","act":"updating plan","sig":"TaskUpdate","h":9648649708768893045,"ok":true,"task":{"id":"3","status":"completed"},"dur":6,"pm":"dontAsk"}
+{"t":1793899430580,"e":"Stop","msg":"done","bg":0,"bgs":[],"crons":[],"pm":"dontAsk"}
 {"t":1793899430692,"e":"SessionEnd","kind":"other"}

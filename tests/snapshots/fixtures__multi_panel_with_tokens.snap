@@ -4,6 +4,7 @@ expression: out
 ---
 ╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
 │ ✓ DONE  milestone: Do these steps in order, using t… │
+│ DON'T ASK                                            │
 │ ████████████████████ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      haiku-5-5 · idle · 417k tok              │
@@ -22,6 +23,6 @@ expression: out
 │ tokens  481k · 3.1k out · 1 turn                     │
 │ cache   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱ 90% hit                 │
 │         saved ≈ $0.39 vs uncached                    │
-│ time    40s · claude 75% · tools 10%                 │
+│ time    40s · claude 75% · tools 10% · other 15%     │
 │ cost    $0.12 · $0.03/task done                      │
 ╰──────────────────────────────────────────────────────╯

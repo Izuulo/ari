@@ -15,6 +15,9 @@ pub struct View {
     pub expand_agents: bool,
     /// Show the recap (`Extras::recap`) in place of the sections.
     pub recap: bool,
+    /// `ari watch --all`: the highlighted row, and whether its session is open.
+    pub sel: usize,
+    pub open: bool,
 }
 
 type Row = Vec<Span<'static>>;
@@ -194,6 +197,15 @@ pub fn lines(
         color,
         inner: w.saturating_sub(4),
     };
+    // Wide panes split into two columns (not the recap view): agents/errors | usage/session/turns.
+    let two = w >= 120 && !(view.recap && x.recap.is_some());
+    let col = |inner| Ctx { color, inner };
+    let (lc, rc) = if two {
+        let l = (w - 7) / 2;
+        (col(l), col(w - 7 - l))
+    } else {
+        (col(c.inner), col(c.inner))
+    };
     let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
@@ -227,26 +239,40 @@ pub fn lines(
                         )],
                     );
                 }
+                if let Some(b) = badges(st, u, &c) {
+                    rows.insert(1.min(rows.len()), b);
+                }
+                if st.first_t > 0
+                    && matches!(v, Verdict::Idle | Verdict::Done)
+                    && let Some(a) = x.tokens.as_ref().and_then(|t| t.main.away.as_ref())
+                {
+                    rows.push(vec![c.dim(format!("“{a}”"))]);
+                }
                 rows
             },
         },
         Section {
             title: Some("agents"),
-            rows: agents(st, x, &c, view, now),
+            rows: agents(st, x, &lc, view, now),
         },
         Section {
             title: Some("errors"),
-            rows: errors(st, &c, view, now),
+            rows: errors(st, &lc, view, now),
         },
         Section {
             title: Some("usage"),
-            rows: usage(st, u, x, cfg, &c, now),
+            rows: usage(st, u, x, cfg, &rc, now),
         },
         Section {
             title: Some("session"),
-            rows: session(st, u, x, cfg, &c),
+            rows: session(st, u, x, cfg, &rc, now),
+        },
+        Section {
+            title: Some("turns"),
+            rows: turns(st, x, &rc, now),
         },
     ];
+    sections.retain(|s| s.title != Some("turns") || !s.rows.is_empty());
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -257,7 +283,18 @@ pub fn lines(
         });
         sections.extend(recap_sections(r, &c, false));
     }
-    collapse(&mut sections, height as usize);
+    let cols = if two {
+        let mut right = sections.split_off(3);
+        let mut left = sections.split_off(1);
+        // Each column gets the height left under the full-width header rows.
+        let h = (height as usize).saturating_sub(sections[0].rows.len());
+        collapse(&mut left, h);
+        collapse(&mut right, h);
+        Some((left, right))
+    } else {
+        collapse(&mut sections, height as usize);
+        None
+    };
 
     let border = c.dim("");
     let bstyle = border.style;
@@ -295,7 +332,10 @@ pub fn lines(
     title.push(Span::styled("─".repeat(fill), bstyle));
     title.extend(tail);
     title.push(Span::styled(right, bstyle));
-    frame(title, sections, &c, w, cfg.ascii)
+    match cols {
+        Some((l, r)) => frame_two(title, sections.remove(0), l, r, &c, w, cfg.ascii),
+        None => frame(title, sections, &c, w, cfg.ascii),
+    }
 }
 
 /// The box around the sections: `title` is the full top row, then `├─ name ─┤` headers,
@@ -324,6 +364,76 @@ fn frame(title: Row, sections: Vec<Section>, c: &Ctx, w: usize, ascii: bool) -> 
     }
     out.push(Line::from(Span::styled(
         format!("╰{}╯", "─".repeat(w.saturating_sub(2))),
+        bstyle,
+    )));
+    if ascii {
+        crate::ascii::map_lines(out)
+    } else {
+        out
+    }
+}
+
+/// [`frame`] with two columns under the full-width `top`:
+/// `│ left │ right │`, headers joined as `├─ agents ──┼─ usage ──┤`, bottom `╰──┴──╯`.
+fn frame_two(
+    title: Row,
+    top: Section,
+    left: Vec<Section>,
+    right: Vec<Section>,
+    c: &Ctx,
+    w: usize,
+    ascii: bool,
+) -> Vec<Line<'static>> {
+    let bstyle = c.dim("").style;
+    let lw = (w - 7) / 2;
+    let rw = w - 7 - lw;
+    let mut out = frame(title, vec![top], c, w, false);
+    out.pop(); // the bottom edge; ours has the divider in it
+    // A column as cells `cw + 2` wide: (is a header, spans).
+    let cells = |secs: Vec<Section>, cw: usize| {
+        let mut v: Vec<(bool, Row)> = Vec::new();
+        for sec in secs {
+            if let Some(t) = sec.title {
+                let head = format!("─ {t} ");
+                let fill = (cw + 2).saturating_sub(head.width());
+                v.push((
+                    true,
+                    vec![Span::styled(format!("{head}{}", "─".repeat(fill)), bstyle)],
+                ));
+            }
+            for row in sec.rows {
+                let row = fit(row, cw);
+                let pad = cw.saturating_sub(row_width(&row));
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(row);
+                spans.push(Span::raw(" ".repeat(pad + 1)));
+                v.push((false, spans));
+            }
+        }
+        v
+    };
+    let (l, r) = (cells(left, lw), cells(right, rw));
+    for i in 0..l.len().max(r.len()) {
+        let blank = |cw: usize| (false, vec![Span::raw(" ".repeat(cw + 2))]);
+        let (lh, lrow) = l.get(i).cloned().unwrap_or_else(|| blank(lw));
+        let (rh, rrow) = r.get(i).cloned().unwrap_or_else(|| blank(rw));
+        let mid = match (lh, rh) {
+            (true, true) if i == 0 => "┬",
+            (true, true) => "┼",
+            (true, false) => "┤",
+            (false, true) => "├",
+            (false, false) => "│",
+        };
+        let edge = |h: bool, a: &'static str| Span::styled(if h { a } else { "│" }, bstyle);
+        let mut spans = vec![edge(lh, "├")];
+        spans.extend(lrow);
+        spans.push(Span::styled(mid, bstyle));
+        spans.extend(rrow);
+        spans.push(edge(rh, "┤"));
+        out.push(Line::from(spans));
+    }
+    out.push(Line::from(Span::styled(
+        format!("╰{}┴{}╯", "─".repeat(lw + 2), "─".repeat(rw + 2)),
         bstyle,
     )));
     if ascii {
@@ -513,6 +623,15 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
             .map(|x| x.rows.len() + x.title.is_some() as usize)
             .sum::<usize>()
     };
+    while total(secs) > height {
+        let Some(s) = secs.iter_mut().find(|s| s.title == Some("turns")) else {
+            break;
+        };
+        s.rows.pop();
+        if s.rows.is_empty() {
+            secs.retain(|s| s.title != Some("turns"));
+        }
+    }
     for title in ["session", "usage"] {
         if total(secs) > height {
             secs.retain(|s| s.title != Some(title));
@@ -529,6 +648,64 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
             s.rows.pop();
         }
     }
+}
+
+/// Cost between two times from the sampled cumulative cost; never negative.
+fn cost_between(samples: &[crate::burn::Sample], a: u64, b: u64) -> Option<f64> {
+    let at = |t: u64| samples.iter().rev().find(|s| s.t <= t)?.cost;
+    Some((at(b)? - at(a)?).max(0.0))
+}
+
+/// Turns and compactions, newest first.
+fn turns(st: &State, x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
+    if st.turn_log.len() < 2 {
+        return Vec::new();
+    }
+    let mut items: Vec<(u64, Row)> = Vec::new();
+    for r in &st.turn_log {
+        let end = r.end.unwrap_or(now);
+        let mut t = format!(
+            "{}  {}  {} call{}",
+            local_hhmm(r.start),
+            dur(end.saturating_sub(r.start)),
+            r.calls,
+            if r.calls == 1 { "" } else { "s" }
+        );
+        let style = match (r.end, r.ok) {
+            (None, _) => Style::new().fg(Color::Cyan),
+            (_, false) => Style::new().fg(Color::Red),
+            _ => Style::new(),
+        };
+        let mut row = Vec::new();
+        if r.failed > 0 {
+            row.push(c.span(format!("{t}  "), style));
+            row.push(c.span(format!("✗ {}", r.failed), Style::new().fg(Color::Red)));
+            t = String::new();
+        }
+        if let Some(usd) = r.end.and_then(|e| cost_between(&x.samples, r.start, e)) {
+            t.push_str(&format!("  ${usd:.2}"));
+        }
+        t.push_str(&format!("  {}", r.prompt));
+        row.push(c.span(t, if row.is_empty() { style } else { Style::new() }));
+        items.push((r.start, row));
+    }
+    for (t, kind) in &st.compactions {
+        let before = x
+            .samples
+            .iter()
+            .rev()
+            .find(|s| s.t <= *t)
+            .and_then(|s| s.ctx);
+        let after = x.samples.iter().find(|s| s.t > *t).and_then(|s| s.ctx);
+        let ctx = match (before, after) {
+            (Some(b), Some(a)) => format!(" · ctx {b:.0}% → {a:.0}%"),
+            _ => String::new(),
+        };
+        let text = format!("⟲ {} compacted ({kind}){ctx}", local_hhmm(*t));
+        items.push((*t, vec![c.dim(text)]));
+    }
+    items.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
+    items.into_iter().map(|(_, r)| r).collect()
 }
 
 fn header(
@@ -590,21 +767,35 @@ fn header(
             c.span(format!("◉ {msg}"), verdict_style(Verdict::NeedsYou)),
         ]);
     }
+    if let Some(r) = &st.resume {
+        let mut t = "↻ resumed".to_string();
+        if let Some(ms) = r.away_ms {
+            t += &format!(" after {}", age(ms));
+        }
+        if r.cold == Some(true) {
+            t += " · cache cold";
+        }
+        if let Some(usd) = r.rebuild_usd {
+            t += &format!(" · ~${usd:.2} to rebuild");
+        }
+        rows.push(vec![if r.cold == Some(true) {
+            c.span(t, Style::new().fg(Color::Yellow))
+        } else {
+            c.dim(t)
+        }]);
+    }
     let (done, total) = st.tasks_done();
     if total == 0 {
-        match plan {
-            Some(p) => {
-                let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
-                let n = c.inner.saturating_sub(tail.width()).min(20);
-                rows.push(vec![
-                    c.span(
-                        cells(p.done as f64 / p.total as f64, n, '█', '░'),
-                        Style::new().fg(Color::Cyan),
-                    ),
-                    Span::raw(tail),
-                ]);
-            }
-            None => rows.push(vec![c.dim("no plan yet")]),
+        if let Some(p) = plan {
+            let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
+            let n = c.inner.saturating_sub(tail.width()).min(20);
+            rows.push(vec![
+                c.span(
+                    cells(p.done as f64 / p.total as f64, n, '█', '░'),
+                    Style::new().fg(Color::Cyan),
+                ),
+                Span::raw(tail),
+            ]);
         }
     } else {
         let tail = format!(" {done}/{total} tasks");
@@ -661,7 +852,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
     let shown: Vec<_> = subs
         .iter()
-        .filter(|a| view.expand_agents || !a.done || recent_done.contains(&a.id.as_str()))
+        .filter(|a| !a.done || (!view.expand_agents && recent_done.contains(&a.id.as_str())))
         .collect();
     let name_w = std::iter::once(4)
         .chain(shown.iter().map(|a| a.kind.width()))
@@ -696,12 +887,20 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         c.dim(tok("main").unwrap_or_default()),
     ]];
 
-    for (i, a) in shown.iter().enumerate() {
-        let branch = if i + 1 == shown.len() && shown.len() == subs.len() {
-            "└─"
-        } else {
-            "├─"
-        };
+    // Background subagents already have rows below; list shells, monitors, workflows.
+    for b in st
+        .background_names
+        .iter()
+        .filter(|b| !b.starts_with("subagent"))
+    {
+        rows.push(vec![c.dim(format!("  ↳ {b}"))]);
+    }
+    for k in &st.crons {
+        rows.push(vec![c.dim(format!("  ◷ {k}"))]);
+    }
+
+    let first_sub = rows.len();
+    for a in shown.iter() {
         let (glyph, text) = match st.agent_status(a, now) {
             AgentStatus::Running => (
                 spin.clone(),
@@ -744,19 +943,123 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             ),
         };
         rows.push(vec![
-            c.dim(branch),
+            Span::raw(""),
             glyph,
             Span::raw(" "),
-            Span::raw(pad(&a.kind)),
+            Span::raw(pad(&crate::event::truncate(&a.kind, name_w))),
             Span::raw(" "),
             model(&a.id).unwrap_or_default(),
             Span::raw(text),
         ]);
     }
-    let hidden = subs.len() - shown.len();
-    if hidden > 0 {
-        rows.push(vec![c.dim(format!("└─ … {hidden} more done (a)"))]);
+    let ledger = |id: &str| x.tokens.as_ref().and_then(|t| t.agents.get(id));
+    let toks = |ids: &[&crate::state::Agent]| -> u64 {
+        ids.iter()
+            .filter_map(|a| ledger(&a.id))
+            .map(|l| l.total())
+            .sum()
+    };
+    let tok_part = |n: u64| {
+        if n > 0 {
+            format!(" · {} tok", fmt_tokens(n))
+        } else {
+            String::new()
+        }
+    };
+    let mut fold = None;
+    if view.expand_agents {
+        // One row per (kind, model), newest group first; instant no-call helpers fold together.
+        let is_helper = |a: &crate::state::Agent| {
+            a.calls == 0 && a.ended_t.unwrap_or(a.last_t) < a.started + 1_000
+        };
+        let mut all: Vec<&crate::state::Agent> = subs.iter().copied().filter(|a| a.done).collect();
+        all.sort_by_key(|a| std::cmp::Reverse(a.ended_t.unwrap_or(a.last_t)));
+        let mut groups: Vec<((String, String), Vec<&crate::state::Agent>)> = vec![];
+        let mut helpers = 0;
+        for a in all {
+            if is_helper(a) {
+                helpers += 1;
+                continue;
+            }
+            let m = ledger(&a.id)
+                .and_then(|l| l.last_model.as_deref())
+                .filter(|m| *m != "unknown")
+                .map(crate::tokens::short_model)
+                .unwrap_or_default();
+            let key = (a.kind.clone(), m);
+            match groups.iter_mut().find(|g| g.0 == key) {
+                Some(g) => g.1.push(a),
+                None => groups.push((key, vec![a])),
+            }
+        }
+        let n_x = |n: usize| {
+            if n > 1 {
+                format!("{n}× ")
+            } else {
+                String::new()
+            }
+        };
+        let mut line = |text: String| {
+            rows.push(vec![
+                Span::raw(""),
+                c.span("✓", Style::new().fg(Color::Green)),
+                Span::raw(format!(" {text}")),
+            ])
+        };
+        for ((kind, m), g) in &groups {
+            let time: u64 = g
+                .iter()
+                .map(|a| a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started))
+                .sum();
+            let m = if m.is_empty() {
+                String::new()
+            } else {
+                format!(" · {m}")
+            };
+            line(format!(
+                "{}{kind}{m}{} · {}",
+                n_x(g.len()),
+                tok_part(toks(g)),
+                dur(time)
+            ));
+        }
+        if helpers > 0 {
+            line(format!("{}helpers", n_x(helpers)));
+        }
+    } else if subs.len() > shown.len() {
+        let hidden: Vec<_> = subs
+            .iter()
+            .copied()
+            .filter(|a| !shown.iter().any(|s| s.id == a.id))
+            .collect();
+        let mut kinds: Vec<(&str, usize)> = vec![];
+        for a in &hidden {
+            match kinds.iter_mut().find(|k| k.0 == a.kind) {
+                Some(k) => k.1 += 1,
+                None => kinds.push((&a.kind, 1)),
+            }
+        }
+        kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let named: String = kinds
+            .iter()
+            .take(3)
+            .map(|(k, n)| format!(" · {n} {k}"))
+            .collect();
+        fold = Some(vec![c.dim(format!(
+            "└─ ✓ {} more done{named}{} (a)",
+            hidden.len(),
+            tok_part(toks(&hidden))
+        ))]);
     }
+    let last = rows.len().saturating_sub(1);
+    for (i, r) in rows.iter_mut().enumerate().skip(first_sub) {
+        r[0] = c.dim(if i == last && fold.is_none() {
+            "└─"
+        } else {
+            "├─"
+        });
+    }
+    rows.extend(fold);
     rows
 }
 
@@ -766,7 +1069,10 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     if time > 0 || st.reread > 0 {
         let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
         let s = if failed == 1 { "" } else { "s" };
-        let mut parts = vec![format!("{failed} failed call{s}"), dur(time)];
+        let mut parts = vec![format!("{failed} failed call{s}")];
+        if time >= 1000 {
+            parts.push(dur(time));
+        }
         if st.reread > 0 {
             let s = if st.reread == 1 { "" } else { "s" };
             parts.push(format!("{} re-read{s}", st.reread));
@@ -834,12 +1140,58 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> R
     ]
 }
 
+const TREND_MS: u64 = 30 * 60_000;
+
+/// Samples from the 30 min before the newest one that carry a value, as (t, value).
+fn recent(
+    samples: &[crate::burn::Sample],
+    f: fn(&crate::burn::Sample) -> Option<f64>,
+) -> Vec<(u64, f64)> {
+    let v: Vec<_> = samples.iter().filter_map(|s| Some((s.t, f(s)?))).collect();
+    let from = v
+        .iter()
+        .map(|p| p.0)
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(TREND_MS);
+    v.into_iter().filter(|p| p.0 >= from).collect()
+}
+
+/// 12 equal time buckets over the window, empty ones carrying the last value; none if flat.
+fn trend(pts: &[(u64, f64)]) -> Option<String> {
+    let from = pts.iter().map(|p| p.0).max()?.saturating_sub(TREND_MS);
+    let mut buckets = [None; 12];
+    for &(t, v) in pts {
+        buckets[((t.saturating_sub(from) * 12 / TREND_MS) as usize).min(11)] = Some(v);
+    }
+    let mut last = None;
+    let v: Vec<f64> = buckets
+        .iter()
+        .filter_map(|b| {
+            last = b.or(last);
+            last
+        })
+        .collect();
+    (v.len() >= 3 && v.iter().any(|x| *x != v[0])).then(|| crate::bar::spark(&v))
+}
+
+/// $/h from the first to the last point, over at least 10 min.
+fn rate(pts: &[(u64, f64)]) -> Option<f64> {
+    let first = pts.iter().min_by_key(|p| p.0)?;
+    let last = pts.iter().max_by_key(|p| p.0)?;
+    let span = last.0.saturating_sub(first.0);
+    (span >= 10 * 60_000).then(|| ((last.1 - first.1) / (span as f64 / 3.6e6)).max(0.0))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
-    let ctx_tail = match (u.ctx_used, u.ctx_size) {
+    let mut ctx_tail = match (u.ctx_used, u.ctx_size) {
         (Some(used), Some(size)) => format!("  {}/{}", tokens_k(used), tokens_k(size)),
         _ => String::new(),
     };
+    if let Some(t) = trend(&recent(&x.samples, |s| s.ctx)) {
+        ctx_tail += &format!(" {t}");
+    }
     let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
@@ -883,27 +1235,87 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
     rows
 }
 
-fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
-    let mut rows = Vec::new();
+/// Model, effort, mode, worktree, PR and line counts in one dim row; each part only when known.
+fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
+    let mut parts: Vec<Span<'static>> = Vec::new();
+    parts.extend(u.model.clone().map(|m| c.dim(m)));
+    parts.extend(u.effort.clone().map(|e| c.dim(e)));
+    if u.fast {
+        parts.push(c.dim("fast"));
+    }
+    match st.permission_mode.as_deref() {
+        None | Some("default") => {}
+        Some("bypassPermissions") => parts.push(c.span(
+            "BYPASS",
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Some(m) => parts.push(Span::raw(match m {
+            "plan" => "PLAN".into(),
+            "acceptEdits" => "EDITS".into(),
+            "auto" => "AUTO".into(),
+            "dontAsk" => "DON'T ASK".into(),
+            other => other.to_string(),
+        })),
+    }
+    parts.extend(u.worktree.as_ref().map(|w| c.dim(format!("⎇ {w}"))));
     if let Some(pr) = &u.pr {
         // GitLab writes merge requests as !N, GitHub PRs as #N.
-        let (label, sign) = if pr.mr {
-            ("mr      ", '!')
-        } else {
-            ("pr      ", '#')
-        };
-        let mut row = vec![c.dim(label), Span::raw(format!("{sign}{}", pr.number))];
+        let (label, sign) = if pr.mr { ("MR", '!') } else { ("PR", '#') };
+        let mut text = format!("{label} {sign}{}", pr.number);
+        let mut style = Style::new();
         if let Some(state) = &pr.review_state {
-            let style = match state.as_str() {
+            text += &format!(" {}", state.replace('_', " "));
+            style = match state.as_str() {
                 "approved" => Style::new().fg(Color::Green),
                 "changes_requested" => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
                 _ => Style::new().add_modifier(Modifier::DIM),
             };
-            row.push(Span::raw(" · "));
-            row.push(c.span(state.replace('_', " "), style));
         }
-        rows.push(row);
+        parts.push(c.span(text, style));
     }
+    if let (Some(a), Some(r)) = (u.lines_added, u.lines_removed)
+        && a + r > 0
+    {
+        parts.push(c.dim(format!("+{a} −{r}")));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let mut row = Vec::new();
+    for (i, p) in parts.into_iter().enumerate() {
+        if i > 0 {
+            row.push(c.dim(" · "));
+        }
+        row.push(p);
+    }
+    Some(row)
+}
+
+/// Cold warning and recent miss for the cache row; empty when there's nothing to say.
+fn cache_suffix(u: &Usage, now: u64) -> String {
+    let Some(c) = &u.cache else {
+        return String::new();
+    };
+    let within = |t: u64| t.saturating_mul(1000).saturating_sub(now) <= 10 * 60_000;
+    let mut out = String::new();
+    match c.expires_at {
+        Some(e) if c.warm && within(e) => {
+            let m = (e.saturating_mul(1000).saturating_sub(now) / 60_000).max(1);
+            out += &format!(" · cold in {m}m");
+        }
+        _ if !c.warm && c.observed => out += " · cold",
+        _ => {}
+    }
+    if let (Some(t), Some(why)) = (c.last_miss_at, &c.last_miss)
+        && now.saturating_sub(t.saturating_mul(1000)) <= 10 * 60_000
+    {
+        out += &format!(" · last miss: {why}");
+    }
+    out
+}
+
+fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
+    let mut rows = Vec::new();
     if let Some(t) = &x.tokens
         && t.total().total() > 0
     {
@@ -922,7 +1334,7 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )),
         ]);
         if let Some(hit) = total.hit() {
-            let label = format!(" {:.0}% hit", hit * 100.0);
+            let label = format!(" {:.0}% hit{}", hit * 100.0, cache_suffix(u, now));
             let n = c.inner.saturating_sub(8 + label.width()).min(20);
             rows.push(vec![
                 c.dim("cache   "),
@@ -947,7 +1359,7 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )]);
         }
     }
-    if let Some(last) = st.test_runs.back() {
+    if let Some(last) = st.headline_run() {
         let mut row = vec![
             c.dim("tests   "),
             if last.fail > 0 {
@@ -959,18 +1371,12 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
                 c.span(format!("✓ {}", last.pass), Style::new().fg(Color::Green))
             },
         ];
-        let runs: Vec<_> = st.test_runs.iter().rev().take(10).rev().collect();
+        let full: Vec<_> = st.test_runs.iter().filter(|r| !r.partial).collect();
+        let runs: Vec<_> = full.iter().rev().take(10).rev().collect();
         if runs.len() > 1 {
-            let lo = runs.iter().map(|r| r.pass).min().unwrap_or(0);
-            let hi = runs.iter().map(|r| r.pass).max().unwrap_or(0);
+            let vals: Vec<f64> = runs.iter().map(|r| f64::from(r.pass)).collect();
             row.push(Span::raw(" · "));
-            for r in &runs {
-                let i = if hi > lo {
-                    (r.pass - lo) * 7 / (hi - lo)
-                } else {
-                    7
-                };
-                let bar = "▁▂▃▄▅▆▇█".chars().nth(i as usize).unwrap_or('█');
+            for (r, bar) in runs.iter().zip(crate::bar::spark(&vals).chars()) {
                 let style = if r.fail > 0 {
                     Style::new().fg(Color::Red)
                 } else {
@@ -996,8 +1402,10 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             ("tools", sp.tools),
             ("you", sp.waiting),
             ("idle", sp.idle),
+            ("other", sp.other),
         ] {
-            if pct(ms) > 0.0 {
+            // Unattributed time only shows once it is big enough to matter.
+            if pct(ms) > 0.0 && (name != "other" || pct(ms) >= 5.0) {
                 text += &format!(" · {name} {:.0}%", pct(ms));
             }
         }
@@ -1009,6 +1417,14 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
         Some(cost) => format!("${cost:.2}"),
         None => "—".into(),
     };
+    let costs = recent(&x.samples, |s| s.cost);
+    let mut cost = cost;
+    if let Some(r) = rate(&costs) {
+        cost += &format!(" · ${r:.2}/h");
+    }
+    if let Some(t) = trend(&costs) {
+        cost += &format!(" {t}");
+    }
     rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
 }
@@ -1157,27 +1573,142 @@ mod tests {
     }
 
     #[test]
+    fn resume_row() {
+        let (mut st, u) = multi();
+        assert!(!render(&st, &u, View::default(), 100, 30).contains("resumed"));
+        st.resume = Some(crate::state::Resume::default());
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(
+            out.contains("↻ resumed\n") || out.contains("↻ resumed "),
+            "{out}"
+        );
+        assert!(!out.contains("resumed after"));
+        st.resume = Some(crate::state::Resume {
+            away_ms: Some(3 * 3_600_000),
+            cold: Some(true),
+            rebuild_usd: Some(0.4),
+        });
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(
+            out.contains("↻ resumed after 3h · cache cold · ~$0.40 to rebuild"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn background_and_cron_rows() {
+        let (mut st, u) = multi();
+        let base = render(&st, &u, View::default(), 100, 30);
+        assert!(!base.contains('↳') && !base.contains('◷'));
+        st.background_names = vec!["subagent: hidden".into(), "shell: npm run dev".into()];
+        st.crons = vec!["*/5 * * * * · check deploy".into()];
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(out.contains("↳ shell: npm run dev"), "{out}");
+        assert!(!out.contains("subagent: hidden"));
+        assert!(out.contains("◷ */5 * * * * · check deploy"), "{out}");
+    }
+
+    #[test]
     fn multi_agent_panel() {
         let (st, u) = multi();
         insta::assert_snapshot!(render(&st, &u, View::default(), 50, 40));
     }
 
+    fn badge_usage() -> Usage {
+        Usage {
+            model: Some("Opus".into()),
+            effort: Some("high".into()),
+            fast: true,
+            worktree: Some("wt".into()),
+            pr: Some(crate::usage::Pr {
+                number: 14,
+                review_state: Some("approved".into()),
+                mr: false,
+            }),
+            lines_added: Some(156),
+            lines_removed: Some(23),
+            ..Default::default()
+        }
+    }
+
+    fn badge_text(st: &State, u: &Usage) -> Option<String> {
+        let c = Ctx {
+            color: true,
+            inner: 60,
+        };
+        badges(st, u, &c).map(|r| r.iter().map(|s| s.content.as_ref()).collect())
+    }
+
     #[test]
-    fn pull_request_row() {
+    fn badges_full_row() {
+        let st = State {
+            permission_mode: Some("auto".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            badge_text(&st, &badge_usage()).as_deref(),
+            Some("Opus · high · fast · AUTO · ⎇ wt · PR #14 approved · +156 −23")
+        );
         let (st, mut u) = multi();
         u.pr = Some(crate::usage::Pr {
-            number: 14,
-            review_state: Some("changes_requested".into()),
-            mr: false,
-        });
-        let out = render(&st, &u, View::default(), 50, 40);
-        assert!(out.contains("pr      #14 · changes requested"), "{out}");
-        u.pr = Some(crate::usage::Pr {
             number: 3,
-            review_state: None,
+            review_state: Some("changes_requested".into()),
             mr: true,
         });
-        assert!(render(&st, &u, View::default(), 50, 40).contains("mr      !3 "));
+        let out = render(&st, &u, View::default(), 70, 40);
+        let l: Vec<_> = out.lines().collect();
+        assert!(l[2].contains("MR !3 changes requested"), "{out}");
+        assert!(!out.contains("pr      "), "{out}");
+    }
+
+    #[test]
+    fn badges_show_without_hooks() {
+        let u = Usage {
+            model: Some("Opus".into()),
+            pr: Some(crate::usage::Pr {
+                number: 14,
+                review_state: Some("approved".into()),
+                mr: false,
+            }),
+            ..Default::default()
+        };
+        let out = render(&State::default(), &u, View::default(), 70, 40);
+        let l: Vec<_> = out.lines().collect();
+        assert!(l[1].contains("no hooks yet"), "{out}");
+        assert!(l[2].contains("Opus · PR #14 approved"), "{out}");
+        assert!(l[3].contains("start a new Claude Code session"), "{out}");
+    }
+
+    #[test]
+    fn badges_modes() {
+        let mode = |m: &str| {
+            let st = State {
+                permission_mode: Some(m.into()),
+                ..Default::default()
+            };
+            badge_text(&st, &Usage::default())
+        };
+        assert_eq!(mode("default"), None);
+        assert_eq!(mode("plan").as_deref(), Some("PLAN"));
+        assert_eq!(mode("dontAsk").as_deref(), Some("DON'T ASK"));
+        assert_eq!(mode("weird").as_deref(), Some("weird"));
+        let st = State {
+            permission_mode: Some("bypassPermissions".into()),
+            ..Default::default()
+        };
+        let c = Ctx {
+            color: true,
+            inner: 60,
+        };
+        let row = badges(&st, &Usage::default(), &c).unwrap();
+        assert_eq!(row[0].content, "BYPASS");
+        assert_eq!(row[0].style.fg, Some(Color::Red));
+        let both_zero = Usage {
+            lines_added: Some(0),
+            lines_removed: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(badge_text(&State::default(), &both_zero), None);
     }
 
     #[test]
@@ -1188,6 +1719,242 @@ mod tests {
         assert!(!render(&st, &u, View::default(), 50, 14).contains("├─ session"));
         render(&st, &u, View::default(), 30, 6);
         render(&st, &u, View::default(), 8, 3);
+    }
+
+    fn turn_state() -> (State, Extras) {
+        use crate::state::TurnRec;
+        let m = 60_000;
+        let t0 = NOW - 60 * m;
+        let rec = |start, end: Option<u64>, calls, failed, ok, p: &str| TurnRec {
+            start,
+            end,
+            calls,
+            failed,
+            ok,
+            prompt: p.into(),
+        };
+        let st = State {
+            first_t: t0,
+            last_t: NOW,
+            turn_log: [
+                rec(t0, Some(t0 + 252_000), 23, 2, true, "fix the panel"),
+                rec(t0 + 20 * m, Some(t0 + 21 * m), 1, 0, false, "second"),
+                rec(NOW - 5_000, None, 4, 0, true, "third"),
+            ]
+            .into(),
+            compactions: [
+                (t0 + 10 * m, "auto".to_string()),
+                (t0 + 15 * m, "manual".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let s = |t, ctx, cost| crate::burn::Sample {
+            t,
+            ctx,
+            cost,
+            ..Default::default()
+        };
+        let x = Extras {
+            samples: vec![
+                s(t0 - 1, Some(10.0), Some(1.0)),
+                s(t0 + 252_000, Some(91.0), Some(1.41)),
+                s(t0 + 11 * m, Some(18.0), Some(2.0)),
+            ],
+            ..Default::default()
+        };
+        (st, x)
+    }
+
+    #[test]
+    fn trends() {
+        let mk = |pts: Vec<(u64, f64, f64)>| Extras {
+            samples: pts
+                .into_iter()
+                .map(|(t, ctx, cost)| crate::burn::Sample {
+                    t,
+                    ctx: Some(ctx),
+                    cost: Some(cost),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let u = Usage {
+            cost_usd: Some(5.0),
+            ctx_pct: Some(46.0),
+            ..Default::default()
+        };
+        let go = |x: &Extras| {
+            to_plain(&lines(
+                &State::default(),
+                &u,
+                x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                100,
+                40,
+                false,
+            ))
+        };
+        let row = |out: &str, k: &str| out.lines().find(|l| l.contains(k)).unwrap().to_string();
+        let sparks = |l: &str| l.chars().filter(|c| "▁▂▃▄▅▆▇█".contains(*c)).count();
+        // A sample every 6 s for 40 min: flat for 10 min, then ctx rising and
+        // cost stepping $0.83 every 5 min ($10/h, but a burst in the last minute).
+        let min = 60_000;
+        let pts = |flat_ctx: bool| {
+            (0..=400u64)
+                .map(|i| i * 6_000)
+                .map(|t| {
+                    let on = t.saturating_sub(10 * min);
+                    let ctx = if flat_ctx {
+                        46.0
+                    } else {
+                        20.0 + on as f64 / 1e5
+                    };
+                    (t, ctx, (on / (5 * min)) as f64 * 10.0 / 12.0)
+                })
+                .collect::<Vec<_>>()
+        };
+        let out = go(&mk(pts(false)));
+        let cost = row(&out, "cost");
+        assert!(
+            cost.contains("$5.00 · $10.00/h ▁"),
+            "older samples ignored: {cost}"
+        );
+        assert!(cost.trim_end_matches([' ', '│']).ends_with('█'), "{cost}");
+        assert_eq!(sparks(&cost), 12, "{cost}");
+        let ctx = row(&out, "ctx");
+        assert!(ctx.contains(" ▁") && sparks(&ctx) == 12, "{ctx}");
+        let flat = go(&mk(pts(true)));
+        assert_eq!(sparks(&row(&flat, "ctx")), 0, "flat ctx draws no sparkline");
+        // Under 10 min of samples: no rate.
+        let short = go(&mk(pts(false)
+            .into_iter()
+            .filter(|p| p.0 >= 31 * min)
+            .collect()));
+        assert!(!short.contains("/h"), "{short}");
+        // Two points: no sparkline either.
+        let two = go(&mk(vec![(0, 10.0, 1.0), (60_000, 20.0, 2.0)]));
+        assert!(!two.contains('▁'), "{two}");
+        // Out-of-order timestamps must not panic.
+        go(&mk(vec![
+            (5 * min, 30.0, 3.0),
+            (1_000, 10.0, 1.0),
+            (20 * min, 20.0, 2.0),
+        ]));
+    }
+
+    fn render_x(st: &State, x: &Extras, w: u16, h: u16) -> String {
+        to_plain(&lines(
+            st,
+            &Usage::default(),
+            x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            w,
+            h,
+            false,
+        ))
+    }
+
+    #[test]
+    fn turn_timeline() {
+        let (mut st, x) = turn_state();
+        let out = render_x(&st, &x, 80, 40);
+        let l = |k: &str| out.lines().position(|l| l.contains(k)).unwrap_or(999);
+        assert!(
+            l("third") < l("second") && l("second") < l("fix the panel"),
+            "{out}"
+        );
+        assert!(
+            out.contains("4m12s  23 calls  ✗ 2  $0.41  fix the panel"),
+            "{out}"
+        );
+        assert!(
+            out.contains("1 call  ") && out.contains("5s  4 calls  third"),
+            "{out}"
+        );
+        assert!(
+            out.contains("⟲ ") && out.contains("compacted (auto) · ctx 91% → 18%"),
+            "{out}"
+        );
+        assert!(
+            out.contains("compacted (manual)") && !out.contains("(manual) · ctx"),
+            "{out}"
+        );
+        assert!(
+            l("second") < l("compacted (manual)")
+                && l("compacted (manual)") < l("compacted (auto)"),
+            "{out}"
+        );
+        st.turn_log.truncate(1);
+        assert!(!render_x(&st, &x, 80, 40).contains("├─ turns"));
+    }
+
+    #[test]
+    fn turns_collapse_first() {
+        let (mut st, u) = multi();
+        let (t, x) = turn_state();
+        st.turn_log = t.turn_log;
+        for i in 0..30 {
+            st.turn_log.push_back(crate::state::TurnRec {
+                start: NOW - 1000 + i,
+                prompt: format!("p{i}"),
+                ..Default::default()
+            });
+        }
+        let r = |h| {
+            to_plain(&lines(
+                &st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                50,
+                h,
+                false,
+            ))
+        };
+        let rows = |o: &str| {
+            o.lines()
+                .filter(|l| l.contains(" calls") || l.contains(" call "))
+                .count()
+        };
+        let full = r(100);
+        let mid = r(full.lines().count() as u16 - 5);
+        assert!(full.contains("├─ turns"));
+        assert!(
+            mid.contains("├─ turns") && rows(&mid) == rows(&full) - 5,
+            "{mid}"
+        );
+        assert!(
+            mid.contains("├─ usage") && mid.contains("├─ session"),
+            "{mid}"
+        );
+        let short = r(14);
+        assert!(!short.contains("├─ turns"), "{short}");
+        let mut bare = st.clone();
+        bare.turn_log.clear();
+        let want = to_plain(&lines(
+            &bare,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            14,
+            false,
+        ));
+        assert_eq!(short, want);
     }
 
     #[test]
@@ -1238,10 +2005,27 @@ mod tests {
         use crate::state::TestRun;
         let (mut st, u) = multi();
         for (pass, fail) in [(10, 0), (40, 0), (69, 0), (67, 2)] {
-            st.test_runs.push_back(TestRun { t: NOW, pass, fail });
+            st.test_runs.push_back(TestRun {
+                t: NOW,
+                pass,
+                fail,
+                ..Default::default()
+            });
         }
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("tests   ✗ 2/69 · ▁▄█▇ last 4 runs"), "{out}");
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 1,
+            partial: true,
+            ..Default::default()
+        });
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(
+            out.contains("▁▄█▇ last 4 runs"),
+            "partial runs stay off the trend: {out}"
+        );
+        st.test_runs.pop_back();
         st.turn_active = false;
         st.background = 0;
         st.agents.iter_mut().for_each(|a| a.done = true);
@@ -1254,6 +2038,60 @@ mod tests {
         assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn away_summary_row_only_when_quiet() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: Ledger {
+                    away: Some("Next, wire the desktop".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let show = |st: &State| {
+            to_plain(&lines(
+                st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                60,
+                60,
+                false,
+            ))
+        };
+        assert!(!show(&st).contains("“Next, wire"), "on track");
+        st.turn_active = false;
+        st.background = 0;
+        st.agents.iter_mut().for_each(|a| a.done = true);
+        st.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        st.errors.clear();
+        st.recent.clear();
+        st.last_main_result = None;
+        assert!(show(&st).contains("“Next, wire the desktop”"), "done");
+    }
+
+    #[test]
+    fn time_split_other_only_from_5_percent() {
+        let (mut st, mut u) = multi();
+        st.time.tools_ms = 22_000;
+        u.duration_ms = Some(100_000);
+        u.api_duration_ms = Some(61_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("tools 22% · other 17%"), "{out}");
+        u.api_duration_ms = Some(75_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("other"), "{out}");
     }
 
     #[test]
@@ -1287,6 +2125,145 @@ mod tests {
             )),
             "{out}"
         );
+    }
+
+    #[test]
+    fn no_plan_row_without_tasks() {
+        let (mut st, u) = multi();
+        st.tasks.clear();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("no plan yet"), "{out}");
+    }
+
+    #[test]
+    fn cheap_mistakes_drop_the_time() {
+        let (mut st, u) = multi();
+        st.errors[0].retries = 1;
+        st.errors.iter_mut().for_each(|e| e.time_ms = 0);
+        st.errors[0].time_ms = 400;
+        st.reread = 1;
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains("cost of mistakes: 3 failed calls · 1 re-read"),
+            "{out}"
+        );
+        assert!(!out.contains("· 0s"), "{out}");
+    }
+
+    fn cache_row(c: Option<crate::usage::CacheState>) -> String {
+        use crate::tokens::{Ledger, TokenCache};
+        let (st, mut u) = multi();
+        u.cache = c;
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: Ledger {
+                    input: 1,
+                    cache_read: 99,
+                    output: 5,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        let r: String = out
+            .lines()
+            .find(|l| l.contains("cache   "))
+            .unwrap()
+            .trim_end_matches('│')
+            .trim_end()
+            .to_string();
+        r
+    }
+
+    #[test]
+    fn cache_suffix() {
+        use crate::usage::CacheState;
+        let s = NOW / 1000;
+        let warm = |exp: u64| CacheState {
+            warm: true,
+            observed: true,
+            expires_at: Some(exp),
+            ..Default::default()
+        };
+        assert!(cache_row(Some(warm(s + 4 * 60 + 10))).ends_with("% hit · cold in 4m"));
+        assert!(cache_row(Some(warm(s + 20 * 60))).ends_with("% hit"));
+        let cold = CacheState {
+            observed: true,
+            ..Default::default()
+        };
+        assert!(cache_row(Some(cold)).ends_with("% hit · cold"));
+        let miss = CacheState {
+            warm: true,
+            last_miss_at: Some(s - 120),
+            last_miss: Some("ttl_expired_1h".into()),
+            ..Default::default()
+        };
+        assert!(cache_row(Some(miss)).ends_with("% hit · last miss: ttl_expired_1h"));
+        assert!(cache_row(None).ends_with("% hit"));
+        let huge = CacheState {
+            last_miss_at: Some(u64::MAX),
+            last_miss: Some("x".into()),
+            ..warm(u64::MAX)
+        };
+        cache_row(Some(huge)); // a garbage usage.json must not panic
+    }
+
+    #[test]
+    fn long_kind_is_cut_and_columns_align() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        st.agents[1].kind = "general-purpose".into();
+        let led = |m: &str| Ledger {
+            output: 1,
+            last_model: Some(m.into()),
+            ..Default::default()
+        };
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert(st.agents[1].id.clone(), led("claude-haiku-5-5"));
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: led("claude-opus-5-5-20261001"),
+                agents,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        assert!(out.contains("general-pur… "), "{out}");
+        let col = |l: &str, m: &str| {
+            l.chars()
+                .take_while(|_| true)
+                .collect::<Vec<_>>()
+                .windows(m.chars().count())
+                .position(|w| w.iter().collect::<String>() == m)
+        };
+        let main = out.lines().find(|l| l.contains(" main ")).unwrap();
+        let sub = out.lines().find(|l| l.contains("general-pur")).unwrap();
+        assert_eq!(col(main, "opus-5-5"), col(sub, "haiku-5-5"), "{out}");
     }
 
     #[test]
@@ -1395,16 +2372,151 @@ mod tests {
         assert!(out.contains("recent result"), "{out}");
         assert!(!out.contains("instant result"), "{out}");
         assert!(!out.contains("oldone result"), "{out}");
-        assert!(out.contains("… 2 more done (a)"), "{out}");
+        assert!(
+            out.contains("✓ 2 more done · 1 instant · 1 oldone (a)"),
+            "{out}"
+        );
         let all = View {
             expand_agents: true,
             ..View::default()
         };
         let out = render(&st, &u, all, 70, 60);
         assert!(
-            out.contains("instant result") && out.contains("oldone result"),
+            out.contains("✓ oldone") && out.contains("✓ helpers"),
             "{out}"
         );
+    }
+
+    fn long_list() -> (State, Usage, Extras) {
+        use crate::state::Agent;
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        st.agents.retain(|a| a.id == "main");
+        let mut led = std::collections::BTreeMap::new();
+        let mut add =
+            |st: &mut State, id: String, kind: &str, calls: u32, model: Option<&str>, i: u64| {
+                let ended = NOW - 60_000 - i * 1_000;
+                st.agents.push(Agent {
+                    id: id.clone(),
+                    kind: kind.into(),
+                    calls,
+                    started: ended - if calls > 0 { 30_000 } else { 100 },
+                    last_t: ended,
+                    ended_t: Some(ended),
+                    done: true,
+                    ..Default::default()
+                });
+                if let Some(m) = model {
+                    led.insert(
+                        id,
+                        Ledger {
+                            output: 1000,
+                            last_model: Some(m.into()),
+                            ..Default::default()
+                        },
+                    );
+                }
+            };
+        for i in 0..2 {
+            add(
+                &mut st,
+                format!("o{i}"),
+                "general-purpose",
+                3,
+                Some("claude-opus-5-5"),
+                i,
+            );
+        }
+        for i in 0..30 {
+            add(
+                &mut st,
+                format!("s{i}"),
+                "general-purpose",
+                3,
+                Some("claude-sonnet-5-5"),
+                10 + i,
+            );
+        }
+        for i in 0..3 {
+            add(&mut st, format!("h{i}"), "agent", 0, None, 50 + i);
+        }
+        st.agents.push(Agent {
+            id: "run".into(),
+            kind: "runner".into(),
+            calls: 1,
+            started: NOW - 5_000,
+            last_t: NOW - 1_000,
+            ..Default::default()
+        });
+        let x = Extras {
+            tokens: Some(TokenCache {
+                agents: led,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        (st, u, x)
+    }
+
+    fn render_ex(st: &State, u: &Usage, x: &Extras, view: View) -> String {
+        to_plain(&lines(
+            st,
+            u,
+            x,
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            90,
+            80,
+            false,
+        ))
+    }
+
+    #[test]
+    fn long_list_default_folds_with_summary() {
+        let (st, u, x) = long_list();
+        let out = render_ex(&st, &u, &x, View::default());
+        assert!(out.contains("runner"), "{out}");
+        assert!(
+            out.contains("✓ 32 more done · 29 general-purpose · 3 agent · 29k tok (a)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn long_list_expanded_groups() {
+        let (st, u, x) = long_list();
+        let v = View {
+            expand_agents: true,
+            ..View::default()
+        };
+        let out = render_ex(&st, &u, &x, v);
+        assert!(
+            out.contains("✓ 30× general-purpose · sonnet-5-5 · 30k tok"),
+            "{out}"
+        );
+        assert!(
+            out.contains("✓ 2× general-purpose · opus-5-5 · 2.0k tok"),
+            "{out}"
+        );
+        assert!(out.contains("✓ 3× helpers"), "{out}");
+        assert!(out.contains("runner"), "{out}");
+        let rows = out
+            .lines()
+            .filter(|l| l.contains("─✓") || l.contains("─⠋"))
+            .count();
+        assert_eq!(rows, 4, "{out}");
+    }
+
+    #[test]
+    fn two_done_agents_show_without_fold() {
+        let (mut st, u, x) = long_list();
+        st.agents
+            .retain(|a| a.id == "main" || a.id == "o0" || a.id == "o1");
+        let out = render_ex(&st, &u, &x, View::default());
+        assert!(!out.contains("more done"), "{out}");
+        assert_eq!(out.matches("general-pur").count(), 2, "{out}");
     }
 
     #[test]
@@ -1499,11 +2611,13 @@ mod tests {
                     t: 1,
                     pass: 58,
                     fail: 0,
+                    ..Default::default()
                 }),
                 crate::state::TestRun {
                     t: 2,
                     pass: 71,
                     fail: 0,
+                    ..Default::default()
                 },
             )),
             files: vec![("src/a.rs".into(), 2), ("src/b.rs".into(), 1)],
@@ -1571,6 +2685,60 @@ mod tests {
         let text = to_plain(&asc);
         assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
         insta::assert_snapshot!("ascii", text);
+    }
+
+    #[test]
+    fn two_columns_when_wide() {
+        let (st, u) = multi();
+        let at = |w: u16, ascii: bool| {
+            let cfg = Config {
+                ascii,
+                ..Config::default()
+            };
+            lines(
+                &st,
+                &u,
+                &Extras::default(),
+                &cfg,
+                View::default(),
+                NOW,
+                "12:41",
+                w,
+                40,
+                false,
+            )
+        };
+        let wide = at(140, false);
+        for l in &wide {
+            assert_eq!(l.width(), 140, "{:?}", to_plain(std::slice::from_ref(l)));
+        }
+        let text = to_plain(&wide);
+        assert!(
+            text.lines()
+                .any(|l| l.contains("─ agents ") && l.contains("─ usage ")),
+            "{text}"
+        );
+        let asc = at(140, true);
+        assert_eq!(asc.len(), wide.len());
+        for l in &asc {
+            assert_eq!(l.width(), 140);
+        }
+        let narrow = to_plain(&at(119, false));
+        assert!(
+            !narrow
+                .lines()
+                .any(|l| l.contains("─ agents ") && l.contains("─ usage ")),
+            "{narrow}"
+        );
+        assert!(narrow.contains("├─ agents ─"), "{narrow}");
+        insta::assert_snapshot!("wide_140", text);
+    }
+
+    #[test]
+    fn short_wide_collapses_per_column() {
+        let (st, u) = multi();
+        let out = render(&st, &u, View::default(), 140, 12);
+        assert!(out.lines().count() <= 12, "{out}");
     }
 
     #[test]

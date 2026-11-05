@@ -9,9 +9,12 @@ fn glyph(c: char) -> Option<char> {
         return Some(['|', '/', '-', '\\'][i % 4]);
     }
     Some(match c {
-        '█' | '▰' => '#',
+        '█' | '▇' | '▰' => '#',
+        '▁' | '▂' => '_',
+        '▃' | '▄' => '-',
+        '▅' | '▆' => '=',
         '░' | '▱' => '-',
-        '╭' | '╮' | '╰' | '╯' | '├' | '┤' | '└' => '+',
+        '╭' | '╮' | '╰' | '╯' | '├' | '┤' | '└' | '┬' | '┴' | '┼' => '+',
         '─' | '—' => '-',
         '│' => '|',
         '●' => '*',
@@ -21,11 +24,14 @@ fn glyph(c: char) -> Option<char> {
         '✓' => 'v',
         '◌' | '•' => 'o',
         '▸' | '→' => '>',
-        '↺' => '@',
+        '↺' | '◷' => '@',
+        '↳' => '>',
         '▲' => '^',
         '⚠' => '!',
         '…' => '.',
         '·' => '-',
+        '⎇' => 'Y',
+        '−' => '-',
         _ => return None,
     })
 }
@@ -37,13 +43,13 @@ pub fn map(s: &str) -> String {
 pub fn map_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     lines
         .into_iter()
-        .map(|l| {
-            Line::from(
-                l.spans
-                    .into_iter()
-                    .map(|s| Span::styled(map(&s.content), s.style))
-                    .collect::<Vec<_>>(),
-            )
+        .map(|l| Line {
+            spans: l
+                .spans
+                .into_iter()
+                .map(|s| Span::styled(map(&s.content), s.style))
+                .collect(),
+            ..l
         })
         .collect()
 }

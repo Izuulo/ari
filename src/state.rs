@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 10;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -60,6 +60,9 @@ pub struct State {
     pub ended: bool,
     /// Background tasks (shells, agents) still running at the last Stop.
     pub background: u32,
+    /// Running background tasks by name, from the main agent's last Stop.
+    pub background_names: Vec<String>,
+    pub crons: Vec<String>,
     /// Recent test runs, oldest first.
     pub test_runs: VecDeque<TestRun>,
     pub time: TimeSplit,
@@ -71,6 +74,22 @@ pub struct State {
     pub edits: BTreeMap<String, u64>,
     /// Start times of the last real prompts (turns).
     pub prompts: VecDeque<u64>,
+    /// The last real turns, oldest first.
+    pub turn_log: VecDeque<TurnRec>,
+    /// Compactions: (time, trigger), oldest first.
+    pub compactions: VecDeque<(u64, String)>,
+    /// Last permission mode a hook reported.
+    pub permission_mode: Option<String>,
+    /// Set by a resumed session's start, cleared at the main agent's Stop.
+    pub resume: Option<Resume>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Resume {
+    pub away_ms: Option<u64>,
+    pub cold: Option<bool>,
+    pub rebuild_usd: Option<f64>,
 }
 
 /// Wall time not spent by Claude itself, folded from events.
@@ -147,6 +166,21 @@ pub struct Split {
     pub tools: u64,
     pub waiting: u64,
     pub idle: u64,
+    /// Wall time none of the above accounts for.
+    pub other: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TurnRec {
+    pub start: u64,
+    /// None while the turn runs.
+    pub end: Option<u64>,
+    pub calls: u32,
+    pub failed: u32,
+    /// False when the turn ended in a StopFailure.
+    pub ok: bool,
+    pub prompt: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
@@ -155,6 +189,7 @@ pub struct TestRun {
     pub t: u64,
     pub pass: u32,
     pub fail: u32,
+    pub partial: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -258,6 +293,9 @@ impl State {
             self.first_t = ev.t;
         }
         self.last_t = self.last_t.max(ev.t);
+        if ev.pm.is_some() && ev.a.is_none() {
+            self.permission_mode.clone_from(&ev.pm);
+        }
         if self.agents.is_empty() {
             self.agents.push(Agent {
                 id: "main".into(),
@@ -287,13 +325,24 @@ impl State {
                 let msg = ev.msg.as_deref().unwrap_or("");
                 self.needs_you = None;
                 self.start_turn();
-                if !msg.starts_with("<task-notification>") {
+                if !crate::event::is_synthetic(msg) {
+                    // An Esc interrupt fires no Stop; the next prompt ends that turn.
+                    self.end_turn(ev.t, true);
                     self.prompts.push_back(ev.t);
                     if self.prompts.len() > 6 {
                         self.prompts.pop_front();
                     }
                     self.turns += 1;
                     self.turn_failed = false;
+                    self.turn_log.push_back(TurnRec {
+                        start: ev.t,
+                        ok: true,
+                        prompt: msg.into(),
+                        ..Default::default()
+                    });
+                    if self.turn_log.len() > 50 {
+                        self.turn_log.pop_front();
+                    }
                     if self.label.is_none() && !msg.is_empty() {
                         self.label = Some(crate::event::truncate(msg, 40));
                     }
@@ -319,6 +368,10 @@ impl State {
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
                 if ev.a.is_none() {
+                    if let Some(r) = self.turn_log.back_mut().filter(|r| r.end.is_none()) {
+                        r.calls += 1;
+                        r.failed += (ev.e == "PostToolUseFailure") as u32;
+                    }
                     let t = &mut self.time;
                     let start = ev.t.saturating_sub(ev.dur.unwrap_or(0)).max(t.tools_until);
                     t.tools_ms += ev.t.saturating_sub(start);
@@ -330,6 +383,7 @@ impl State {
                         t: ev.t,
                         pass,
                         fail,
+                        partial: ev.partial,
                     });
                     if self.test_runs.len() > 20 {
                         self.test_runs.pop_front();
@@ -370,7 +424,14 @@ impl State {
                     );
                 }
             }
-            "PreCompact" => self.compacted_at = Some(ev.t),
+            "PreCompact" => {
+                self.compacted_at = Some(ev.t);
+                self.compactions
+                    .push_back((ev.t, ev.kind.clone().unwrap_or_else(|| "auto".into())));
+                if self.compactions.len() > 20 {
+                    self.compactions.pop_front();
+                }
+            }
             "Stop" => {
                 self.needs_you = None;
                 for e in self
@@ -382,14 +443,27 @@ impl State {
                     e.resolved_by = Some("main".into());
                 }
                 self.background = ev.bg.unwrap_or(0);
+                if ev.a.is_none() {
+                    self.end_turn(ev.t, true);
+                    self.resume = None;
+                    if let Some(b) = &ev.bgs {
+                        self.background_names = b.clone();
+                    }
+                    if let Some(c) = &ev.crons {
+                        self.crons = c.clone();
+                    }
+                }
                 self.agents[0].running_since = None;
+                // You are idle after Stop even while background tasks run.
+                self.time.idle_since.get_or_insert(ev.t);
                 if self.background == 0 {
-                    self.time.idle_since.get_or_insert(ev.t);
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
             }
             "StopFailure" => {
+                self.end_turn(ev.t, false);
+                self.time.idle_since.get_or_insert(ev.t);
                 self.turn_active = false;
                 self.turn_failed = true;
                 self.agents[0].act = None;
@@ -408,16 +482,33 @@ impl State {
                 });
             }
             "TaskCreated" | "TaskCompleted" => self.update_tasks(ev),
-            "SessionStart" => self.ended = false,
+            "SessionStart" => {
+                self.ended = false;
+                self.resume = (ev.kind.as_deref() == Some("resume")).then_some(Resume {
+                    away_ms: ev.dur,
+                    cold: ev.cold,
+                    rebuild_usd: ev.usd,
+                });
+            }
             "SessionEnd" => {
                 self.ended = true;
+                self.end_turn(ev.t, true);
                 self.turn_active = false;
                 self.background = 0;
+                self.background_names.clear();
+                self.crons.clear();
                 for a in &mut self.agents {
                     a.running_since = None;
                 }
             }
             _ => {}
+        }
+    }
+
+    fn end_turn(&mut self, t: u64, ok: bool) {
+        if let Some(r) = self.turn_log.back_mut().filter(|r| r.end.is_none()) {
+            r.end = Some(t);
+            r.ok = ok;
         }
     }
 
@@ -676,17 +767,28 @@ impl State {
     pub fn split(&self, wall_ms: u64, api_ms: Option<u64>) -> Split {
         let t = &self.time;
         let others = t.tools_ms + t.waiting_ms + t.idle_ms;
+        let claude = api_ms.unwrap_or(wall_ms.saturating_sub(others));
         Split {
-            claude: api_ms.unwrap_or(wall_ms.saturating_sub(others)),
+            claude,
             tools: t.tools_ms,
             waiting: t.waiting_ms,
             idle: t.idle_ms,
+            other: wall_ms.saturating_sub(claude + others),
         }
     }
 
     /// The latest test run had failures.
     pub fn tests_failing(&self) -> bool {
         self.test_runs.back().is_some_and(|r| r.fail > 0)
+    }
+
+    /// The run to headline: the latest if it failed, else the latest full run.
+    pub fn headline_run(&self) -> Option<&TestRun> {
+        self.test_runs
+            .back()
+            .filter(|r| r.fail > 0)
+            .or_else(|| self.test_runs.iter().rev().find(|r| !r.partial))
+            .or(self.test_runs.back())
     }
 
     pub fn tasks_done(&self) -> (usize, usize) {
@@ -792,6 +894,55 @@ pub fn load_session(dir: &Path) -> State {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn resume_set_then_cleared_on_stop() {
+        let mut st = State::default();
+        st.apply(&Event {
+            kind: Some("resume".into()),
+            dur: Some(10_800_000),
+            cold: Some(true),
+            usd: Some(0.4),
+            ..ev("SessionStart")
+        });
+        let r = st.resume.clone().unwrap();
+        assert_eq!(
+            (r.away_ms, r.cold, r.rebuild_usd),
+            (Some(10_800_000), Some(true), Some(0.4))
+        );
+        st.apply(&ev("Stop"));
+        assert_eq!(st.resume, None);
+        st.apply(&Event {
+            kind: Some("startup".into()),
+            ..ev("SessionStart")
+        });
+        assert_eq!(st.resume, None);
+    }
+
+    #[test]
+    fn permission_mode_is_last_seen() {
+        let mut st = State::default();
+        let ev = |t, pm: Option<&str>| Event {
+            t,
+            e: "Stop".into(),
+            pm: pm.map(String::from),
+            ..Default::default()
+        };
+        st.apply(&ev(1, Some("plan")));
+        st.apply(&ev(2, None));
+        assert_eq!(st.permission_mode.as_deref(), Some("plan"));
+        st.apply(&ev(3, Some("auto")));
+        assert_eq!(st.permission_mode.as_deref(), Some("auto"));
+        st.apply(&Event {
+            a: Some("sub1".into()),
+            ..ev(4, Some("plan"))
+        });
+        assert_eq!(
+            st.permission_mode.as_deref(),
+            Some("auto"),
+            "a subagent's mode is not the session's"
+        );
+    }
+
+    #[test]
     fn checkboxes_count_task_list_items_only() {
         let md = "- [ ] a\n  - [x] b\n* [X] c\n- [?] no\n- [] no\n[ ] no\n- [ ]";
         assert_eq!(super::checkboxes(md), (2, 4));
@@ -857,6 +1008,29 @@ mod tests {
             ..ev("UserPromptSubmit")
         }
     }
+    #[test]
+    fn background_names_replace() {
+        let mut st = State::default();
+        let mk = |a: Option<&str>, b: Vec<&str>| Event {
+            a: a.map(Into::into),
+            bgs: Some(b.iter().map(|s| s.to_string()).collect()),
+            crons: Some(vec![]),
+            ..ev("Stop")
+        };
+        st.apply(&mk(None, vec!["shell: a", "shell: b"]));
+        assert_eq!(st.background_names, ["shell: a", "shell: b"]);
+        st.apply(&mk(None, vec!["shell: c"]));
+        assert_eq!(st.background_names, ["shell: c"]);
+        st.apply(&mk(Some("sub1"), vec![]));
+        assert_eq!(st.background_names, ["shell: c"]);
+        st.apply(&mk(None, vec![]));
+        assert!(st.background_names.is_empty());
+        st.background_names = vec!["shell: d".into()];
+        st.crons = vec!["*/5 x".into()];
+        st.apply(&ev("SessionEnd"));
+        assert!(st.background_names.is_empty() && st.crons.is_empty());
+    }
+
     fn stop(bg: u32) -> Event {
         Event {
             bg: Some(bg),
@@ -978,6 +1152,32 @@ mod tests {
         };
         s.apply(&other);
         assert_eq!(s.verdict(0), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn stop_failure_and_background_stop_start_idle() {
+        let sf = Event {
+            kind: Some("rate_limit".into()),
+            ..ev("StopFailure")
+        };
+        for stopper in [sf, stop(1)] {
+            let mut s = run(&[prompt("go"), stopper]);
+            s.apply(&Event {
+                t: 61_000,
+                ..prompt("again")
+            });
+            assert_eq!(s.time.idle_ms, 60_000);
+        }
+    }
+
+    #[test]
+    fn split_other_is_the_remainder() {
+        let mut s = State::default();
+        s.time.tools_ms = 10;
+        s.time.idle_ms = 20;
+        let sp = s.split(100, Some(30));
+        assert_eq!(sp.other, 40);
+        assert_eq!(s.split(50, Some(30)).other, 0);
     }
 
     #[test]
@@ -1244,6 +1444,67 @@ mod tests {
         );
         std::fs::write(dir.join("state.json"), stale).unwrap();
         assert_eq!(load_session(&dir).turns, 1);
+    }
+
+    #[test]
+    fn turn_log_and_compactions() {
+        let mut s = State::default();
+        let at = |t, e: &str, msg: Option<&str>| Event {
+            t,
+            e: e.into(),
+            msg: msg.map(Into::into),
+            ..Default::default()
+        };
+        s.apply(&at(10, "UserPromptSubmit", Some("fix it")));
+        s.apply(&at(11, "UserPromptSubmit", Some("<task-notification>x")));
+        s.apply(&tool("PostToolUse", "Bash:a", Some(true)));
+        s.apply(&tool("PostToolUseFailure", "Bash:b", Some(false)));
+        s.apply(&at(20, "Stop", None));
+        s.apply(&tool("PostToolUse", "Bash:c", Some(true)));
+        s.apply(&at(30, "UserPromptSubmit", Some("again")));
+        s.apply(&at(40, "StopFailure", None));
+        let r: Vec<_> = s
+            .turn_log
+            .iter()
+            .map(|r| (r.start, r.end, r.calls, r.failed, r.ok))
+            .collect();
+        assert_eq!(r, [(10, Some(20), 2, 1, true), (30, Some(40), 0, 0, false)]);
+        assert_eq!(s.turn_log[0].prompt, "fix it");
+        for i in 0..60 {
+            s.apply(&at(100 + i, "UserPromptSubmit", Some("p")));
+            s.apply(&Event {
+                kind: Some("auto".into()),
+                ..at(100 + i, "PreCompact", None)
+            });
+        }
+        assert_eq!((s.turn_log.len(), s.compactions.len()), (50, 20));
+        assert_eq!(s.compactions[0].1, "auto");
+    }
+
+    #[test]
+    fn next_prompt_and_session_end_close_open_turn() {
+        let at = |t, e: &str, msg: Option<&str>| Event {
+            t,
+            e: e.into(),
+            msg: msg.map(Into::into),
+            ..Default::default()
+        };
+        let mut s = State::default();
+        s.apply(&at(10, "UserPromptSubmit", Some("a")));
+        s.apply(&at(11, "UserPromptSubmit", Some("<task-notification>x")));
+        assert_eq!(s.turn_log[0].end, None, "synthetic prompt keeps it open");
+        s.apply(&at(
+            12,
+            "UserPromptSubmit",
+            Some("<agent-message from=\"w\">hi"),
+        ));
+        assert_eq!(s.turn_log[0].end, None, "agent message keeps it open");
+        assert_eq!((s.turn_log.len(), s.turns, s.prompts.len()), (1, 1, 1));
+        s.apply(&at(30, "UserPromptSubmit", Some("b")));
+        assert_eq!((s.turn_log[0].end, s.turn_log[0].ok), (Some(30), true));
+        assert_eq!(s.turn_log[1].end, None);
+        s.apply(&at(50, "SessionEnd", None));
+        assert_eq!(s.turn_log[1].end, Some(50));
     }
 
     #[test]

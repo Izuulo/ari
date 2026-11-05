@@ -180,7 +180,12 @@ pub fn run(args: &[String]) -> ! {
             h,
             color,
         );
-        (lines, progress < total || st.turn_active, Alignment::Left)
+        (
+            lines,
+            progress < total || st.turn_active,
+            Alignment::Left,
+            None,
+        )
     });
     if let Err(e) = result {
         fail(&e.to_string());

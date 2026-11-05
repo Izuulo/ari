@@ -1,0 +1,18 @@
+---
+source: src/panel.rs
+expression: text
+---
+╭─ ARI (•_•) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 12:41 ─╮
+│ ● ON TRACK                                                                                                      milestone: auth refactor │
+│ ███████████░░░░░░░░░ 4/7 tasks                                                                                                           │
+│ ▸ now: hook up token refresh                                                                                                             │
+├─ agents ───────────────────────────────────────────────────────────┬─ usage ─────────────────────────────────────────────────────────────┤
+│ ⠋ main      $ cargo test · 8s                                      │ ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ 71%  142k/200k                             │
+│ ├─⠋ Explore grep refresh_token 3s · 14 calls · 1m12s               │ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m                               │
+│ ├─✓ tests   done 38s · 12 passed                                   │ 7d  —                                                               │
+│ └─◌ Plan    stale 6m · reading big.log                             ├─ session ───────────────────────────────────────────────────────────┤
+├─ errors ───────────────────────────────────────────────────────────┤ time    14m00s · claude 71% · other 29%                             │
+│ ✗ 5s   edit lib.rs · String to replace not found in file.          │ cost    $2.69 · $0.67/task done                                     │
+│ ✓ 2m   cargo build · error[E0382]: use of moved value              │                                                                     │
+│        ↻ retried 2× · fixed by main                                │                                                                     │
+╰────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────╯

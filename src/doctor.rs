@@ -195,12 +195,140 @@ fn hooks(now_ms: u64) -> Check {
     }
 }
 
+/// `YYYY-MM-DDTHH:MM:SS(.fff)Z` to epoch ms (days-from-civil; no date crate).
+fn iso_ms(s: &str) -> Option<u64> {
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, sec) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    let ms = match s.get(19..)? {
+        "Z" => 0,
+        f => format!("{:0<3}", f.strip_prefix('.')?.strip_suffix('Z')?)
+            .get(..3)?
+            .parse::<i64>()
+            .ok()?,
+    };
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    u64::try_from(((days * 24 + h) * 60 + mi) * 60_000 + sec * 1000 + ms).ok()
+}
+
+/// `dyld[72458]` -> `dyld[…]`, so runs that differ only by PID group together.
+fn squash_brackets(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('[') {
+        let (head, tail) = rest.split_at(i + 1);
+        out.push_str(head);
+        let n = tail.bytes().take_while(u8::is_ascii_digit).count();
+        if n > 0 && tail[n..].starts_with(']') {
+            out.push('…');
+            rest = &tail[n..];
+        } else {
+            rest = tail;
+        }
+    }
+    out + rest
+}
+
+/// Failed hook runs since `since_ms`, grouped by (hook, first stderr line); reads each
+/// transcript's last 2 MB only.
+fn hook_errors(transcripts: &[PathBuf], since_ms: u64) -> Vec<(String, String, u32)> {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 2 << 20;
+    let mut groups: Vec<(String, String, u32)> = Vec::new();
+    for p in transcripts {
+        let Ok(mut f) = std::fs::File::open(p) else {
+            continue;
+        };
+        let len = f.metadata().map_or(0, |m| m.len());
+        let cut = len > TAIL;
+        if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err() {
+            continue;
+        }
+        let mut buf = Vec::new();
+        let _ = f.read_to_end(&mut buf);
+        let text = String::from_utf8_lossy(&buf);
+        for line in text.lines().skip(usize::from(cut)) {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let a = &v["attachment"];
+            if a["type"] != "hook_non_blocking_error"
+                || v["timestamp"]
+                    .as_str()
+                    .and_then(iso_ms)
+                    .is_none_or(|t| t < since_ms)
+            {
+                continue;
+            }
+            let hook = a["hookName"].as_str().unwrap_or("?").to_string();
+            let err = a["stderr"]
+                .as_str()
+                .and_then(|s| s.lines().find(|l| !l.trim().is_empty()))
+                .map(|l| {
+                    l.trim()
+                        .trim_start_matches("Failed with non-blocking status code: ")
+                })
+                .unwrap_or("")
+                .to_string();
+            let err = squash_brackets(&err);
+            match groups.iter_mut().find(|g| g.0 == hook && g.1 == err) {
+                Some(g) => g.2 += 1,
+                None => groups.push((hook, err, 1)),
+            }
+        }
+    }
+    groups
+}
+
+fn hook_failures(now_ms: u64) -> Check {
+    let mut dirs = paths::state_root()
+        .map(|r| sessions::list(&r))
+        .unwrap_or_default();
+    dirs.truncate(10);
+    let files: Vec<PathBuf> = dirs
+        .iter()
+        .filter_map(|s| {
+            let u = std::fs::read(s.dir.join("usage.json")).ok()?;
+            let u = crate::usage::from_value(&serde_json::from_slice(&u).ok()?);
+            crate::tokens::transcript_for(&s.dir, &u).map(PathBuf::from)
+        })
+        .collect();
+    hook_check(&files, now_ms)
+}
+
+fn hook_check(files: &[PathBuf], now_ms: u64) -> Check {
+    // Resumed sessions share a transcript; count it once.
+    let mut files = files.to_vec();
+    files.sort();
+    files.dedup();
+    let g = hook_errors(&files, now_ms.saturating_sub(24 * 3_600_000));
+    if g.is_empty() {
+        return pass("hook errors", "none in the last 24h");
+    }
+    let total: u32 = g.iter().map(|g| g.2).sum();
+    let list: Vec<String> = g
+        .iter()
+        .take(3)
+        .map(|(h, e, _)| format!("{h} — {e}"))
+        .collect();
+    problem(
+        "hook errors",
+        format!("{total} failed hook runs in 24h: {}", list.join("; ")),
+        "a hook (not ARI's) is failing — run its command by hand to see the error",
+    )
+}
+
 pub fn checks(now_ms: u64) -> Vec<Check> {
     let claude = claude_dir().unwrap_or_default();
     let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
     let mut out = vec![binary(), plugin(&claude, &settings), statusline(&settings)];
     out.extend(chain_checks(&config::load()));
     out.push(hooks(now_ms));
+    out.push(hook_failures(now_ms));
     out
 }
 
@@ -228,4 +356,88 @@ pub fn run(_args: &[String]) -> ! {
         if failed == 1 { "" } else { "s" }
     );
     std::process::exit(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DYLD: &str =
+        "dyld[…]: Library not loaded: /opt/homebrew/opt/llhttp/lib/libllhttp.9.3.dylib";
+
+    fn rec(ts: &str) -> String {
+        rec_pid(ts, 72458)
+    }
+
+    fn rec_pid(ts: &str, pid: u32) -> String {
+        let dyld = DYLD.replace('…', &pid.to_string());
+        format!(
+            r#"{{"type":"attachment","timestamp":"{ts}","attachment":{{"type":"hook_non_blocking_error","hookName":"SessionStart:startup","stderr":"Failed with non-blocking status code: {dyld}\n"}}}}"#
+        )
+    }
+
+    fn file(name: &str, lines: &[String]) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("ari-hookerr-{}-{name}", std::process::id()));
+        std::fs::write(&p, lines.join("\n")).unwrap();
+        p
+    }
+
+    #[test]
+    fn iso_parse() {
+        assert_eq!(iso_ms("2026-11-05T17:15:36.328Z"), Some(1_793_898_936_328));
+        assert_eq!(iso_ms("1970-01-02T00:00:00Z"), Some(86_400_000));
+        assert_eq!(iso_ms("nope"), None);
+    }
+
+    #[test]
+    fn counts_recent_errors() {
+        let p = file(
+            "a",
+            &[
+                rec("2026-11-05T17:15:36.328Z"),
+                "{}".into(),
+                rec("2026-11-05T17:16:00Z"),
+            ],
+        );
+        let since = iso_ms("2026-11-05T00:00:00Z").unwrap();
+        let got = hook_errors(&[p], since);
+        assert_eq!(got, vec![("SessionStart:startup".into(), DYLD.into(), 2)]);
+    }
+
+    #[test]
+    fn old_or_missing_is_empty() {
+        let p = file("b", &[rec("2026-11-01T00:00:00Z")]);
+        let since = iso_ms("2026-11-05T00:00:00Z").unwrap();
+        assert!(hook_errors(&[p], since).is_empty());
+        assert!(hook_errors(&[PathBuf::from("/nonexistent/x")], since).is_empty());
+    }
+
+    #[test]
+    fn pids_group_together() {
+        let p = file(
+            "c",
+            &[
+                rec_pid("2026-11-05T17:15:36Z", 1),
+                rec_pid("2026-11-05T17:16:00Z", 22),
+            ],
+        );
+        let got = hook_errors(&[p], 0);
+        assert_eq!(got, vec![("SessionStart:startup".into(), DYLD.into(), 2)]);
+    }
+
+    #[test]
+    fn check_reports_problem_or_pass() {
+        let now = iso_ms("2026-11-05T18:00:00Z").unwrap();
+        let p = file(
+            "d",
+            &[rec("2026-11-05T17:15:36Z"), rec("2026-11-05T17:16:00Z")],
+        );
+        let c = hook_check(&[p.clone(), p], now);
+        assert!(!c.ok);
+        assert!(c.detail.starts_with(
+            "2 failed hook runs in 24h: SessionStart:startup — dyld[…]: Library not loaded"
+        ));
+        assert!(c.fix.unwrap().contains("run its command by hand"));
+        assert!(hook_check(&[], now).ok);
+    }
 }

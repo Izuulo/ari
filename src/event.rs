@@ -36,13 +36,31 @@ pub struct Event {
     pub todos: Option<Vec<Todo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bg: Option<u32>,
+    /// Running background tasks as `type: description`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bgs: Option<Vec<String>>,
+    /// Session crons as `schedule · prompt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crons: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dur: Option<u64>,
+    /// Resume only: the prompt cache likely expired while away.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cold: Option<bool>,
+    /// Resume only: estimated cache rebuild cost in USD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usd: Option<f64>,
     /// (passed, failed), when this was a test run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<(u32, u32)>,
+    /// The test run was filtered (`N filtered out` / `N deselected`), not the full suite.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
+    /// Permission mode (`plan`, `auto`, ...) the hook payload carried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pm: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -70,6 +88,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         e: s("hook_event_name")?.to_string(),
         a: owned("agent_id"),
         at: owned("agent_type"),
+        pm: owned("permission_mode"),
         dur: raw.get("duration_ms").and_then(Value::as_u64),
         ..Default::default()
     };
@@ -90,7 +109,10 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
             let resp = raw.get("tool_response").unwrap_or(&null);
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
-            ev.tests = test_run(input, &format!("{}\n{}", out("stdout"), out("stderr")));
+            (ev.tests, ev.partial) = split_run(test_run(
+                input,
+                &format!("{}\n{}", out("stdout"), out("stderr")),
+            ));
         }
         "PostToolUseFailure" => {
             ev.ok = Some(false);
@@ -104,7 +126,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                     .map(|n| format!("exit {}", n.trim()))
             };
             ev.msg = Some(truncate(failure_line(err), 160));
-            ev.tests = test_run(input, err);
+            (ev.tests, ev.partial) = split_run(test_run(input, err));
         }
         "UserPromptSubmit" => {
             ev.msg = s("prompt")
@@ -113,6 +135,15 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         "SessionStart" => {
             ev.kind = owned("source");
             ev.path = owned("transcript_path");
+            ev.dur = raw
+                .get("seconds_since_last_response")
+                .and_then(Value::as_f64)
+                .filter(|v| *v >= 0.0)
+                .map(|v| (v * 1000.0) as u64);
+            ev.cold = raw
+                .get("prompt_cache_likely_expired")
+                .and_then(Value::as_bool);
+            ev.usd = raw.get("estimated_cache_write_usd").and_then(Value::as_f64);
         }
         "SessionEnd" => ev.kind = owned("reason"),
         "PreCompact" | "PostCompact" => ev.kind = owned("trigger"),
@@ -131,6 +162,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                 });
             ev.bg = Some(running as u32);
             ev.msg = line("last_assistant_message");
+            lists(raw, &mut ev);
         }
         "StopFailure" => {
             ev.kind = owned("error");
@@ -139,6 +171,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         "SubagentStop" => {
             ev.path = owned("agent_transcript_path");
             ev.msg = line("last_assistant_message");
+            lists(raw, &mut ev);
         }
         "TaskCreated" | "TaskCompleted" => {
             ev.task = owned("task_id").map(|id| TaskRef {
@@ -152,11 +185,46 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
     Some(ev)
 }
 
+/// Running background tasks and session crons by name, when the payload carries them.
+fn lists(raw: &Value, ev: &mut Event) {
+    fn str_of<'a>(t: &'a Value, k: &str) -> Option<&'a str> {
+        t.get(k).and_then(Value::as_str).filter(|s| !s.is_empty())
+    }
+    let one_line = |s: String| truncate(&s.split_whitespace().collect::<Vec<_>>().join(" "), 60);
+    ev.bgs = raw
+        .get("background_tasks")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter(|t| str_of(t, "status") == Some("running"))
+                .filter_map(|t| {
+                    let name = str_of(t, "description").or_else(|| str_of(t, "command"))?;
+                    Some(one_line(format!(
+                        "{}: {name}",
+                        str_of(t, "type").unwrap_or("task")
+                    )))
+                })
+                .take(5)
+                .collect()
+        });
+    // shortcut: cron entry shape is unverified; reads schedule/prompt, skips entries with neither.
+    ev.crons = raw.get("session_crons").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(|t| match (str_of(t, "schedule"), str_of(t, "prompt")) {
+                (Some(s), Some(p)) => Some(one_line(format!("{s} · {p}"))),
+                (Some(x), None) | (None, Some(x)) => Some(one_line(x.into())),
+                _ => None,
+            })
+            .take(5)
+            .collect()
+    });
+}
+
 /// (passed, failed) in a test command's output: cargo, pytest, jest and vitest all print
 /// `N passed` and `N failed`.
 // shortcut: sums every count (cargo prints one line per test binary) and skips jest/vitest
 // suite and file totals; teach it other runners' summaries when they show up.
-fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
+fn test_run(input: &Value, out: &str) -> Option<(u32, u32, bool)> {
     let cmd = input.get("command").and_then(Value::as_str)?;
     // A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
     let runs_tests = cmd.split_whitespace().any(|w| {
@@ -169,6 +237,7 @@ fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
         return None;
     }
     let mut sum = None;
+    let mut partial = false;
     for line in out
         .lines()
         .filter(|l| !l.contains("Suites") && !l.contains("Files"))
@@ -179,11 +248,16 @@ fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
             match p[1].trim_end_matches([';', ',']) {
                 "passed" => sum.get_or_insert((0, 0)).0 += n,
                 "failed" => sum.get_or_insert((0, 0)).1 += n,
+                "filtered" | "deselected" => partial |= n > 0,
                 _ => {}
             }
         }
     }
-    sum
+    sum.map(|(p, f)| (p, f, partial))
+}
+
+fn split_run(r: Option<(u32, u32, bool)>) -> (Option<(u32, u32)>, bool) {
+    (r.map(|(p, f, _)| (p, f)), r.is_some_and(|r| r.2))
 }
 
 fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
@@ -300,6 +374,11 @@ fn failure_line(err: &str) -> &str {
         .unwrap_or("")
 }
 
+/// Prompts the harness injects (task results, agent-team messages), not typed by you.
+pub fn is_synthetic(msg: &str) -> bool {
+    msg.starts_with("<task-notification>") || msg.starts_with("<agent-message")
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars.saturating_sub(1)) {
         Some((i, _)) if s[i..].chars().nth(1).is_some() => format!("{}…", &s[..i]),
@@ -364,18 +443,67 @@ mod tests {
     }
 
     #[test]
+    fn resume_fields_on_session_start() {
+        let ev = n(
+            json!({"hook_event_name": "SessionStart", "source": "resume",
+            "seconds_since_last_response": 10800, "prompt_cache_likely_expired": true,
+            "estimated_cache_write_usd": 0.4}),
+        );
+        assert_eq!(
+            (ev.dur, ev.cold, ev.usd),
+            (Some(10_800_000), Some(true), Some(0.4))
+        );
+        let ev = n(json!({"hook_event_name": "SessionStart", "source": "resume"}));
+        assert_eq!((ev.dur, ev.cold, ev.usd), (None, None, None));
+        let j = serde_json::to_string(&ev).unwrap();
+        assert!(!j.contains("cold") && !j.contains("usd"));
+    }
+
+    #[test]
+    fn permission_mode_rides_along() {
+        let ev = n(json!({"hook_event_name": "Stop", "permission_mode": "plan"}));
+        assert_eq!(ev.pm.as_deref(), Some("plan"));
+        assert!(
+            !serde_json::to_string(&n(json!({"hook_event_name": "Stop"})))
+                .unwrap()
+                .contains("pm")
+        );
+        let old: Event = serde_json::from_str(r#"{"t":1,"e":"Stop"}"#).unwrap();
+        assert_eq!(old.pm, None);
+    }
+
+    #[test]
+    fn test_runs_flag_partial() {
+        let cmd = |c: &str| json!({ "command": c });
+        let t = |c: &str, o: &str| test_run(&cmd(c), o);
+        let part = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 104 filtered out";
+        assert_eq!(t("cargo test foo", part), Some((1, 0, true)));
+        assert_eq!(
+            t("cargo test", &part.replace("104", "0")),
+            Some((1, 0, false))
+        );
+        assert_eq!(
+            t("pytest -k x", "== 2 passed, 3 deselected in 0.1s =="),
+            Some((2, 0, true))
+        );
+    }
+
+    #[test]
     fn test_runs_count_passes() {
         let cmd = |c: &str| json!({ "command": c });
         let cargo = "test result: ok. 67 passed; 0 failed\ntest result: ok. 3 passed; 0 failed";
-        assert_eq!(test_run(&cmd("cargo test"), cargo), Some((70, 0)));
+        assert_eq!(test_run(&cmd("cargo test"), cargo), Some((70, 0, false)));
         let cargo_red = "test result: FAILED. 67 passed; 2 failed; 0 ignored";
-        assert_eq!(test_run(&cmd("cargo test"), cargo_red), Some((67, 2)));
+        assert_eq!(
+            test_run(&cmd("cargo test"), cargo_red),
+            Some((67, 2, false))
+        );
         let jest =
             "Test Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 12 passed, 13 total";
-        assert_eq!(test_run(&cmd("npx jest"), jest), Some((12, 1)));
+        assert_eq!(test_run(&cmd("npx jest"), jest), Some((12, 1, false)));
         assert_eq!(
             test_run(&cmd("pytest -q"), "== 1 failed, 5 passed in 0.3s =="),
-            Some((5, 1))
+            Some((5, 1, false))
         );
         assert_eq!(
             test_run(&cmd("cat notes"), "5 passed"),
@@ -395,7 +523,7 @@ mod tests {
             "cargo nextest run",
             "uv run pytest",
         ] {
-            assert_eq!(test_run(&cmd(c), one), Some((3, 0)), "{c}");
+            assert_eq!(test_run(&cmd(c), one), Some((3, 0, false)), "{c}");
         }
         assert_eq!(
             test_run(&cmd("cargo test"), "error[E0425]"),
@@ -407,6 +535,7 @@ mod tests {
             "tool_input": {"command": "cargo test"}, "tool_response": {"stdout": cargo, "stderr": ""}}),
         );
         assert_eq!(ev.tests, Some((70, 0)));
+        assert!(!ev.partial);
     }
 
     #[test]
@@ -515,6 +644,27 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn background_and_crons_by_name() {
+        let stop = n(json!({"hook_event_name":"Stop",
+            "background_tasks":[{"type":"subagent","description":"List files and read hello.py","status":"running"},
+            {"type":"shell","command":"npm run dev","status":"running"},{"type":"shell","status":"running"},
+            {"type":"shell","description":"done","status":"completed"}],
+            "session_crons":[{"schedule":"*/5 * * * *","prompt":"check deploy"}]}));
+        assert_eq!(
+            stop.bgs,
+            Some(vec![
+                "subagent: List files and read hello.py".into(),
+                "shell: npm run dev".into()
+            ])
+        );
+        assert_eq!(stop.crons, Some(vec!["*/5 * * * * · check deploy".into()]));
+        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[]}));
+        assert_eq!(sub.bgs, Some(vec![]));
+        assert_eq!(sub.crons, None);
+        assert_eq!(n(json!({"hook_event_name":"Stop"})).bgs, None);
     }
 
     #[test]
