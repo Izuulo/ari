@@ -18,7 +18,6 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Idea | Why | Data |
 |---|---|---|
 | Git branch and uncommitted file count | Which branch Claude is changing | New: run `git` in the statusline, debounced |
-| Pull request number and review state (approved, changes requested) | Know when a PR needs you | Have it (`pr.*` in the statusline payload) |
 | Lines added and removed | Size of the change at a glance | Have it (`cost.total_lines_*`) |
 | Model, effort level, fast mode | Why a session is slow or expensive | Have it |
 | Worktree name | Tell parallel worktree sessions apart | Have it (`workspace.git_worktree`) |
@@ -47,7 +46,7 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 
 Shipped from the hub list: sort by urgency, account limits once in the header, and what a NEEDS YOU session is asking.
 
-Shipped from this list in M5: test pass/fail counts, files touched (in `ari recap`), done-but-tests-failing.
+Shipped from this list in M5: test pass/fail counts, files touched (in `ari recap`), done-but-tests-failing. Since: pull request number and review state.
 
 ## 5. Platform and polish
 

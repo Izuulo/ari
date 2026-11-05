@@ -15,6 +15,7 @@
 - Running commands show with a live timer (`$ cargo test 1m15s`) in the row and on each agent's panel line; background tasks are counted.
 - Release builds can publish a Homebrew formula (needs the tap repo and token).
 - `docs/ROADMAP.md` lists what to build next.
+- The panel's session section shows the branch's open pull request and its review state (`pr #14 · changes requested`), or a GitLab merge request (`mr !3`).
 
 ## 0.1.0 - 2026-11-05
 
