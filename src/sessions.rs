@@ -66,10 +66,22 @@ pub fn list(root: &Path) -> Vec<SessionInfo> {
         .filter(|e| e.path().is_dir())
         .map(|e| {
             let dir = e.path();
-            let last_ms = [dir.join("events.jsonl"), dir.join("usage.json")]
+            let transcript = json(&dir.join("usage.json"))
+                .and_then(|u| u.pointer("/transcript_path")?.as_str().map(PathBuf::from))
+                .or_else(|| {
+                    json(&dir.join("meta.json"))?
+                        .get("transcript")?
+                        .as_str()
+                        .map(PathBuf::from)
+                });
+            // Every open session's statusline rewrites usage.json about once a second,
+            // so it only counts when there's no hook log or transcript to go by.
+            let last_ms = [Some(dir.join("events.jsonl")), transcript]
                 .iter()
+                .flatten()
                 .filter_map(|p| mtime_ms(p))
                 .max()
+                .or_else(|| mtime_ms(&dir.join("usage.json")))
                 .or_else(|| mtime_ms(&dir))
                 .unwrap_or(0);
             let ended = last_line_is_end(&dir.join("events.jsonl"));
@@ -174,5 +186,19 @@ mod tests {
         assert_eq!(pick(&l, "/q").unwrap().id, "other");
         assert!(pick(&l, "/nowhere").is_none());
         assert!(list(&root.join("missing")).is_empty());
+    }
+
+    #[test]
+    fn a_fresh_statusline_write_is_not_activity() {
+        let root = std::env::temp_dir().join(format!("ari-sessions-idle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let usage = r#"{"cwd":"/p"}"#;
+        session(&root, "busy", None, Some(usage), "{}\n", 10);
+        session(&root, "idle", None, Some(usage), "{}\n", 600);
+        // The idle session's statusline just ran.
+        std::fs::write(root.join("sessions/idle/usage.json"), usage).unwrap();
+        let picked = pick(&list(&root), "/p").unwrap().id.clone();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(picked, "busy");
     }
 }

@@ -268,11 +268,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
             },
             ctx: u.ctx_pct,
             cost: u.cost_usd,
-            // Every open session's statusline rewrites usage.json, so its mtime says nothing.
-            age_ms: x
-                .transcript_age_ms
-                .or((st.last_t > 0).then(|| now.saturating_sub(st.last_t)))
-                .unwrap_or(now.saturating_sub(s.last_ms)),
+            age_ms: now.saturating_sub(s.last_ms),
         });
     }
     // Stable: equally urgent sessions keep most-recent-first.
