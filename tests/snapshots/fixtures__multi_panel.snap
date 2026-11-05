@@ -38,8 +38,8 @@ expression: "out.join(\"\\n\")"
 │ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
-│ ├─✓ Explore done 2s · `calc.py` defines an `add(a, … │
-│ └─✓ Explore done 1s · The file imports `add` from a… │
+│ ├─✓ Explore done 2s · calc.py defines an add(a, b) … │
+│ └─✓ Explore done 1s · The file imports add from a c… │
 ├─ errors ─────────────────────────────────────────────┤
 │ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ session ────────────────────────────────────────────┤

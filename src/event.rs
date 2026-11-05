@@ -170,7 +170,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         }
         "SubagentStop" => {
             ev.path = owned("agent_transcript_path");
-            ev.msg = line("last_assistant_message");
+            ev.msg = s("last_assistant_message").map(|v| truncate(&summary(v), 160));
             lists(raw, &mut ev);
         }
         "TaskCreated" | "TaskCompleted" => {
@@ -383,6 +383,27 @@ fn failure_line<'a>(err: &'a str, kind: Option<&'a str>) -> &'a str {
             _ => lines.first().copied(),
         })
         .unwrap_or("")
+}
+
+/// A Markdown reply as a short plain sentence: its first line that isn't a heading, without
+/// `code` ticks, **bold** or list marks, cut after the first sentence.
+fn summary(md: &str) -> String {
+    let line = md
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .unwrap_or_else(|| first_line(md));
+    let text = line.replace("**", "").replace('`', "");
+    let text = text.trim_start_matches(['#', '-', '*', ' ']);
+    // A sentence ends at ". " before a capital, not at "the `.` and" or "e.g. this".
+    let end = text
+        .match_indices(". ")
+        .map(|(i, _)| i)
+        .find(|&i| text[i + 2..].starts_with(char::is_uppercase));
+    match end {
+        Some(i) => text[..=i].to_string(),
+        None => text.to_string(),
+    }
 }
 
 /// Prompts the harness injects (task results, agent-team messages), not typed by you.
@@ -682,7 +703,11 @@ mod tests {
             ])
         );
         assert_eq!(stop.crons, Some(vec!["*/5 * * * * · check deploy".into()]));
-        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[]}));
+        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[],
+            "last_assistant_message":"## Summary\n`calc.py` defines **`add(a, b)`**. It returns a + b."}));
+        assert_eq!(sub.msg.as_deref(), Some("calc.py defines add(a, b)."));
+        assert_eq!(summary("`calc.py` defines **`add(a, b)`**. It returns a + b."), "calc.py defines add(a, b).");
+        assert_eq!(summary("the `.` and `..` entries. Done"), "the . and .. entries.");
         assert_eq!(sub.bgs, Some(vec![]));
         assert_eq!(sub.crons, None);
         assert_eq!(n(json!({"hook_event_name":"Stop"})).bgs, None);

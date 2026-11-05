@@ -8,7 +8,7 @@ expression: out
 │ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      haiku-5-5 · idle · 417k tok              │
-│ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · `calc.p… │
+│ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · calc.py… │
 │ └─✓ Explore haiku-5-5 · done 1s · 32k tok · The fil… │
 ├─ errors ─────────────────────────────────────────────┤
 │ no open errors · 1 fixed · 1s on failed calls (e)    │
