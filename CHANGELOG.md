@@ -11,7 +11,7 @@
 - File conflicts: `⚠ a.rs also in tankobon #bbbb` when another live session edited the same file in the last 30 minutes.
 - The panel hides finished subagents that did nothing or finished over 10 minutes ago (`a` shows them).
 - The panel header shows the folder it follows beside the clock (`cd ~/ari · 14:29`).
-- `ari watch --all` labels each row `project · session title` and colors the verdicts.
+- `ari watch --all` is a table: verdict, `project · session title`, what it's doing (or what it's asking, for NEEDS YOU), context, cost and last activity, in aligned columns. Sessions that need you sort to the top; the account's 5h/7d limits and total cost show once in the header instead of on every row.
 - Running commands show with a live timer (`$ cargo test 1m15s`) in the row and on each agent's panel line; background tasks are counted.
 - Release builds can publish a Homebrew formula (needs the tap repo and token).
 - `docs/ROADMAP.md` lists what to build next.

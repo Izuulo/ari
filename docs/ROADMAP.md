@@ -7,7 +7,6 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Idea | Why | Data |
 |---|---|---|
 | Interactive list: arrow keys + `enter` opens that session's full panel | One pane to manage every session | Have it |
-| Sort by urgency: NEEDS YOU, then BLOCKED/STUCK, then working, then idle | The session that needs you is always on top | Have it |
 | Group by repo, with a per-repo summary row | Several sessions in one repo read as one project | Have it (repo name) |
 | Desktop notification when any session flips to NEEDS YOU or BLOCKED | Don't have to watch the pane at all | Have it; new: notifier (osascript / notify-send) |
 | How long each session has been waiting on you | "NEEDS YOU · 6m" says how urgent it is | Have it (notification time) |
@@ -45,6 +44,8 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Sessions from other coding agents (starting with the one you use most; to decide) in `ari watch --all` | One panel for every agent you run | New: each harness's session logs or hooks |
 | Per-harness and per-provider branding: the tool running the session (Claude Code, Codex) and the model doing the work (Opus, GPT, DeepSeek) | See at a glance what is running where | Model names already shown as given |
 | Flaky-test detection by test name | A test that flips between pass and fail | New: per-test parsing |
+
+Shipped from the hub list: sort by urgency, account limits once in the header, and what a NEEDS YOU session is asking.
 
 Shipped from this list in M5: test pass/fail counts, files touched (in `ari recap`), done-but-tests-failing.
 
