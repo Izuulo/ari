@@ -41,6 +41,8 @@ struct App {
     recap_dirty: bool,
     last_verdict: Option<Verdict>,
     color: bool,
+    /// A live terminal: the `--all` list is selectable (not `--once`).
+    interactive: bool,
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -134,25 +136,63 @@ impl App {
     }
 
     fn lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+        self.frame_lines(width, height).0
+    }
+
+    /// The frame's lines, and the entry count while the `--all` list is what's drawn.
+    fn frame_lines(&self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
         let now = hook::now_ms();
         if self.mode == Mode::All {
-            return all_lines(&self.root, &self.cfg, now, width);
+            let entries = all_entries(&self.root, &self.cfg, now);
+            if self.view.open
+                && let Some(e) = entries.get(self.view.sel)
+            {
+                let st = state::load_session(&e.dir);
+                let usage = load_usage(&e.dir);
+                let x = bar::Extras {
+                    tokens: Some(tokens::cached(&e.dir)),
+                    samples: burn::recent(&e.dir),
+                    plan: state::plan_file(&st),
+                    ..Default::default()
+                };
+                return (self.panel(&e.dir, &st, &usage, x, width, height, now), None);
+            }
+            let sel = self.interactive.then_some(self.view.sel);
+            let lines = list_lines(&entries, sel, &self.cfg, now, width);
+            return (lines, self.interactive.then_some(entries.len()));
         }
-        if self.dir.is_none() {
-            return waiting(&self.mode);
-        }
-        let mut x = self.x.clone();
-        if let Some(d) = &self.dir {
-            x.conflicts = crate::conflicts::cached(&self.root, d, now);
-        }
-        x.transcript_age_ms = self
-            .dir
-            .as_deref()
-            .and_then(|d| tokens::transcript_for(d, &self.usage))
-            .and_then(|t| tokens::transcript_age(&t, now));
-        panel::lines(
+        let Some(dir) = &self.dir else {
+            return (waiting(&self.mode), None);
+        };
+        let lines = self.panel(
+            dir,
             &self.st,
             &self.usage,
+            self.x.clone(),
+            width,
+            height,
+            now,
+        );
+        (lines, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn panel(
+        &self,
+        dir: &Path,
+        st: &State,
+        usage: &Usage,
+        mut x: bar::Extras,
+        width: u16,
+        height: u16,
+        now: u64,
+    ) -> Vec<Line<'static>> {
+        x.conflicts = crate::conflicts::cached(&self.root, dir, now);
+        x.transcript_age_ms =
+            tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
+        panel::lines(
+            st,
+            usage,
             &x,
             &self.cfg,
             self.view,
@@ -197,27 +237,19 @@ struct Entry {
     ctx: Option<f64>,
     cost: Option<f64>,
     age_ms: u64,
+    dir: PathBuf,
+    /// Account rate limits as this session last saw them.
+    limits: Option<(Option<usage::Limit>, Option<usage::Limit>)>,
 }
 
-fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Line<'static>> {
-    use unicode_width::UnicodeWidthStr;
-    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    let paint = |s: Style| if color { s } else { Style::default() };
+fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
     let dim = Style::new().add_modifier(Modifier::DIM);
-    let bold = Style::new().add_modifier(Modifier::BOLD);
-    // Rate limits are per account: show the freshest session's once, not one per row.
-    let mut limits = None;
-    let mut total = 0.0;
     let mut entries = Vec::new();
     for s in sessions::list(root)
         .into_iter()
         .filter(|s| sessions::is_live(s, now))
     {
         let u = load_usage(&s.dir);
-        if limits.is_none() && (u.five_h.is_some() || u.seven_d.is_some()) {
-            limits = Some((u.five_h, u.seven_d));
-        }
-        total += u.cost_usd.unwrap_or(0.0);
         let st = state::load_session(&s.dir);
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
@@ -276,10 +308,31 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
             ctx: u.ctx_pct,
             cost: u.cost_usd,
             age_ms: now.saturating_sub(s.last_ms),
+            dir: s.dir.clone(),
+            limits: (u.five_h.is_some() || u.seven_d.is_some()).then_some((u.five_h, u.seven_d)),
         });
     }
     // Stable: equally urgent sessions keep most-recent-first.
     entries.sort_by_key(|e| e.rank);
+    entries
+}
+
+/// The `--all` list; `sel` highlights a row and adds the key hint (None for `--once`).
+fn list_lines(
+    entries: &[Entry],
+    sel: Option<usize>,
+    cfg: &config::Config,
+    now: u64,
+    width: u16,
+) -> Vec<Line<'static>> {
+    use unicode_width::UnicodeWidthStr;
+    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    let paint = |s: Style| if color { s } else { Style::default() };
+    let dim = Style::new().add_modifier(Modifier::DIM);
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    // Rate limits are per account: show one session's once, not one per row.
+    let limits = entries.iter().find_map(|e| e.limits);
+    let total: f64 = entries.iter().filter_map(|e| e.cost).sum();
 
     let w = width as usize;
     let needs = entries
@@ -347,7 +400,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         .min(w.saturating_sub(vw + right + 4 + 12))
         .max(12);
     let room = w.saturating_sub(vw + lw + right + 4);
-    for e in &entries {
+    for (i, e) in entries.iter().enumerate() {
         let quiet = e.rank >= Verdict::Done as u8;
         let mut spans = vec![
             Span::styled(e.verdict.clone(), paint(e.style)),
@@ -379,7 +432,17 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
                 paint(if quiet { dim } else { Style::default() }),
             ));
         }
-        out.push(Line::from(spans));
+        let mut line = Line::from(spans);
+        if sel == Some(i) {
+            line = line.patch_style(Style::new().add_modifier(Modifier::REVERSED));
+        }
+        out.push(line);
+    }
+    if sel.is_some() {
+        out.push(Line::from(Span::styled(
+            "↑↓ select · enter open · esc back · q quit",
+            dim,
+        )));
     }
     if cfg.ascii {
         crate::ascii::map_lines(out)
@@ -438,6 +501,7 @@ pub fn run(args: &[String]) -> ! {
         recap_dirty: false,
         last_verdict: None,
         color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()),
+        interactive: false,
     };
     app.refresh();
 
@@ -450,6 +514,7 @@ pub fn run(args: &[String]) -> ! {
         std::process::exit(0)
     }
 
+    app.interactive = true;
     let result = run_tui(|view, tab, w, h| {
         if tab {
             app.cycle();
@@ -468,7 +533,8 @@ pub fn run(args: &[String]) -> ! {
         } else {
             Alignment::Left
         };
-        (app.lines(w, h), app.animating(now), align)
+        let (lines, list_len) = app.frame_lines(w, h);
+        (lines, app.animating(now), align, list_len)
     });
     if let Err(e) = result {
         fail(&e.to_string());
@@ -476,22 +542,29 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
-/// Apply a key to the view; true means quit.
-fn key(view: &mut View, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Char('q') => return true,
-        KeyCode::Esc if view.recap => view.recap = false,
-        KeyCode::Esc => return true,
-        KeyCode::Char('e') => view.expand_errors ^= true,
-        KeyCode::Char('a') => view.expand_agents ^= true,
-        KeyCode::Char('r') => view.recap ^= true,
+/// Apply a key to the view; true means quit. `list_len` is `Some` while the `--all` list shows.
+fn key(view: &mut View, code: KeyCode, list_len: Option<usize>) -> bool {
+    match (code, list_len) {
+        (KeyCode::Char('q'), _) => return true,
+        (KeyCode::Esc, _) if view.open => view.open = false,
+        (KeyCode::Esc, _) if view.recap => view.recap = false,
+        (KeyCode::Esc, _) => return true,
+        (KeyCode::Up | KeyCode::Char('k'), Some(_)) => view.sel = view.sel.saturating_sub(1),
+        (KeyCode::Down | KeyCode::Char('j'), Some(n)) => {
+            view.sel = (view.sel + 1).min(n.saturating_sub(1))
+        }
+        (KeyCode::Enter, Some(n)) if n > 0 => view.open = true,
+        (KeyCode::Char('e'), _) => view.expand_errors ^= true,
+        (KeyCode::Char('a'), _) => view.expand_agents ^= true,
+        (KeyCode::Char('r'), _) => view.recap ^= true,
         _ => {}
     }
     false
 }
 
-/// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment.
-pub type Frame = (Vec<Line<'static>>, bool, Alignment);
+/// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment, and
+/// `Some(entries)` while the selectable `--all` list is drawn.
+pub type Frame = (Vec<Line<'static>>, bool, Alignment, Option<usize>);
 
 /// Own the terminal (alternate screen, raw mode, restored on exit or panic) and redraw
 /// until `q`. `frame(view, tab_pressed, width, height)` produces each frame.
@@ -508,10 +581,15 @@ fn tui_loop(
 ) -> std::io::Result<()> {
     let mut view = View::default();
     let mut tab = false;
+    let mut list_len;
     loop {
         let size = term.size()?;
-        let (lines, animating, align) =
+        let (lines, animating, align, n) =
             frame(view, std::mem::take(&mut tab), size.width, size.height);
+        list_len = n;
+        if let Some(n) = n {
+            view.sel = view.sel.min(n.saturating_sub(1));
+        }
         term.draw(|f| f.render_widget(Paragraph::new(lines).alignment(align), f.area()))?;
         if !event::poll(if animating { FAST } else { SLOW })? {
             continue;
@@ -524,7 +602,7 @@ fn tui_loop(
             }
             if k.code == KeyCode::Tab {
                 tab = true;
-            } else if key(&mut view, k.code) {
+            } else if key(&mut view, k.code, list_len) {
                 return Ok(());
             }
         }
@@ -570,7 +648,13 @@ mod key_tests {
             ],
         );
         session("bbbb", "works", &[start, prompt]);
-        let out = panel::to_plain(&all_lines(&root, &config::Config::default(), now, 110));
+        let out = panel::to_plain(&list_lines(
+            &all_entries(&root, &config::Config::default(), now),
+            None,
+            &config::Config::default(),
+            now,
+            110,
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines[0].contains("2 live sessions · 1 needs you"), "{out}");
@@ -616,7 +700,13 @@ mod key_tests {
             ..Default::default()
         };
         std::fs::write(d.join("tokens.json"), serde_json::to_vec(&c).unwrap()).unwrap();
-        let out = panel::to_plain(&all_lines(&root, &config::Config::default(), now, 110));
+        let out = panel::to_plain(&list_lines(
+            &all_entries(&root, &config::Config::default(), now),
+            None,
+            &config::Config::default(),
+            now,
+            110,
+        ));
         let _ = std::fs::remove_dir_all(&root);
         assert!(out.contains("“Next, wire the desktop”"), "{out}");
     }
@@ -639,11 +729,69 @@ mod key_tests {
     #[test]
     fn recap_key_and_escape() {
         let mut v = View::default();
-        assert!(!key(&mut v, KeyCode::Char('r')));
+        assert!(!key(&mut v, KeyCode::Char('r'), None));
         assert!(v.recap);
-        assert!(!key(&mut v, KeyCode::Esc), "esc closes the recap first");
+        assert!(
+            !key(&mut v, KeyCode::Esc, None),
+            "esc closes the recap first"
+        );
         assert!(!v.recap);
-        assert!(key(&mut v, KeyCode::Esc), "then quits");
-        assert!(key(&mut v, KeyCode::Char('q')));
+        assert!(key(&mut v, KeyCode::Esc, None), "then quits");
+        assert!(key(&mut v, KeyCode::Char('q'), None));
+    }
+
+    #[test]
+    fn list_keys_clamp_open_and_escape() {
+        let mut v = View::default();
+        for _ in 0..3 {
+            key(&mut v, KeyCode::Down, Some(2));
+        }
+        assert_eq!(v.sel, 1);
+        key(&mut v, KeyCode::Char('k'), Some(2));
+        assert_eq!(v.sel, 0);
+        key(&mut v, KeyCode::Up, Some(2));
+        assert_eq!(v.sel, 0);
+        let mut e = View::default();
+        key(&mut e, KeyCode::Enter, Some(0));
+        key(&mut e, KeyCode::Down, Some(0));
+        assert!(!e.open && e.sel == 0);
+        key(&mut v, KeyCode::Enter, Some(2));
+        assert!(v.open);
+        assert!(
+            !key(&mut v, KeyCode::Esc, Some(2)),
+            "esc closes the session"
+        );
+        assert!(!v.open);
+        assert!(key(&mut v, KeyCode::Esc, Some(2)), "esc in the list quits");
+    }
+
+    #[test]
+    fn list_marks_the_selected_row_and_ends_with_a_hint() {
+        let e = |p: &str| Entry {
+            rank: 0,
+            verdict: "ON TRACK".into(),
+            style: Style::default(),
+            project: p.into(),
+            title: None,
+            detail: String::new(),
+            ctx: None,
+            cost: None,
+            age_ms: 0,
+            dir: PathBuf::new(),
+            limits: None,
+        };
+        let es = [e("one"), e("two")];
+        let cfg = config::Config::default();
+        let out = list_lines(&es, Some(1), &cfg, 0, 100);
+        let rev = |l: &Line| l.style.add_modifier.contains(Modifier::REVERSED);
+        assert!(!rev(&out[2]) && rev(&out[3]));
+        let last = out.last().unwrap();
+        assert_eq!(
+            panel::to_plain(std::slice::from_ref(last)),
+            "↑↓ select · enter open · esc back · q quit"
+        );
+        assert!(last.spans[0].style.add_modifier.contains(Modifier::DIM));
+        let once = list_lines(&es, None, &cfg, 0, 100);
+        assert_eq!(once.len(), 4, "no hint without a selection");
     }
 }

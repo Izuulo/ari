@@ -15,6 +15,9 @@ pub struct View {
     pub expand_agents: bool,
     /// Show the recap (`Extras::recap`) in place of the sections.
     pub recap: bool,
+    /// `ari watch --all`: the highlighted row, and whether its session is open.
+    pub sel: usize,
+    pub open: bool,
 }
 
 type Row = Vec<Span<'static>>;
