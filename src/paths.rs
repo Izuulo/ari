@@ -6,7 +6,6 @@ pub fn state_root() -> Option<PathBuf> {
 }
 
 /// `$XDG_CONFIG_HOME/ari`, else `~/.config/ari`.
-#[allow(dead_code)] // used from M1 (config)
 pub fn config_root() -> Option<PathBuf> {
     xdg_dir("XDG_CONFIG_HOME", ".config")
 }

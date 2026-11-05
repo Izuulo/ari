@@ -5,10 +5,7 @@ usage:
   ari replay <dir>      print a recorded session as a timeline
   ari --version";
 
-mod event;
-mod hook;
-mod paths;
-mod replay;
+use ari_cli::{hook, replay};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
