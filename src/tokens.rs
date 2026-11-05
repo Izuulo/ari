@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 /// Requests with fewer input-side tokens than this don't move the hit-rate needle.
 const MIN_HIT_TOKENS: u64 = 1000;
 const RECENT_IDS: usize = 16;
