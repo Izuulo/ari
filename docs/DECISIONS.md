@@ -18,6 +18,8 @@ Where the PRD and the Claude Code docs disagree, the docs win. Checked against C
 | D10 | `ari hook <event>` | Every payload carries `hook_event_name`. | `ari hook` reads the event name from the payload; a trailing arg is accepted and ignored. |
 | D12 | `Stop` = turn end | Observed (v2.1.318): `Stop` fires while a background subagent is still running; `background_tasks` lists it as `running`. Main-agent events carry no `agent_id`. | Hook records `bg` (running background tasks) on `Stop`; the reducer treats `bg > 0` as still working. |
 | D13 | `meta.json` holds last activity | — | Last activity is the `events.jsonl` mtime, so hooks never rewrite `meta.json`. |
+| D14 | Sum `usage` on every assistant message | Observed: one API response is split into several transcript entries (one per content block) that share `message.id` and repeat the same `usage`. | Token totals dedupe by `message.id`. |
+| D15 | First user prompt = milestone label | Observed: background-agent completions arrive as a synthetic `UserPromptSubmit` whose prompt starts with `<task-notification>`. | Prompts starting with `<task-notification>` don't count as turns and never become the milestone label. |
 | D11 | Repo `finneritter/ari` | — | GitHub user is now `Izuulo`: repo is `Izuulo/ari`, plugin install is `/plugin marketplace add Izuulo/ari`. |
 
 ## Project decisions
