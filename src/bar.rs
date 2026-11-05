@@ -14,6 +14,17 @@ pub struct Extras {
     pub tokens: Option<TokenCache>,
     /// ms until the 5h limit at the current pace, only when that's before it resets.
     pub burn_eta: Option<u64>,
+    /// How long ago the session's transcript last changed: a sign of life without hooks.
+    pub transcript_age_ms: Option<u64>,
+}
+
+/// A session without hook events whose transcript moved this recently is working.
+pub const ACTIVE_MS: u64 = 20_000;
+
+impl Extras {
+    pub fn looks_active(&self) -> bool {
+        self.transcript_age_ms.is_some_and(|a| a < ACTIVE_MS)
+    }
 }
 
 /// `950`, `12.4k`, `142k`, `6.2M`.
@@ -115,6 +126,31 @@ fn limit(name: &str, l: Option<Limit>, now_ms: u64, cfg: &Config, color: bool) -
     }
 }
 
+/// What the main agent is doing this second: the running command and how long it's taken,
+/// background work, or thinking between tools. `None` when the turn is over.
+pub fn now_doing(st: &State, now_ms: u64) -> Option<String> {
+    let main = st.agents.first()?;
+    if !st.turn_active {
+        return None;
+    }
+    let spin = spinner(now_ms);
+    if let Some(ms) = st.tool_running(main, now_ms) {
+        let act = crate::event::truncate(main.act.as_deref().unwrap_or("working"), 32);
+        return Some(format!("{spin} {act} {}", short_dur(ms)));
+    }
+    if st.background > 0 {
+        return Some(format!("{spin} {} in background", st.background));
+    }
+    Some(format!("{spin} thinking"))
+}
+
+fn short_dur(ms: u64) -> String {
+    match ms / 1000 {
+        s @ 0..60 => format!("{s}s"),
+        s => format!("{}m{:02}s", s / 60, s % 60),
+    }
+}
+
 pub fn render(
     st: &State,
     u: &Usage,
@@ -135,7 +171,12 @@ pub fn render(
             &format!("ARI {} {}", v.glyph(), v.label()),
         )
     } else {
-        paint(color, "2", "ARI ◌ no hooks yet")
+        // No hooks to judge by, but a growing transcript means Claude is working.
+        if x.looks_active() {
+            paint(color, "1;36", &format!("ARI {} WORKING", spinner(now_ms)))
+        } else {
+            paint(color, "2", "ARI ◌ no hooks yet")
+        }
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
@@ -144,6 +185,11 @@ pub fn render(
         && let Some(p) = &u.project
     {
         segs.push(paint(color, "1", p));
+    }
+    if from_hooks("now")
+        && let Some(now) = now_doing(st, now_ms)
+    {
+        segs.push(now);
     }
 
     if from_hooks("tasks") {
@@ -303,7 +349,7 @@ mod tests {
                 200,
                 false
             ),
-            "ARI ● ON TRACK │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
+            "ARI ● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
         );
     }
 
@@ -324,7 +370,10 @@ mod tests {
     #[test]
     fn drops_from_the_end_to_fit() {
         let (st, u) = sample();
-        let cfg = Config::default();
+        let cfg = Config {
+            hide: vec!["now".into()],
+            ..Config::default()
+        };
         for w in [10, 30, 50, 70] {
             let row = render(&st, &u, &Extras::default(), &cfg, NOW, w, false);
             assert!(row.starts_with("ARI ● ON TRACK"));
@@ -339,6 +388,7 @@ mod tests {
         );
         let capped = Config {
             max_width: 31,
+            hide: vec!["now".into()],
             ..Config::default()
         };
         assert_eq!(
@@ -361,7 +411,7 @@ mod tests {
             false,
         );
         assert!(
-            row.starts_with("ARI ● ON TRACK │ tankobon │ ██████"),
+            row.starts_with("ARI ● ON TRACK │ tankobon │ ⠋ thinking │ ██████"),
             "{row}"
         );
         let cfg = Config {
@@ -369,6 +419,58 @@ mod tests {
             ..Config::default()
         };
         assert!(!render(&st, &u, &Extras::default(), &cfg, NOW, 200, false).contains("tankobon"));
+    }
+
+    #[test]
+    fn shows_running_command_and_working_without_hooks() {
+        let (mut st, u) = sample();
+        st.agents[0].act = Some("$ cargo test --workspace".into());
+        st.agents[0].running_since = Some(NOW - 75_000);
+        let row = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        assert!(
+            row.contains("│ ⠋ $ cargo test --workspace 1m15s │"),
+            "{row}"
+        );
+        st.agents[0].running_since = None;
+        st.turn_active = false;
+        st.background = 0;
+        assert!(
+            !render(
+                &st,
+                &u,
+                &Extras::default(),
+                &Config::default(),
+                NOW,
+                200,
+                false
+            )
+            .contains("thinking")
+        );
+        let fresh = Extras {
+            transcript_age_ms: Some(3_000),
+            ..Default::default()
+        };
+        let stale = Extras {
+            transcript_age_ms: Some(60_000),
+            ..Default::default()
+        };
+        let empty = State::default();
+        assert!(
+            render(&empty, &u, &fresh, &Config::default(), NOW, 200, false)
+                .starts_with("ARI ⠋ WORKING")
+        );
+        assert!(
+            render(&empty, &u, &stale, &Config::default(), NOW, 200, false)
+                .starts_with("ARI ◌ no hooks yet")
+        );
     }
 
     #[test]
@@ -420,7 +522,7 @@ mod tests {
         let row = render(&st, &u, &Extras::default(), &cfg, NOW, 200, false);
         assert!(row.is_ascii(), "{row}");
         assert!(
-            row.starts_with("ARI * ON TRACK | ######---- 4/7 | | 2 agents"),
+            row.starts_with("ARI * ON TRACK | | thinking | ######---- 4/7 | | 2 agents"),
             "{row}"
         );
     }

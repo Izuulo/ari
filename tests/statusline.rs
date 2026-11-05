@@ -110,7 +110,7 @@ fn reads_hook_events() {
     .unwrap();
     let (out, _) = statusline(&d, "", PAYLOAD.as_bytes());
     assert!(
-        out.starts_with("ARI ↻ RETRYING │ ░░░░░░░░░░ 0/1 │ ✗ 1 │"),
+        out.starts_with("ARI ↻ RETRYING │ ") && out.contains(" thinking │ ░░░░░░░░░░ 0/1 │ ✗ 1 │"),
         "{out}"
     );
 }

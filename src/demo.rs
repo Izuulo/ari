@@ -104,6 +104,7 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
     let x = Extras {
         tokens: Some(cache),
         burn_eta: burn::projection(&samples, now),
+        transcript_age_ms: None,
     };
     (st, u, x, now)
 }
