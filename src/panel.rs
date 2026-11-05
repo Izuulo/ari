@@ -182,7 +182,12 @@ pub fn lines(
     let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
-        return vec![Line::from(fit(row, w))];
+        let out = vec![Line::from(fit(row, w))];
+        return if cfg.ascii {
+            crate::ascii::map_lines(out)
+        } else {
+            out
+        };
     }
 
     let mut sections = vec![
@@ -254,7 +259,11 @@ pub fn lines(
         format!("╰{}╯", "─".repeat(w.saturating_sub(2))),
         bstyle,
     )));
-    out
+    if cfg.ascii {
+        crate::ascii::map_lines(out)
+    } else {
+        out
+    }
 }
 
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
@@ -812,6 +821,46 @@ mod tests {
             out.contains("↻ STUCK") && out.contains("↻ edit lib.rs failed 4× in a row"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn ascii_keeps_layout() {
+        let (st, u) = multi();
+        let uni = lines(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            40,
+            false,
+        );
+        let cfg = Config {
+            ascii: true,
+            ..Config::default()
+        };
+        let asc = lines(
+            &st,
+            &u,
+            &Extras::default(),
+            &cfg,
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            40,
+            false,
+        );
+        assert_eq!(uni.len(), asc.len());
+        for (a, b) in uni.iter().zip(&asc) {
+            assert_eq!(a.width(), b.width());
+        }
+        let text = to_plain(&asc);
+        assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
+        insta::assert_snapshot!("ascii", text);
     }
 
     #[test]

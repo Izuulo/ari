@@ -1,3 +1,4 @@
+pub mod ascii;
 pub mod bar;
 pub mod burn;
 pub mod chain;

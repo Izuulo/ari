@@ -7,7 +7,7 @@ usage:
                         wire ARI into your statusline (chains the existing one)
   ari uninstall [--yes] [--purge]
                         restore your original statusline
-  ari watch [--session <id> | --all] [--once]
+  ari watch [--session <id> | --all] [--once] [--ascii]
                         full panel for this directory's session
   ari replay <dir>      print a recorded session as a timeline
   ari --version";

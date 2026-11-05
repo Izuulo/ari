@@ -201,11 +201,13 @@ fn fail(msg: &str) -> ! {
 pub fn run(args: &[String]) -> ! {
     let mut mode = None;
     let mut once = false;
+    let mut ascii = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--all" => mode = Some(Mode::All),
             "--once" => once = true,
+            "--ascii" => ascii = true,
             "--session" => {
                 let id = it.next().unwrap_or_else(|| fail("--session needs an id"));
                 if !paths::valid_session_id(id) {
@@ -214,7 +216,7 @@ pub fn run(args: &[String]) -> ! {
                 mode = Some(Mode::Fixed(id.clone()));
             }
             other => fail(&format!(
-                "unknown option {other} (try --session <id>, --all, --once)"
+                "unknown option {other} (try --session <id>, --all, --once, --ascii)"
             )),
         }
     }
@@ -225,7 +227,11 @@ pub fn run(args: &[String]) -> ! {
     let mut app = App {
         root,
         mode: mode.unwrap_or(Mode::Follow(cwd)),
-        cfg: config::load(),
+        cfg: {
+            let mut c = config::load();
+            c.ascii |= ascii;
+            c
+        },
         view: View::default(),
         dir: None,
         st: State::default(),
