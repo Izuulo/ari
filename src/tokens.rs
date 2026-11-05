@@ -111,6 +111,18 @@ impl Ledger {
     }
 }
 
+/// A ledger from transcript text already in memory (the bundled demo).
+pub fn ledger_from(text: &str) -> Ledger {
+    let mut l = Ledger::default();
+    for v in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    {
+        l.apply(&v);
+    }
+    l
+}
+
 /// Read whatever `path` gained since `l.offset`; only complete lines. A shorter file starts over.
 pub fn read_ledger(path: &Path, l: &mut Ledger) {
     let Ok(mut f) = std::fs::File::open(path) else {

@@ -201,11 +201,13 @@ fn fail(msg: &str) -> ! {
 pub fn run(args: &[String]) -> ! {
     let mut mode = None;
     let mut once = false;
+    let mut ascii = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--all" => mode = Some(Mode::All),
             "--once" => once = true,
+            "--ascii" => ascii = true,
             "--session" => {
                 let id = it.next().unwrap_or_else(|| fail("--session needs an id"));
                 if !paths::valid_session_id(id) {
@@ -214,7 +216,7 @@ pub fn run(args: &[String]) -> ! {
                 mode = Some(Mode::Fixed(id.clone()));
             }
             other => fail(&format!(
-                "unknown option {other} (try --session <id>, --all, --once)"
+                "unknown option {other} (try --session <id>, --all, --once, --ascii)"
             )),
         }
     }
@@ -225,7 +227,11 @@ pub fn run(args: &[String]) -> ! {
     let mut app = App {
         root,
         mode: mode.unwrap_or(Mode::Follow(cwd)),
-        cfg: config::load(),
+        cfg: {
+            let mut c = config::load();
+            c.ascii |= ascii;
+            c
+        },
         view: View::default(),
         dir: None,
         st: State::default(),
@@ -247,50 +253,69 @@ pub fn run(args: &[String]) -> ! {
         std::process::exit(0)
     }
 
-    let mut term = ratatui::init();
-    let result = (|| -> std::io::Result<()> {
-        loop {
-            app.refresh();
-            let now = hook::now_ms();
-            let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
-            if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
-                let mut out = std::io::stdout();
-                out.write_all(b"\x07")?;
-                out.flush()?;
-            }
-            app.last_verdict = Some(v);
-            term.draw(|f| {
-                let area = f.area();
-                let lines = app.lines(area.width, area.height);
-                let align = if app.dir.is_none() && app.mode != Mode::All {
-                    Alignment::Center
-                } else {
-                    Alignment::Left
-                };
-                f.render_widget(Paragraph::new(lines).alignment(align), area);
-            })?;
-            if !event::poll(if app.animating(now) { FAST } else { SLOW })? {
-                continue;
-            }
-            if let Event::Key(k) = event::read()?
-                && k.kind == KeyEventKind::Press
-            {
-                match k.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(());
-                    }
-                    KeyCode::Char('e') => app.view.expand_errors ^= true,
-                    KeyCode::Char('a') => app.view.expand_agents ^= true,
-                    KeyCode::Tab => app.cycle(),
-                    _ => {}
-                }
-            }
+    let result = run_tui(|view, tab, w, h| {
+        if tab {
+            app.cycle();
         }
-    })();
-    ratatui::restore();
+        app.view = view;
+        app.refresh();
+        let now = hook::now_ms();
+        let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
+        if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(b"\x07").and_then(|_| out.flush());
+        }
+        app.last_verdict = Some(v);
+        let align = if app.dir.is_none() && app.mode != Mode::All {
+            Alignment::Center
+        } else {
+            Alignment::Left
+        };
+        (app.lines(w, h), app.animating(now), align)
+    });
     if let Err(e) = result {
         fail(&e.to_string());
     }
     std::process::exit(0)
+}
+
+/// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment.
+pub type Frame = (Vec<Line<'static>>, bool, Alignment);
+
+/// Own the terminal (alternate screen, raw mode, restored on exit or panic) and redraw
+/// until `q`. `frame(view, tab_pressed, width, height)` produces each frame.
+pub fn run_tui(mut frame: impl FnMut(View, bool, u16, u16) -> Frame) -> std::io::Result<()> {
+    let mut term = ratatui::init();
+    let result = tui_loop(&mut term, &mut frame);
+    ratatui::restore();
+    result
+}
+
+fn tui_loop(
+    term: &mut ratatui::DefaultTerminal,
+    frame: &mut impl FnMut(View, bool, u16, u16) -> Frame,
+) -> std::io::Result<()> {
+    let mut view = View::default();
+    let mut tab = false;
+    loop {
+        let size = term.size()?;
+        let (lines, animating, align) =
+            frame(view, std::mem::take(&mut tab), size.width, size.height);
+        term.draw(|f| f.render_widget(Paragraph::new(lines).alignment(align), f.area()))?;
+        if !event::poll(if animating { FAST } else { SLOW })? {
+            continue;
+        }
+        if let Event::Key(k) = event::read()?
+            && k.kind == KeyEventKind::Press
+        {
+            match k.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                KeyCode::Char('e') => view.expand_errors ^= true,
+                KeyCode::Char('a') => view.expand_agents ^= true,
+                KeyCode::Tab => tab = true,
+                _ => {}
+            }
+        }
+    }
 }

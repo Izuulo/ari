@@ -199,7 +199,11 @@ pub fn render(
     loop {
         let line = segs.join(&sep);
         if segs.len() == 1 || visible_width(&line) <= width {
-            return line;
+            return if cfg.ascii {
+                crate::ascii::map(&line)
+            } else {
+                line
+            };
         }
         segs.pop();
     }
@@ -365,6 +369,21 @@ mod tests {
         );
         assert!(colored.contains("\x1b["));
         assert_eq!(visible_width(&colored), plain.chars().count());
+    }
+
+    #[test]
+    fn ascii_bar() {
+        let (st, u) = sample();
+        let cfg = Config {
+            ascii: true,
+            ..Config::default()
+        };
+        let row = render(&st, &u, &Extras::default(), &cfg, NOW, 200, false);
+        assert!(row.is_ascii(), "{row}");
+        assert!(
+            row.starts_with("ARI * ON TRACK | ######---- 4/7 | | 2 agents"),
+            "{row}"
+        );
     }
 
     #[test]
