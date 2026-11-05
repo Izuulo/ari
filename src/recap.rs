@@ -193,6 +193,7 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
             tools,
             waiting,
             idle,
+            other: 0,
         });
     }
     if since == Since::Start {

@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 4;
+const CACHE_VERSION: u32 = 5;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -147,6 +147,8 @@ pub struct Split {
     pub tools: u64,
     pub waiting: u64,
     pub idle: u64,
+    /// Wall time none of the above accounts for.
+    pub other: u64,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
@@ -385,13 +387,15 @@ impl State {
                 }
                 self.background = ev.bg.unwrap_or(0);
                 self.agents[0].running_since = None;
+                // You are idle after Stop even while background tasks run.
+                self.time.idle_since.get_or_insert(ev.t);
                 if self.background == 0 {
-                    self.time.idle_since.get_or_insert(ev.t);
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
             }
             "StopFailure" => {
+                self.time.idle_since.get_or_insert(ev.t);
                 self.turn_active = false;
                 self.turn_failed = true;
                 self.agents[0].act = None;
@@ -678,11 +682,13 @@ impl State {
     pub fn split(&self, wall_ms: u64, api_ms: Option<u64>) -> Split {
         let t = &self.time;
         let others = t.tools_ms + t.waiting_ms + t.idle_ms;
+        let claude = api_ms.unwrap_or(wall_ms.saturating_sub(others));
         Split {
-            claude: api_ms.unwrap_or(wall_ms.saturating_sub(others)),
+            claude,
             tools: t.tools_ms,
             waiting: t.waiting_ms,
             idle: t.idle_ms,
+            other: wall_ms.saturating_sub(claude + others),
         }
     }
 
@@ -989,6 +995,32 @@ mod tests {
         };
         s.apply(&other);
         assert_eq!(s.verdict(0), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn stop_failure_and_background_stop_start_idle() {
+        let sf = Event {
+            kind: Some("rate_limit".into()),
+            ..ev("StopFailure")
+        };
+        for stopper in [sf, stop(1)] {
+            let mut s = run(&[prompt("go"), stopper]);
+            s.apply(&Event {
+                t: 61_000,
+                ..prompt("again")
+            });
+            assert_eq!(s.time.idle_ms, 60_000);
+        }
+    }
+
+    #[test]
+    fn split_other_is_the_remainder() {
+        let mut s = State::default();
+        s.time.tools_ms = 10;
+        s.time.idle_ms = 20;
+        let sp = s.split(100, Some(30));
+        assert_eq!(sp.other, 40);
+        assert_eq!(s.split(50, Some(30)).other, 0);
     }
 
     #[test]

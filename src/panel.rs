@@ -990,8 +990,10 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             ("tools", sp.tools),
             ("you", sp.waiting),
             ("idle", sp.idle),
+            ("other", sp.other),
         ] {
-            if pct(ms) > 0.0 {
+            // Unattributed time only shows once it is big enough to matter.
+            if pct(ms) > 0.0 && (name != "other" || pct(ms) >= 5.0) {
                 text += &format!(" · {name} {:.0}%", pct(ms));
             }
         }
@@ -1265,6 +1267,19 @@ mod tests {
         assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn time_split_other_only_from_5_percent() {
+        let (mut st, mut u) = multi();
+        st.time.tools_ms = 22_000;
+        u.duration_ms = Some(100_000);
+        u.api_duration_ms = Some(61_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("tools 22% · other 17%"), "{out}");
+        u.api_duration_ms = Some(75_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("other"), "{out}");
     }
 
     #[test]
