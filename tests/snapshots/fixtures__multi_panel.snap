@@ -11,6 +11,7 @@ expression: "out.join(\"\\n\")"
 │ ⠏ main   thinking…                                   │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✗ 0s   python3 test_calc.py · AssertionError         │
+│ cost of mistakes: 1 failed call · 1s                 │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
@@ -31,6 +32,7 @@ expression: "out.join(\"\\n\")"
 ├─ errors ─────────────────────────────────────────────┤
 │ ✓ 6s   python3 test_calc.py · AssertionError         │
 │        fixed by main                                 │
+│ cost of mistakes: 1 failed call · 1s                 │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
@@ -50,6 +52,7 @@ expression: "out.join(\"\\n\")"
 ├─ errors ─────────────────────────────────────────────┤
 │ ✓ 10s  python3 test_calc.py · AssertionError         │
 │        fixed by main                                 │
+│ cost of mistakes: 1 failed call · 1s                 │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │

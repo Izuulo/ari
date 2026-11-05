@@ -12,6 +12,7 @@ expression: out
 ├─ errors ─────────────────────────────────────────────┤
 │ ✓ 10s  python3 test_calc.py · AssertionError         │
 │        fixed by main                                 │
+│ cost of mistakes: 1 failed call · 1s                 │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │

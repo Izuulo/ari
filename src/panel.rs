@@ -526,6 +526,24 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
 }
 
 fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
+    let mut rows = errors_list(st, c, view, now);
+    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
+    if time > 0 || st.reread > 0 {
+        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
+        let s = if failed == 1 { "" } else { "s" };
+        let mut parts = vec![format!("{failed} failed call{s}"), dur(time)];
+        if st.reread > 0 {
+            let s = if st.reread == 1 { "" } else { "s" };
+            parts.push(format!("{} re-read{s}", st.reread));
+        }
+        rows.push(vec![
+            c.dim(format!("cost of mistakes: {}", parts.join(" · "))),
+        ]);
+    }
+    rows
+}
+
+fn errors_list(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     if st.errors.is_empty() {
         return vec![vec![c.dim("no errors")]];
     }
@@ -970,6 +988,24 @@ mod tests {
         let out = render(&st, &u, View::default(), 70, 60);
         assert!(
             out.contains("time    1m40s · claude 61% · tools 22% · you 9% · idle 8%"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn mistake_cost_footer() {
+        let (mut st, u) = multi();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("cost of mistakes"), "{out}");
+        st.errors[0].retries = 1;
+        st.errors[0].time_ms = 5_000;
+        st.reread = 1;
+        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains(&format!(
+                "cost of mistakes: {failed} failed calls · 5s · 1 re-read"
+            )),
             "{out}"
         );
     }

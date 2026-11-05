@@ -2,7 +2,7 @@
 
 use crate::event::Event;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -56,6 +56,10 @@ pub struct State {
     /// Recent test runs, oldest first.
     pub test_runs: VecDeque<TestRun>,
     pub time: TimeSplit,
+    /// "agent\tpath" → input hashes read since the file last changed.
+    pub reads: BTreeMap<String, Vec<u64>>,
+    /// Reads repeating an identical earlier read of an unchanged file.
+    pub reread: u32,
 }
 
 /// Wall time not spent by Claude itself, folded from events.
@@ -127,6 +131,8 @@ pub struct ErrorRec {
     pub resolved_t: Option<u64>,
     pub resolved_by: Option<String>,
     pub turn: u32,
+    /// Σ duration of this error's failed calls.
+    pub time_ms: u64,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -241,6 +247,7 @@ impl State {
                 if ev.a.is_none() {
                     self.time.tools_ms += ev.dur.unwrap_or(0);
                 }
+                self.track_reads(ev, aid);
                 if let Some((pass, fail)) = ev.tests {
                     self.test_runs.push_back(TestRun {
                         t: ev.t,
@@ -404,6 +411,7 @@ impl State {
         {
             e.retries += 1;
             e.last_t = ev.t;
+            e.time_ms += ev.dur.unwrap_or(0);
             e.msg = msg;
             e.kind = ev.kind.clone();
             return;
@@ -417,6 +425,7 @@ impl State {
             first_t: ev.t,
             last_t: ev.t,
             turn: self.turns,
+            time_ms: ev.dur.unwrap_or(0),
             ..Default::default()
         });
     }
@@ -556,6 +565,27 @@ impl State {
             return Verdict::Retrying;
         }
         Verdict::OnTrack
+    }
+
+    fn track_reads(&mut self, ev: &Event, aid: &str) {
+        let Some((tool, path)) = ev.sig.as_deref().and_then(|s| s.split_once(':')) else {
+            return;
+        };
+        match tool {
+            "Read" if ev.ok == Some(true) => {
+                let seen = self.reads.entry(format!("{aid}\t{path}")).or_default();
+                let h = ev.h.unwrap_or(0);
+                if seen.contains(&h) {
+                    self.reread += 1;
+                } else {
+                    seen.push(h);
+                }
+            }
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
+                self.reads.retain(|k, _| !k.ends_with(&format!("\t{path}")));
+            }
+            _ => {}
+        }
     }
 
     /// Wall time split four ways. Claude is the API time when known, else what's left.
@@ -953,6 +983,37 @@ mod tests {
         let sp = s.split(120_000, None);
         assert_eq!(sp.claude, 25_000, "remainder when api time is unknown");
         assert_eq!(s.split(50_000, None).claude, 0, "never negative");
+    }
+
+    #[test]
+    fn mistake_cost() {
+        let fail = |dur| Event {
+            dur: Some(dur),
+            ..tool("PostToolUseFailure", "Bash:make", Some(false))
+        };
+        let s = run(&[prompt("go"), fail(2_000), fail(3_000)]);
+        assert_eq!(s.errors[0].time_ms, 5_000);
+        let read = |agent: &str, path: &str| Event {
+            a: (agent != "main").then(|| agent.to_string()),
+            tool: Some("Read".into()),
+            sig: Some(format!("Read:{path}")),
+            h: Some(path.len() as u64),
+            ok: Some(true),
+            ..ev("PostToolUse")
+        };
+        let edit = |path: &str| Event {
+            tool: Some("Edit".into()),
+            sig: Some(format!("Edit:{path}")),
+            ok: Some(true),
+            ..ev("PostToolUse")
+        };
+        assert_eq!(run(&[read("main", "/a"), read("main", "/a")]).reread, 1);
+        assert_eq!(
+            run(&[read("main", "/a"), edit("/a"), read("main", "/a")]).reread,
+            0,
+            "the file changed in between"
+        );
+        assert_eq!(run(&[read("main", "/a"), read("sub1", "/a")]).reread, 0);
     }
 
     #[test]
