@@ -70,6 +70,18 @@ fn level(pct: f64, cfg: &Config) -> Style {
     })
 }
 
+/// `/Users/me/ari/` → `~/ari`.
+fn tilde(dir: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    let home = std::env::var("HOME").unwrap_or_default();
+    match dir.strip_prefix(home.trim_end_matches('/')) {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
+        _ => dir.to_string(),
+    }
+}
+
 /// Local wall-clock `HH:MM`.
 pub fn local_hhmm(ms: u64) -> String {
     #[cfg(unix)]
@@ -237,20 +249,26 @@ pub fn lines(
         ));
     }
     let right = format!(" {clock} ─╮");
-    // Which project this panel is following, so several sessions can't be confused.
-    if let Some(p) = &u.project {
+    // Which repo this panel is following, so several sessions can't be confused.
+    let mut tail = Vec::new();
+    if let Some(d) = &u.dir {
         let room = w.saturating_sub(row_width(&title) + right.width() + 5);
         if room >= 4 {
-            title.push(Span::styled(" · ", bstyle));
-            title.extend(fit(
-                vec![c.span(p.clone(), Style::new().add_modifier(Modifier::BOLD))],
+            tail.push(Span::raw(" "));
+            tail.extend(fit(
+                vec![c.span(
+                    format!("cd {}", tilde(d)),
+                    Style::new().add_modifier(Modifier::BOLD),
+                )],
                 room,
             ));
+            tail.push(Span::styled(" ·", bstyle));
         }
     }
     title.push(Span::raw(" "));
-    let fill = w.saturating_sub(row_width(&title) + right.width());
+    let fill = w.saturating_sub(row_width(&title) + row_width(&tail) + right.width());
     title.push(Span::styled("─".repeat(fill), bstyle));
+    title.extend(tail);
     title.push(Span::styled(right, bstyle));
     out.push(Line::from(fit(title, w)));
 
@@ -913,11 +931,12 @@ mod tests {
     #[test]
     fn project_and_session_title_in_header() {
         let (st, mut u) = multi();
-        u.project = Some("tankobon".into());
+        u.dir = Some("/x/tankobon/".into());
         u.session_name = Some("next milestone".into());
         let out = render(&st, &u, View::default(), 50, 40);
         let first: Vec<&str> = out.lines().take(2).collect();
-        assert!(first[0].starts_with("╭─ ARI (•_•) · tankobon ─"), "{out}");
+        assert!(first[0].starts_with("╭─ ARI (•_•) ─"), "{out}");
+        assert!(first[0].contains("─ cd /x/tankobon · "), "{out}");
         assert!(first[1].ends_with("milestone: next milestone │"), "{out}");
         render(&st, &u, View::default(), 20, 10);
     }
@@ -937,5 +956,8 @@ mod tests {
         assert_eq!(sig_words(&e("StopFailure:rate_limit")), "api rate_limit");
         assert_eq!(sig_words(&e("WebFetch")), "webfetch");
         assert_eq!(local_hhmm(NOW).len(), 5);
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(tilde(&format!("{home}/ari/")), "~/ari");
+        assert_eq!(tilde(&format!("{home}x/ari")), format!("{home}x/ari"));
     }
 }
