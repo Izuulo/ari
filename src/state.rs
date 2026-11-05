@@ -326,6 +326,8 @@ impl State {
                 self.needs_you = None;
                 self.start_turn();
                 if !msg.starts_with("<task-notification>") {
+                    // An Esc interrupt fires no Stop; the next prompt ends that turn.
+                    self.end_turn(ev.t, true);
                     self.prompts.push_back(ev.t);
                     if self.prompts.len() > 6 {
                         self.prompts.pop_front();
@@ -490,6 +492,7 @@ impl State {
             }
             "SessionEnd" => {
                 self.ended = true;
+                self.end_turn(ev.t, true);
                 self.turn_active = false;
                 self.background = 0;
                 for a in &mut self.agents {
@@ -1461,6 +1464,25 @@ mod tests {
         }
         assert_eq!((s.turn_log.len(), s.compactions.len()), (50, 20));
         assert_eq!(s.compactions[0].1, "auto");
+    }
+
+    #[test]
+    fn next_prompt_and_session_end_close_open_turn() {
+        let at = |t, e: &str, msg: Option<&str>| Event {
+            t,
+            e: e.into(),
+            msg: msg.map(Into::into),
+            ..Default::default()
+        };
+        let mut s = State::default();
+        s.apply(&at(10, "UserPromptSubmit", Some("a")));
+        s.apply(&at(11, "UserPromptSubmit", Some("<task-notification>x")));
+        assert_eq!(s.turn_log[0].end, None, "synthetic prompt keeps it open");
+        s.apply(&at(30, "UserPromptSubmit", Some("b")));
+        assert_eq!((s.turn_log[0].end, s.turn_log[0].ok), (Some(30), true));
+        assert_eq!(s.turn_log[1].end, None);
+        s.apply(&at(50, "SessionEnd", None));
+        assert_eq!(s.turn_log[1].end, Some(50));
     }
 
     #[test]

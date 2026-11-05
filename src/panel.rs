@@ -1561,7 +1561,9 @@ mod tests {
 
     #[test]
     fn turns_collapse_first() {
-        let (mut st, x) = turn_state();
+        let (mut st, u) = multi();
+        let (t, x) = turn_state();
+        st.turn_log = t.turn_log;
         for i in 0..30 {
             st.turn_log.push_back(crate::state::TurnRec {
                 start: NOW - 1000 + i,
@@ -1569,11 +1571,53 @@ mod tests {
                 ..Default::default()
             });
         }
-        let big = render_x(&st, &x, 80, 100);
-        assert!(big.contains("├─ turns"));
-        let out = render_x(&st, &x, 80, 14);
-        assert!(!out.contains("├─ turns"), "{out}");
-        assert!(out.lines().count() <= 14);
+        let r = |h| {
+            to_plain(&lines(
+                &st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                50,
+                h,
+                false,
+            ))
+        };
+        let rows = |o: &str| {
+            o.lines()
+                .filter(|l| l.contains(" calls") || l.contains(" call "))
+                .count()
+        };
+        let full = r(100);
+        let mid = r(full.lines().count() as u16 - 5);
+        assert!(full.contains("├─ turns"));
+        assert!(
+            mid.contains("├─ turns") && rows(&mid) == rows(&full) - 5,
+            "{mid}"
+        );
+        assert!(
+            mid.contains("├─ usage") && mid.contains("├─ session"),
+            "{mid}"
+        );
+        let short = r(14);
+        assert!(!short.contains("├─ turns"), "{short}");
+        let mut bare = st.clone();
+        bare.turn_log.clear();
+        let want = to_plain(&lines(
+            &bare,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            14,
+            false,
+        ));
+        assert_eq!(short, want);
     }
 
     #[test]
