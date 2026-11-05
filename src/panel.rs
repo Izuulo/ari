@@ -433,7 +433,13 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         return vec![vec![c.dim("no activity yet")]];
     };
     let subs: Vec<_> = st.agents.iter().skip(1).collect();
-    let mut done: Vec<_> = subs.iter().filter(|a| a.done).collect();
+    // Finished agents worth showing: did some work, and finished in the last 10 minutes.
+    let mut done: Vec<_> = subs
+        .iter()
+        .filter(|a| a.done)
+        .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
+        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 10 * 60_000)
+        .collect();
     done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
     let shown: Vec<_> = subs
@@ -1108,6 +1114,38 @@ mod tests {
             false,
         ));
         assert!(!out.contains("compacts in"), "{out}");
+    }
+
+    #[test]
+    fn hides_instant_and_old_finished_agents() {
+        use crate::state::Agent;
+        let (mut st, u) = multi();
+        let done = |id: &str, calls: u32, started: u64, ended: u64| Agent {
+            id: id.into(),
+            kind: id.into(),
+            calls,
+            started,
+            last_t: ended,
+            ended_t: Some(ended),
+            done: true,
+            result: Some(format!("{id} result")),
+            ..Default::default()
+        };
+        st.agents.retain(|a| a.id == "main");
+        st.agents.push(done("instant", 0, NOW - 5_000, NOW - 5_000));
+        st.agents.push(done("oldone", 9, NOW - 30 * 60_000, NOW - 20 * 60_000));
+        st.agents.push(done("recent", 4, NOW - 90_000, NOW - 60_000));
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("recent result"), "{out}");
+        assert!(!out.contains("instant result"), "{out}");
+        assert!(!out.contains("oldone result"), "{out}");
+        assert!(out.contains("… 2 more done (a)"), "{out}");
+        let all = View {
+            expand_agents: true,
+            ..View::default()
+        };
+        let out = render(&st, &u, all, 70, 60);
+        assert!(out.contains("instant result") && out.contains("oldone result"), "{out}");
     }
 
     #[test]
