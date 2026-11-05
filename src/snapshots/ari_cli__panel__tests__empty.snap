@@ -14,5 +14,5 @@ expression: "render(&State::default(), &Usage::default(), View::default(), 46, 4
 │ 5h  —                                      │
 │ 7d  —                                      │
 ├─ session ──────────────────────────────────┤
-│ cost  —                                    │
+│ cost    —                                  │
 ╰────────────────────────────────────────────╯

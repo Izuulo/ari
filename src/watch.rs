@@ -4,7 +4,7 @@ use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
 use crate::usage::{self, Usage};
-use crate::{bar, config, hook, paths, state};
+use crate::{bar, burn, config, hook, paths, state, tokens};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
@@ -33,6 +33,7 @@ struct App {
     dir: Option<PathBuf>,
     st: State,
     usage: Usage,
+    x: bar::Extras,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
     last_verdict: Option<Verdict>,
@@ -67,6 +68,7 @@ impl App {
                 self.mtimes = (None, None);
                 self.st = State::default();
                 self.usage = Usage::default();
+                self.x = bar::Extras::default();
             }
         }
         let Some(dir) = &self.dir else { return };
@@ -78,6 +80,13 @@ impl App {
             self.mtimes = now;
             self.st = state::load_session(dir);
             self.usage = load_usage(dir);
+            self.x.tokens = Some(tokens::update(
+                dir,
+                &self.st,
+                tokens::transcript_for(dir, &self.usage).as_deref(),
+            ));
+            let now = hook::now_ms();
+            self.x.burn_eta = burn::projection(&burn::load(dir, now), now);
         }
     }
 
@@ -114,6 +123,7 @@ impl App {
         panel::lines(
             &self.st,
             &self.usage,
+            &self.x,
             &self.cfg,
             self.view,
             now,
@@ -168,6 +178,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         let row = bar::render(
             &state::load_session(&s.dir),
             &load_usage(&s.dir),
+            &bar::Extras::default(),
             cfg,
             now,
             (width as usize).saturating_sub(name.len() + 2),
@@ -219,6 +230,7 @@ pub fn run(args: &[String]) -> ! {
         dir: None,
         st: State::default(),
         usage: Usage::default(),
+        x: bar::Extras::default(),
         mtimes: (None, None),
         picked_at: None,
         last_verdict: None,
@@ -240,7 +252,7 @@ pub fn run(args: &[String]) -> ! {
         loop {
             app.refresh();
             let now = hook::now_ms();
-            let v = app.st.verdict(now);
+            let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
             if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
                 let mut out = std::io::stdout();
                 out.write_all(b"\x07")?;

@@ -9,7 +9,19 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
+const CALLS: usize = 30;
+const STUCK_WINDOW: usize = 10;
+const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+/// Bookkeeping tools that repeat by design.
+const NOT_LOOPS: [&str; 6] = [
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+    "TodoWrite",
+    "ToolSearch",
+];
 /// Notification types that mean Claude is waiting on the user (docs/DECISIONS.md D5).
 const NEEDS_YOU: [&str; 5] = [
     "permission_prompt",
@@ -33,6 +45,8 @@ pub struct State {
     /// Last tool results across all agents: (ok, signature).
     pub recent: VecDeque<(bool, String)>,
     pub last_main_result: Option<(bool, String)>,
+    /// Last tool calls across agents, for loop detection.
+    pub calls: VecDeque<Call>,
     pub compacted_at: Option<u64>,
     pub first_t: u64,
     pub last_t: u64,
@@ -76,6 +90,15 @@ pub struct ErrorRec {
     pub resolved_t: Option<u64>,
     pub resolved_by: Option<String>,
     pub turn: u32,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Call {
+    pub agent: String,
+    pub tool: String,
+    pub h: u64,
+    pub act: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +182,15 @@ impl State {
                 let a = self.agent_mut(aid, ev);
                 a.calls += 1;
                 a.act = ev.act.clone();
+                self.calls.push_back(Call {
+                    agent: aid.into(),
+                    tool: ev.tool.clone().unwrap_or_default(),
+                    h: ev.h.unwrap_or(0),
+                    act: ev.act.clone().unwrap_or_default(),
+                });
+                if self.calls.len() > CALLS {
+                    self.calls.pop_front();
+                }
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
@@ -375,7 +407,53 @@ impl State {
             .any(|e| e.sig == sig && e.resolved_t.is_none())
     }
 
-    pub fn verdict(&self, _now: u64) -> Verdict {
+    pub fn verdict(&self, now: u64) -> Verdict {
+        self.verdict_with(now, 3)
+    }
+
+    /// Why Claude looks stuck, if it does (PRD 7.4). `repeats` = `thresholds.stuck_repeats`.
+    pub fn stuck_reason(&self, repeats: u8) -> Option<String> {
+        let repeats = repeats.max(2) as usize;
+        // Rule B: the same signature failing again and again without a success in between.
+        if let Some(e) = self.errors.iter().rev().find(|e| {
+            e.resolved_t.is_none()
+                && e.retries as usize + 1 >= repeats
+                && self.recent.iter().any(|(ok, sig)| !ok && *sig == e.sig)
+        }) {
+            return Some(format!(
+                "{} failed {}× in a row",
+                crate::panel::sig_words(e),
+                e.retries + 1
+            ));
+        }
+        // Rule A: one agent repeating an identical call with no file edit in between.
+        let mut agents: Vec<&str> = self.calls.iter().map(|c| c.agent.as_str()).collect();
+        agents.dedup();
+        for agent in agents {
+            let mine: Vec<&Call> = self.calls.iter().filter(|c| c.agent == agent).collect();
+            let window = &mine[mine.len().saturating_sub(STUCK_WINDOW)..];
+            for c in window
+                .iter()
+                .filter(|c| !NOT_LOOPS.contains(&c.tool.as_str()))
+            {
+                let same: Vec<usize> = (0..window.len())
+                    .filter(|&i| window[i].tool == c.tool && window[i].h == c.h)
+                    .collect();
+                if same.len() < repeats {
+                    continue;
+                }
+                let (first, last) = (same[0], same[same.len() - 1]);
+                let edited = (first..=last)
+                    .any(|i| !same.contains(&i) && FILE_EDITS.contains(&window[i].tool.as_str()));
+                if !edited {
+                    return Some(format!("same call {}× · {}", same.len(), c.act));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn verdict_with(&self, _now: u64, repeats: u8) -> Verdict {
         if self.needs_you.is_some() {
             return Verdict::NeedsYou;
         }
@@ -398,6 +476,9 @@ impl State {
             } else {
                 Verdict::Idle
             };
+        }
+        if self.stuck_reason(repeats).is_some() {
+            return Verdict::Stuck;
         }
         if self
             .recent
@@ -553,6 +634,72 @@ mod tests {
         }
     }
 
+    fn call(agent: &str, tool: &str, h: u64, act: &str) -> Event {
+        Event {
+            a: (agent != "main").then(|| agent.to_string()),
+            tool: Some(tool.into()),
+            h: Some(h),
+            act: Some(act.into()),
+            ..ev("PreToolUse")
+        }
+    }
+
+    #[test]
+    fn stuck_on_identical_calls() {
+        let r = call("main", "Read", 7, "reading a.rs");
+        let s = run(&[prompt("go"), r.clone(), r.clone(), r.clone()]);
+        assert_eq!(s.verdict(0), Verdict::Stuck);
+        assert_eq!(
+            s.stuck_reason(3).as_deref(),
+            Some("same call 3× · reading a.rs")
+        );
+        assert_eq!(s.verdict_with(0, 4), Verdict::OnTrack);
+        let edit = call("main", "Edit", 9, "editing a.rs");
+        let s = run(&[prompt("go"), r.clone(), edit, r.clone(), r.clone()]);
+        assert_eq!(
+            s.verdict(0),
+            Verdict::OnTrack,
+            "an edit between repeats is progress"
+        );
+        let t = call("main", "TaskUpdate", 1, "updating plan");
+        assert_eq!(
+            run(&[prompt("go"), t.clone(), t.clone(), t]).verdict(0),
+            Verdict::OnTrack
+        );
+        let par: Vec<Event> = ["a1", "a2", "a3"]
+            .iter()
+            .map(|a| call(a, "Read", 7, "reading a.rs"))
+            .collect();
+        let mut evs = vec![prompt("go")];
+        evs.extend(par);
+        assert_eq!(
+            run(&evs).verdict(0),
+            Verdict::OnTrack,
+            "parallel agents don't add up"
+        );
+        let mut s = run(&[prompt("go"), r.clone(), r.clone(), r]);
+        s.apply(&stop(0));
+        assert_ne!(s.verdict(0), Verdict::Stuck);
+    }
+
+    #[test]
+    fn stuck_on_repeated_failure() {
+        let fail = Event {
+            sig: Some("Bash:cargo build".into()),
+            ..tool("PostToolUseFailure", "Bash:cargo build", Some(false))
+        };
+        let mut s = run(&[prompt("go"), fail.clone(), fail.clone()]);
+        assert_eq!(s.verdict(0), Verdict::Retrying);
+        s.apply(&fail);
+        assert_eq!(s.verdict(0), Verdict::Stuck);
+        assert_eq!(
+            s.stuck_reason(3).as_deref(),
+            Some("cargo build failed 3× in a row")
+        );
+        s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
+        assert_eq!(s.verdict(0), Verdict::OnTrack);
+    }
+
     #[test]
     fn needs_you_until_next_tool() {
         let note = Event {
@@ -590,9 +737,9 @@ mod tests {
     #[test]
     fn retry_then_fix() {
         let fail = tool("PostToolUseFailure", "Bash:cargo build", Some(false));
-        let mut s = run(&[prompt("go"), fail.clone(), fail.clone(), fail]);
+        let mut s = run(&[prompt("go"), fail.clone(), fail]);
         assert_eq!(s.verdict(0), Verdict::Retrying);
-        assert_eq!((s.errors.len(), s.errors[0].retries), (1, 2));
+        assert_eq!((s.errors.len(), s.errors[0].retries), (1, 1));
         s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
         assert_eq!(s.verdict(0), Verdict::OnTrack);
         assert_eq!(s.errors[0].resolved_by.as_deref(), Some("main"));

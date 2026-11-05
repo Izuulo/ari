@@ -1,6 +1,6 @@
 //! The full panel, as styled lines. Pure: everything `ari watch` draws comes from here.
 
-use crate::bar::{cells, countdown, spinner};
+use crate::bar::{Extras, cells, countdown, fmt_tokens, spinner};
 use crate::config::Config;
 use crate::state::{AgentStatus, ErrorRec, State, Verdict};
 use crate::usage::{Limit, Usage};
@@ -165,6 +165,7 @@ fn fit(row: Row, max: usize) -> Row {
 pub fn lines(
     st: &State,
     u: &Usage,
+    x: &Extras,
     cfg: &Config,
     view: View,
     now: u64,
@@ -178,7 +179,7 @@ pub fn lines(
         color,
         inner: w.saturating_sub(4),
     };
-    let v = st.verdict(now);
+    let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
         return vec![Line::from(fit(row, w))];
@@ -187,11 +188,11 @@ pub fn lines(
     let mut sections = vec![
         Section {
             title: None,
-            rows: header(st, &c, v, now),
+            rows: header(st, &c, v, cfg.thresholds.stuck_repeats),
         },
         Section {
             title: Some("agents"),
-            rows: agents(st, &c, view, now),
+            rows: agents(st, x, &c, view, now),
         },
         Section {
             title: Some("errors"),
@@ -199,11 +200,11 @@ pub fn lines(
         },
         Section {
             title: Some("usage"),
-            rows: usage(st, u, cfg, &c, now),
+            rows: usage(st, u, x, cfg, &c, now),
         },
         Section {
             title: Some("session"),
-            rows: session(st, u, &c),
+            rows: session(st, u, x, cfg, &c),
         },
     ];
     collapse(&mut sections, height as usize);
@@ -282,7 +283,7 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
     }
 }
 
-fn header(st: &State, c: &Ctx, v: Verdict, _now: u64) -> Vec<Row> {
+fn header(st: &State, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
     let mut rows = Vec::new();
     let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
     let mut row = vec![left];
@@ -301,6 +302,11 @@ fn header(st: &State, c: &Ctx, v: Verdict, _now: u64) -> Vec<Row> {
         }
     }
     rows.push(row);
+    if v == Verdict::Stuck
+        && let Some(why) = st.stuck_reason(repeats)
+    {
+        rows.push(vec![c.span(format!("↻ {why}"), verdict_style(v))]);
+    }
     if let Some(msg) = &st.needs_you {
         rows.push(vec![
             c.span(format!("◉ {msg}"), verdict_style(Verdict::NeedsYou)),
@@ -329,7 +335,16 @@ fn header(st: &State, c: &Ctx, v: Verdict, _now: u64) -> Vec<Row> {
     rows
 }
 
-fn agents(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
+fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
+    let tok = |id: &str| {
+        let t = x.tokens.as_ref()?;
+        let l = if id == "main" {
+            Some(&t.main)
+        } else {
+            t.agents.get(id)
+        }?;
+        (l.total() > 0).then(|| format!(" · {} tok", fmt_tokens(l.total())))
+    };
     let Some(main) = st.agents.first() else {
         return vec![vec![c.dim("no activity yet")]];
     };
@@ -371,6 +386,7 @@ fn agents(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         ),
         Span::raw(" "),
         Span::raw(main_act),
+        c.dim(tok("main").unwrap_or_default()),
     ]];
 
     for (i, a) in shown.iter().enumerate() {
@@ -383,23 +399,26 @@ fn agents(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             AgentStatus::Running => (
                 spin.clone(),
                 format!(
-                    "{} · {} call{} · {}",
+                    "{} · {} call{} · {}{}",
                     a.act.as_deref().unwrap_or("starting"),
                     a.calls,
                     if a.calls == 1 { "" } else { "s" },
-                    dur(now.saturating_sub(a.started))
+                    dur(now.saturating_sub(a.started)),
+                    tok(&a.id).unwrap_or_default()
                 ),
             ),
             AgentStatus::Done => (
                 c.span("✓", Style::new().fg(Color::Green)),
                 match &a.result {
                     Some(r) => format!(
-                        "done {} · {r}",
-                        dur(a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started))
+                        "done {}{} · {r}",
+                        dur(a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started)),
+                        tok(&a.id).unwrap_or_default()
                     ),
                     None => format!(
-                        "done {}",
-                        dur(a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started))
+                        "done {}{}",
+                        dur(a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started)),
+                        tok(&a.id).unwrap_or_default()
                     ),
                 },
             ),
@@ -484,7 +503,8 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> R
     ]
 }
 
-fn usage(st: &State, u: &Usage, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
+#[allow(clippy::too_many_arguments)]
+fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
     let ctx_tail = match (u.ctx_used, u.ctx_size) {
         (Some(used), Some(size)) => format!("  {}/{}", tokens_k(used), tokens_k(size)),
         _ => String::new(),
@@ -509,6 +529,12 @@ fn usage(st: &State, u: &Usage, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
         cfg,
         c,
     ));
+    if let Some(eta) = x.burn_eta {
+        rows.push(vec![c.span(
+            format!("▲ at this pace: 5h limit in ~{}", age(eta)),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]);
+    }
     rows.push(meter(
         "7d",
         u.seven_d.map(|l| l.pct),
@@ -519,8 +545,51 @@ fn usage(st: &State, u: &Usage, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
     rows
 }
 
-fn session(st: &State, u: &Usage, c: &Ctx) -> Vec<Row> {
+fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
     let mut rows = Vec::new();
+    if let Some(t) = &x.tokens
+        && t.total().total() > 0
+    {
+        let total = t.total();
+        let turns = if st.turns == 1 {
+            "1 turn".into()
+        } else {
+            format!("{} turns", st.turns)
+        };
+        rows.push(vec![
+            c.dim("tokens  "),
+            Span::raw(format!(
+                "{} · {} out · {turns}",
+                fmt_tokens(total.total()),
+                fmt_tokens(total.output)
+            )),
+        ]);
+        if let Some(hit) = total.hit() {
+            let label = format!(" {:.0}% hit", hit * 100.0);
+            let n = c.inner.saturating_sub(8 + label.width()).min(20);
+            rows.push(vec![
+                c.dim("cache   "),
+                c.span(cells(hit, n, '▰', '▱'), Style::new().fg(Color::Cyan)),
+                Span::raw(label),
+            ]);
+        }
+        if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
+            rows.push(vec![
+                c.dim("        "),
+                Span::raw(format!("saved ≈ ${saved:.2} vs uncached")),
+            ]);
+        }
+        if let Some((from, to)) = t.drop_alert() {
+            rows.push(vec![c.span(
+                format!(
+                    "⚠ cache hit fell {:.0}% → {:.0}% · compaction or a changed prompt",
+                    from * 100.0,
+                    to * 100.0
+                ),
+                Style::new().fg(Color::Yellow),
+            )]);
+        }
+    }
     if let (Some(wall), Some(api)) = (u.duration_ms, u.api_duration_ms) {
         let pct = if wall > 0 {
             api as f64 * 100.0 / wall as f64
@@ -528,7 +597,7 @@ fn session(st: &State, u: &Usage, c: &Ctx) -> Vec<Row> {
             0.0
         };
         rows.push(vec![
-            c.dim("time  "),
+            c.dim("time    "),
             Span::raw(format!(
                 "{} active / {} wall · {pct:.0}%",
                 dur(api),
@@ -542,10 +611,7 @@ fn session(st: &State, u: &Usage, c: &Ctx) -> Vec<Row> {
         Some(cost) => format!("${cost:.2}"),
         None => "—".into(),
     };
-    rows.push(vec![c.dim("cost  "), Span::raw(cost)]);
-    if st.turns > 0 {
-        rows.push(vec![c.dim("turns "), Span::raw(st.turns.to_string())]);
-    }
+    rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
 }
 
@@ -570,7 +636,18 @@ mod tests {
     const NOW: u64 = 1_738_419_600_000;
 
     fn render(st: &State, u: &Usage, view: View, w: u16, h: u16) -> String {
-        let out = lines(st, u, &Config::default(), view, NOW, "12:41", w, h, false);
+        let out = lines(
+            st,
+            u,
+            &Extras::default(),
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            w,
+            h,
+            false,
+        );
         for l in &out {
             assert!(
                 l.width() <= w as usize,
@@ -723,6 +800,18 @@ mod tests {
         st.agents[0].act = Some("editing 日本語のファイル名がとても長いです🦀🦀🦀🦀🦀🦀.rs".into());
         let out = render(&st, &u, View::default(), 40, 40);
         assert!(out.contains('…'), "{out}");
+    }
+
+    #[test]
+    fn stuck_reason_in_header() {
+        let (mut st, u) = multi();
+        st.errors[1].retries = 3;
+        st.recent.push_back((false, st.errors[1].sig.clone()));
+        let out = render(&st, &u, View::default(), 50, 40);
+        assert!(
+            out.contains("↻ STUCK") && out.contains("↻ edit lib.rs failed 4× in a row"),
+            "{out}"
+        );
     }
 
     #[test]

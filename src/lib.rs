@@ -1,4 +1,5 @@
 pub mod bar;
+pub mod burn;
 pub mod chain;
 pub mod config;
 pub mod event;
@@ -10,5 +11,6 @@ pub mod sessions;
 pub mod setup;
 pub mod state;
 pub mod statusline;
+pub mod tokens;
 pub mod usage;
 pub mod watch;

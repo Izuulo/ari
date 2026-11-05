@@ -20,7 +20,6 @@ expression: "render(&st, &u, View::default(), 50, 40)"
 │ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m          │
 │ 7d  —                                          │
 ├─ session ──────────────────────────────────────┤
-│ time  9m54s active / 14m00s wall · 71%         │
-│ cost  $2.69 · $0.67/task done                  │
-│ turns 2                                        │
+│ time    9m54s active / 14m00s wall · 71%       │
+│ cost    $2.69 · $0.67/task done                │
 ╰────────────────────────────────────────────────╯

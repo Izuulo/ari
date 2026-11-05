@@ -2,7 +2,7 @@
 //! Chained statuslines print untouched; ARI adds its own row above or below.
 
 use crate::config::{self, Position};
-use crate::{bar, chain, hook, paths, state, usage};
+use crate::{bar, burn, chain, hook, paths, state, tokens, usage};
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -32,12 +32,17 @@ pub fn run() -> ! {
 fn own_row(input: &[u8], cfg: &config::Config) -> String {
     let raw: Value = serde_json::from_slice(input).unwrap_or(Value::Null);
     let u = usage::from_value(&raw);
+    let now = hook::now_ms();
+    let mut x = bar::Extras::default();
     let st = session_dir(&u)
         .map(|dir| {
             if raw.is_object() && std::fs::create_dir_all(&dir).is_ok() {
                 let _ = paths::write_atomic(&dir.join("usage.json"), input);
+                burn::record(&dir, &u, now);
             }
-            state::load_session(&dir)
+            let st = state::load_session(&dir);
+            x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
+            st
         })
         .unwrap_or_default();
     let width = std::env::var("COLUMNS")
@@ -45,7 +50,7 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
         .and_then(|c| c.parse().ok())
         .unwrap_or(0);
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    bar::render(&st, &u, cfg, hook::now_ms(), width, color)
+    bar::render(&st, &u, &x, cfg, now, width, color)
 }
 
 fn session_dir(u: &usage::Usage) -> Option<std::path::PathBuf> {
