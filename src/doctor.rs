@@ -301,7 +301,11 @@ fn hook_failures(now_ms: u64) -> Check {
 }
 
 fn hook_check(files: &[PathBuf], now_ms: u64) -> Check {
-    let g = hook_errors(files, now_ms.saturating_sub(24 * 3_600_000));
+    // Resumed sessions share a transcript; count it once.
+    let mut files = files.to_vec();
+    files.sort();
+    files.dedup();
+    let g = hook_errors(&files, now_ms.saturating_sub(24 * 3_600_000));
     if g.is_empty() {
         return pass("hook errors", "none in the last 24h");
     }
@@ -428,7 +432,7 @@ mod tests {
             "d",
             &[rec("2026-11-05T17:15:36Z"), rec("2026-11-05T17:16:00Z")],
         );
-        let c = hook_check(&[p], now);
+        let c = hook_check(&[p.clone(), p], now);
         assert!(!c.ok);
         assert!(c.detail.starts_with(
             "2 failed hook runs in 24h: SessionStart:startup — dyld[…]: Library not loaded"

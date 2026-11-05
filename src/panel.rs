@@ -1296,18 +1296,18 @@ fn cache_suffix(u: &Usage, now: u64) -> String {
     let Some(c) = &u.cache else {
         return String::new();
     };
-    let within = |t: u64| (t * 1000).saturating_sub(now) <= 10 * 60_000;
+    let within = |t: u64| t.saturating_mul(1000).saturating_sub(now) <= 10 * 60_000;
     let mut out = String::new();
     match c.expires_at {
         Some(e) if c.warm && within(e) => {
-            let m = ((e * 1000).saturating_sub(now) / 60_000).max(1);
+            let m = (e.saturating_mul(1000).saturating_sub(now) / 60_000).max(1);
             out += &format!(" · cold in {m}m");
         }
         _ if !c.warm && c.observed => out += " · cold",
         _ => {}
     }
     if let (Some(t), Some(why)) = (c.last_miss_at, &c.last_miss)
-        && now.saturating_sub(t * 1000) <= 10 * 60_000
+        && now.saturating_sub(t.saturating_mul(1000)) <= 10 * 60_000
     {
         out += &format!(" · last miss: {why}");
     }
@@ -2213,6 +2213,12 @@ mod tests {
         };
         assert!(cache_row(Some(miss)).ends_with("% hit · last miss: ttl_expired_1h"));
         assert!(cache_row(None).ends_with("% hit"));
+        let huge = CacheState {
+            last_miss_at: Some(u64::MAX),
+            last_miss: Some("x".into()),
+            ..warm(u64::MAX)
+        };
+        cache_row(Some(huge)); // a garbage usage.json must not panic
     }
 
     #[test]
