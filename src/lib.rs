@@ -4,6 +4,7 @@ pub mod burn;
 pub mod chain;
 pub mod config;
 pub mod demo;
+pub mod doctor;
 pub mod event;
 pub mod hook;
 pub mod panel;
