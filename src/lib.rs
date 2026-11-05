@@ -3,6 +3,7 @@ pub mod chain;
 pub mod config;
 pub mod event;
 pub mod hook;
+pub mod panel;
 pub mod paths;
 pub mod replay;
 pub mod sessions;
