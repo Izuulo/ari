@@ -2,6 +2,7 @@
 
 use crate::bar::{Extras, cells, countdown, fmt_tokens, spinner};
 use crate::config::Config;
+use crate::recap::Recap;
 use crate::state::{AgentStatus, ErrorRec, State, Verdict};
 use crate::usage::{Limit, Usage};
 use ratatui::style::{Color, Modifier, Style};
@@ -246,22 +247,19 @@ pub fn lines(
         },
     ];
     if view.recap
-        && let Some(text) = &x.recap
+        && let Some(r) = &x.recap
     {
         sections.truncate(1);
         sections.push(Section {
             title: Some("recap (r to close)"),
-            rows: text
-                .lines()
-                .map(|l| vec![Span::raw(l.to_string())])
-                .collect(),
+            rows: vec![vec![c.dim(format!("since {}", r.since))]],
         });
+        sections.extend(recap_sections(r, &c, false));
     }
     collapse(&mut sections, height as usize);
 
     let border = c.dim("");
     let bstyle = border.style;
-    let mut out = Vec::new();
     // ╭─ ARI (•_•) ──── 12:41 ─╮
     let mut title = vec![
         Span::styled("╭─ ", bstyle),
@@ -296,8 +294,14 @@ pub fn lines(
     title.push(Span::styled("─".repeat(fill), bstyle));
     title.extend(tail);
     title.push(Span::styled(right, bstyle));
-    out.push(Line::from(fit(title, w)));
+    frame(title, sections, &c, w, cfg.ascii)
+}
 
+/// The box around the sections: `title` is the full top row, then `├─ name ─┤` headers,
+/// `│ row │` lines and the bottom edge.
+fn frame(title: Row, sections: Vec<Section>, c: &Ctx, w: usize, ascii: bool) -> Vec<Line<'static>> {
+    let bstyle = c.dim("").style;
+    let mut out = vec![Line::from(fit(title, w))];
     for sec in sections {
         if let Some(t) = sec.title {
             let head = format!("├─ {t} ");
@@ -321,11 +325,183 @@ pub fn lines(
         format!("╰{}╯", "─".repeat(w.saturating_sub(2))),
         bstyle,
     )));
-    if cfg.ascii {
+    if ascii {
         crate::ascii::map_lines(out)
     } else {
         out
     }
+}
+
+/// `ari recap` as a box: `╭─ ARI recap · since start ── cd ~/proj ─╮`, then the sections.
+pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<'static>> {
+    let w = (width as usize).max(12);
+    let c = Ctx {
+        color,
+        inner: w.saturating_sub(4),
+    };
+    let bstyle = c.dim("").style;
+    let mut title = vec![
+        Span::styled("╭─ ", bstyle),
+        c.span("ARI recap", Style::new().add_modifier(Modifier::BOLD)),
+        c.dim(format!(" · since {} ", r.since)),
+    ];
+    let right = " ─╮";
+    let mut tail = Vec::new();
+    let room = w.saturating_sub(row_width(&title) + right.width() + 2);
+    if !r.dir.is_empty() && room >= 4 {
+        tail = fit(
+            vec![c.span(
+                format!(" cd {}", tilde(&r.dir)),
+                Style::new().add_modifier(Modifier::BOLD),
+            )],
+            room,
+        );
+    }
+    let fill = w.saturating_sub(row_width(&title) + row_width(&tail) + right.width());
+    title.push(Span::styled("─".repeat(fill), bstyle));
+    title.extend(tail);
+    title.push(Span::styled(right, bstyle));
+    frame(title, recap_sections(r, &c, true), &c, w, ascii)
+}
+
+/// The recap's sections; `header` adds the verdict and milestone rows (the panel has its own).
+fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
+    let mut out = Vec::new();
+    if header {
+        let mut rows =
+            vec![vec![c.span(
+                r.verdict.clone(),
+                Style::new().add_modifier(Modifier::BOLD),
+            )]];
+        if let Some(t) = &r.title {
+            rows.push(vec![c.dim(format!("milestone: {t}"))]);
+        }
+        out.push(Section { title: None, rows });
+    }
+    if r.events == 0 {
+        out.push(Section {
+            title: None,
+            rows: vec![vec![
+                c.dim(format!("nothing happened since {}", local_hhmm(r.from))),
+            ]],
+        });
+        return out;
+    }
+    let ok = |t: String| vec![c.span("✓ ", Style::new().fg(Color::Green)), Span::raw(t)];
+    let total = r.done.len() + r.open.len();
+    if total > 0 {
+        let mut rows = vec![vec![
+            c.span(
+                cells(r.done.len() as f64 / total as f64, 20, '█', '░'),
+                Style::new().fg(Color::Green),
+            ),
+            Span::raw(format!(" {}/{total} tasks", r.done.len())),
+        ]];
+        rows.extend(r.done.iter().map(|t| ok(t.clone())));
+        rows.extend(
+            r.open
+                .iter()
+                .map(|t| vec![c.dim("◻ "), Span::raw(t.clone())]),
+        );
+        out.push(Section {
+            title: Some("tasks"),
+            rows,
+        });
+    }
+    if r.errors_hit + r.fixed.len() + r.still_open.len() > 0 {
+        let mut rows = vec![vec![Span::raw(format!(
+            "{} hit · {} fixed · {} open",
+            r.errors_hit,
+            r.fixed.len(),
+            r.still_open.len()
+        ))]];
+        rows.extend(
+            r.fixed
+                .iter()
+                .map(|(what, by)| ok(format!("{what} · fixed by {by}"))),
+        );
+        rows.extend(r.still_open.iter().map(|what| {
+            vec![
+                c.span("✗ ", Style::new().fg(Color::Red)),
+                Span::raw(what.clone()),
+            ]
+        }));
+        out.push(Section {
+            title: Some("errors"),
+            rows,
+        });
+    }
+    if !r.files.is_empty() {
+        let mut rows: Vec<Row> = r
+            .files
+            .iter()
+            .take(8)
+            .map(|(f, n)| {
+                let mut row = vec![Span::raw(f.clone())];
+                if *n > 1 {
+                    row.push(c.dim(format!(" ×{n}")));
+                }
+                row
+            })
+            .collect();
+        if r.files.len() > 8 {
+            rows.push(vec![c.dim(format!("and {} more", r.files.len() - 8))]);
+        }
+        out.push(Section {
+            title: Some("files"),
+            rows,
+        });
+    }
+    if !r.commits.is_empty() {
+        let rows = r
+            .commits
+            .iter()
+            .map(|line| match line.split_once(' ') {
+                Some((hash, msg)) => vec![
+                    c.span(hash.to_string(), Style::new().fg(Color::Yellow)),
+                    Span::raw(format!(" {msg}")),
+                ],
+                None => vec![Span::raw(line.clone())],
+            })
+            .collect();
+        out.push(Section {
+            title: Some("commits"),
+            rows,
+        });
+    }
+    let mut rows = Vec::new();
+    let mut row = |label: &str, value: String| {
+        rows.push(vec![c.dim(format!("{label:<9}")), Span::raw(value)]);
+    };
+    if let Some(t) = crate::recap::tests_line(r) {
+        row("tests", t);
+    }
+    if let Some(t) = crate::recap::split_line(r) {
+        row("time", t);
+    }
+    let mut cost = Vec::new();
+    if let Some(v) = r.cost {
+        cost.push(format!("${v:.2}"));
+    }
+    if let Some((a, d)) = r.lines {
+        cost.push(format!("+{a} −{d} lines"));
+    }
+    if !cost.is_empty() {
+        row("cost", cost.join(" · "));
+    }
+    if !r.models.is_empty() {
+        row("models", r.models.join(", "));
+    }
+    if let Some(m) = crate::recap::mistakes_line(r) {
+        row("mistakes", m);
+    }
+    if !rows.is_empty() {
+        out.push(Section {
+            title: Some("session"),
+            rows,
+        });
+    }
+    out
 }
 
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
@@ -1212,7 +1388,7 @@ mod tests {
     fn recap_view_replaces_sections() {
         let (st, u) = multi();
         let x = Extras {
-            recap: Some("recap     ~/proj · since your last prompt\ndone      2 tasks\n            ✓ scaffold the very long task name here\n".into()),
+            recap: Some(sample_recap()),
             ..Default::default()
         };
         let view = View {
@@ -1235,7 +1411,8 @@ mod tests {
             assert!(l.width() <= 40, "{l}");
         }
         assert!(out.contains("├─ recap (r to close) "), "{out}");
-        assert!(out.contains("│ done      2 tasks"), "{out}");
+        assert!(out.contains("│ ✓ scaffold"), "{out}");
+        assert!(out.contains("├─ errors "), "{out}");
         assert!(!out.contains("├─ agents"), "{out}");
         insta::assert_snapshot!("recap_view", out);
         // Recap toggled on before it's built: the normal sections stay.
@@ -1252,6 +1429,56 @@ mod tests {
             false,
         ));
         assert!(out.contains("├─ agents"), "{out}");
+    }
+
+    fn sample_recap() -> crate::recap::Recap {
+        crate::recap::Recap {
+            dir: "/x/proj".into(),
+            title: Some("auth refactor".into()),
+            since: "start".into(),
+            events: 40,
+            verdict: "✓ DONE".into(),
+            done: vec!["scaffold".into(), "build".into()],
+            open: vec!["write docs".into()],
+            errors_hit: 1,
+            fixed: vec![("cargo test".into(), "main".into())],
+            tests: Some((
+                Some(crate::state::TestRun {
+                    t: 1,
+                    pass: 58,
+                    fail: 0,
+                }),
+                crate::state::TestRun {
+                    t: 2,
+                    pass: 71,
+                    fail: 0,
+                },
+            )),
+            files: vec![("src/a.rs".into(), 2), ("src/b.rs".into(), 1)],
+            commits: vec!["abc1234 feat: retry the token refresh".into()],
+            wall_ms: 21 * 60_000,
+            cost: Some(2.69),
+            lines: Some((156, 23)),
+            models: vec!["opus-5-5 (main)".into(), "haiku-5-5 (2 agents)".into()],
+            failed_calls: 1,
+            failed_ms: 2_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn recap_box() {
+        let r = sample_recap();
+        let out = recap_lines(&r, 60, false, false);
+        for l in &out {
+            assert!(l.width() <= 60, "{:?}", to_plain(std::slice::from_ref(l)));
+        }
+        let text = to_plain(&out);
+        insta::assert_snapshot!("recap_box", text);
+        let narrow = to_plain(&recap_lines(&r, 30, false, false));
+        assert!(narrow.lines().all(|l| l.width() <= 30), "{narrow}");
+        let asc = to_plain(&recap_lines(&r, 60, false, true));
+        assert!(asc.starts_with("+- ARI recap"), "{asc}");
     }
 
     #[test]

@@ -44,7 +44,7 @@ fn recap_follows_the_cwd_session() {
     let (root, project) = state_with_fixture("cwd");
     let (ok, out, err) = recap(&root, &project, &[]);
     assert!(ok, "{err}");
-    assert!(out.contains("done      4 tasks"), "{out}");
+    assert!(out.contains("│ ████████████████████ 4/4 tasks"), "{out}");
     let (ok, md, _) = recap(&root, &project, &["--session", "s1", "--md"]);
     assert!(ok && md.starts_with("### Recap"), "{md}");
 }

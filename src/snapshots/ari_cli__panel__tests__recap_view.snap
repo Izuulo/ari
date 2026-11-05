@@ -7,7 +7,23 @@ expression: out
 │ ███████████░░░░░░░░░ 4/7 tasks       │
 │ ▸ now: hook up token refresh         │
 ├─ recap (r to close) ─────────────────┤
-│ recap     ~/proj · since your last … │
-│ done      2 tasks                    │
-│             ✓ scaffold the very lon… │
+│ since start                          │
+├─ tasks ──────────────────────────────┤
+│ █████████████░░░░░░░ 2/3 tasks       │
+│ ✓ scaffold                           │
+│ ✓ build                              │
+│ ◻ write docs                         │
+├─ errors ─────────────────────────────┤
+│ 1 hit · 1 fixed · 0 open             │
+│ ✓ cargo test · fixed by main         │
+├─ files ──────────────────────────────┤
+│ src/a.rs ×2                          │
+│ src/b.rs                             │
+├─ commits ────────────────────────────┤
+│ abc1234 feat: retry the token refre… │
+├─ session ────────────────────────────┤
+│ tests    58 passed → 71 passed       │
+│ cost     $2.69 · +156 −23 lines      │
+│ models   opus-5-5 (main), haiku-5-5… │
+│ mistakes 1 failed call · 2s          │
 ╰──────────────────────────────────────╯

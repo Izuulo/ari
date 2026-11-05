@@ -33,7 +33,7 @@ impl Since {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Recap {
     pub dir: String,
     pub title: Option<String>,
@@ -161,8 +161,9 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
                 .strip_prefix(&cwd)
                 .map(|p| p.trim_start_matches('/'))
                 .filter(|p| !cwd.is_empty() && !p.is_empty())
-                .unwrap_or(path);
-            *files.entry(rel.to_string()).or_default() += 1;
+                .map(String::from)
+                .unwrap_or_else(|| crate::panel::tilde(path));
+            *files.entry(rel).or_default() += 1;
         }
     }
     r.files = files.into_iter().collect();
@@ -213,14 +214,15 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
             models.push((crate::tokens::short_model(m), "agent"));
         }
     }
-    let mut seen: BTreeMap<(String, &str), u32> = BTreeMap::new();
+    // "main" sorts before "agent" only if keyed so: 0 for main, 1 for agents.
+    let mut seen: BTreeMap<(u8, String), u32> = BTreeMap::new();
     for (m, who) in models.into_iter().filter(|(m, _)| m != "unknown") {
-        *seen.entry((m, who)).or_default() += 1;
+        *seen.entry((u8::from(who != "main"), m)).or_default() += 1;
     }
     r.models = seen
         .into_iter()
-        .map(|((m, who), n)| match (who, n) {
-            ("main", _) => format!("{m} (main)"),
+        .map(|((agent, m), n)| match (agent, n) {
+            (0, _) => format!("{m} (main)"),
             (_, 1) => format!("{m} (1 agent)"),
             (_, n) => format!("{m} ({n} agents)"),
         })
@@ -270,7 +272,20 @@ pub fn run(args: &[String]) -> ! {
     .filter(|d| d.is_dir())
     .unwrap_or_else(|| fail("no session found here (try --session <id>)"));
     let r = build(&dir, since, crate::hook::now_ms());
-    print!("{}", if md { markdown(&r) } else { text_or_quiet(&r) });
+    if md {
+        print!("{}", markdown(&r));
+    } else {
+        use std::io::IsTerminal;
+        let width = ratatui::crossterm::terminal::size()
+            .ok()
+            .filter(|_| std::io::stdout().is_terminal())
+            .map(|(w, _)| w)
+            .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
+            .unwrap_or(80);
+        let cfg = crate::config::load();
+        let lines = crate::panel::recap_lines(&r, width, false, cfg.ascii);
+        println!("{}", crate::panel::to_plain(&lines));
+    }
     std::process::exit(0)
 }
 
@@ -331,7 +346,7 @@ fn files_line(r: &Recap) -> String {
         }
 }
 
-fn split_line(r: &Recap) -> Option<String> {
+pub(crate) fn split_line(r: &Recap) -> Option<String> {
     let sp = r.split?;
     let total = r.wall_ms.max(sp.claude + sp.tools + sp.waiting + sp.idle) as f64;
     let mut s = crate::panel::dur(r.wall_ms);
@@ -349,7 +364,7 @@ fn split_line(r: &Recap) -> Option<String> {
     Some(s)
 }
 
-fn tests_line(r: &Recap) -> Option<String> {
+pub(crate) fn tests_line(r: &Recap) -> Option<String> {
     let (before, now) = r.tests?;
     let show = |t: TestRun| {
         if t.fail > 0 {
@@ -364,7 +379,7 @@ fn tests_line(r: &Recap) -> Option<String> {
     })
 }
 
-fn mistakes_line(r: &Recap) -> Option<String> {
+pub(crate) fn mistakes_line(r: &Recap) -> Option<String> {
     if r.failed_calls == 0 && r.reread == 0 {
         return None;
     }
@@ -382,107 +397,6 @@ fn mistakes_line(r: &Recap) -> Option<String> {
         );
     }
     Some(line)
-}
-
-/// The recap, or one line when nothing happened in the window.
-pub fn text_or_quiet(r: &Recap) -> String {
-    if r.events == 0 {
-        return format!(
-            "nothing happened since {}\n",
-            crate::panel::local_hhmm(r.from)
-        );
-    }
-    text(r)
-}
-
-pub fn text(r: &Recap) -> String {
-    let mut out = String::new();
-    let mut line = |label: &str, value: &str| out += &format!("{label:<10}{value}\n");
-    let head = [
-        Some(crate::panel::tilde(&r.dir)).filter(|d| !d.is_empty()),
-        r.title.clone(),
-        Some(format!("since {}", r.since)),
-    ];
-    line(
-        "recap",
-        &head.into_iter().flatten().collect::<Vec<_>>().join(" · "),
-    );
-    line("verdict", &r.verdict);
-    if !r.done.is_empty() {
-        let s = if r.done.len() == 1 { "" } else { "s" };
-        line("done", &format!("{} task{s}", r.done.len()));
-        for t in &r.done {
-            line("", &format!("  ✓ {t}"));
-        }
-    }
-    if !r.open.is_empty() {
-        line("open", &format!("{}", r.open.len()));
-        for t in &r.open {
-            line("", &format!("  ◻ {t}"));
-        }
-    }
-    if r.errors_hit + r.fixed.len() + r.still_open.len() > 0 {
-        line(
-            "errors",
-            &format!(
-                "{} hit · {} fixed · {} open",
-                r.errors_hit,
-                r.fixed.len(),
-                r.still_open.len()
-            ),
-        );
-        for (what, by) in &r.fixed {
-            line("", &format!("  ✓ {what} · fixed by {by}"));
-        }
-        for what in &r.still_open {
-            line("", &format!("  ✗ {what}"));
-        }
-    }
-    if let Some(t) = tests_line(r) {
-        line("tests", &t);
-    }
-    if !r.files.is_empty() {
-        line("files", &format!("{} edited", r.files.len()));
-        for (f, n) in r.files.iter().take(8) {
-            line(
-                "",
-                &if *n > 1 {
-                    format!("  {f} ×{n}")
-                } else {
-                    format!("  {f}")
-                },
-            );
-        }
-        if r.files.len() > 8 {
-            line("", &format!("  and {} more", r.files.len() - 8));
-        }
-    }
-    if !r.commits.is_empty() {
-        line("commits", &format!("{}", r.commits.len()));
-        for c in &r.commits {
-            line("", &format!("  {c}"));
-        }
-    }
-    if let Some(s) = split_line(r) {
-        line("time", &s);
-    }
-    let mut cost = Vec::new();
-    if let Some(c) = r.cost {
-        cost.push(format!("${c:.2}"));
-    }
-    if let Some((a, d)) = r.lines {
-        cost.push(format!("+{a} −{d} lines"));
-    }
-    if !cost.is_empty() {
-        line("cost", &cost.join(" · "));
-    }
-    if !r.models.is_empty() {
-        line("models", &r.models.join(", "));
-    }
-    if let Some(m) = mistakes_line(r) {
-        line("mistakes", &m);
-    }
-    out
 }
 
 /// Markdown bullets, for pasting into a PR.
@@ -560,16 +474,16 @@ mod tests {
             vec![("calc.py".to_string(), 2), ("test_calc.py".to_string(), 1)]
         );
         assert_eq!(r.dir, "/home/user/proj");
-        let text = text(&r);
-        assert!(text.contains("done      4 tasks"), "{text}");
-        assert!(text.contains("  ✓ scaffold"), "{text}");
-        assert!(
-            text.contains("errors    1 hit · 1 fixed · 0 open"),
-            "{text}"
-        );
-        assert!(text.contains("  calc.py ×2"), "{text}");
-        assert!(text.contains("time      "), "{text}");
-        assert!(!text.contains("commits"), "not a git repo: {text}");
+        let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 60, false, false));
+        assert!(text.starts_with("╭─ ARI recap · since start "), "{text}");
+        assert!(text.contains("│ ████████████████████ 4/4 tasks"), "{text}");
+        assert!(text.contains("│ ✓ scaffold"), "{text}");
+        assert!(text.contains("├─ errors "), "{text}");
+        assert!(text.contains("│ 1 hit · 1 fixed · 0 open"), "{text}");
+        assert!(text.contains("│ calc.py ×2"), "{text}");
+        assert!(text.contains("│ time     "), "{text}");
+        assert!(!text.contains("├─ commits"), "not a git repo: {text}");
+        assert!(text.trim_end().ends_with('╯'), "{text}");
         let md = markdown(&r);
         assert!(md.starts_with("### Recap"), "{md}");
         assert!(
@@ -628,8 +542,13 @@ mod tests {
             build(&d, Since::Start, 6_000).done,
             vec!["task 1", "task 2"]
         );
-        let quiet = text_or_quiet(&build(&d, Since::Ago(500), 6_000));
-        assert!(quiet.starts_with("nothing happened since "), "{quiet}");
+        let quiet = crate::panel::to_plain(&crate::panel::recap_lines(
+            &build(&d, Since::Ago(500), 6_000),
+            50,
+            false,
+            false,
+        ));
+        assert!(quiet.contains("│ nothing happened since "), "{quiet}");
     }
 
     #[test]

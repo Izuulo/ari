@@ -81,8 +81,11 @@ impl App {
         if !self.view.recap {
             self.x.recap = None;
         } else if changed || self.x.recap.is_none() {
-            let r = crate::recap::build(dir, crate::recap::Since::Prompt, hook::now_ms());
-            self.x.recap = Some(crate::recap::text_or_quiet(&r));
+            self.x.recap = Some(crate::recap::build(
+                dir,
+                crate::recap::Since::Prompt,
+                hook::now_ms(),
+            ));
         }
         if changed {
             self.mtimes = now;

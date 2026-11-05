@@ -21,7 +21,7 @@ pub struct Extras {
     /// Files another live session is editing too.
     pub conflicts: Vec<crate::conflicts::Conflict>,
     /// `ari recap --since prompt`, built only while the panel shows it.
-    pub recap: Option<String>,
+    pub recap: Option<crate::recap::Recap>,
 }
 
 /// Forecasts are only worth showing this close.
