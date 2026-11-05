@@ -215,6 +215,24 @@ fn iso_ms(s: &str) -> Option<u64> {
     u64::try_from(((days * 24 + h) * 60 + mi) * 60_000 + sec * 1000 + ms).ok()
 }
 
+/// `dyld[72458]` -> `dyld[…]`, so runs that differ only by PID group together.
+fn squash_brackets(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('[') {
+        let (head, tail) = rest.split_at(i + 1);
+        out.push_str(head);
+        let n = tail.bytes().take_while(u8::is_ascii_digit).count();
+        if n > 0 && tail[n..].starts_with(']') {
+            out.push('…');
+            rest = &tail[n..];
+        } else {
+            rest = tail;
+        }
+    }
+    out + rest
+}
+
 /// Failed hook runs since `since_ms`, grouped by (hook, first stderr line); reads each
 /// transcript's last 2 MB only.
 fn hook_errors(transcripts: &[PathBuf], since_ms: u64) -> Vec<(String, String, u32)> {
@@ -256,6 +274,7 @@ fn hook_errors(transcripts: &[PathBuf], since_ms: u64) -> Vec<(String, String, u
                 })
                 .unwrap_or("")
                 .to_string();
+            let err = squash_brackets(&err);
             match groups.iter_mut().find(|g| g.0 == hook && g.1 == err) {
                 Some(g) => g.2 += 1,
                 None => groups.push((hook, err, 1)),
@@ -278,7 +297,11 @@ fn hook_failures(now_ms: u64) -> Check {
             crate::tokens::transcript_for(&s.dir, &u).map(PathBuf::from)
         })
         .collect();
-    let g = hook_errors(&files, now_ms.saturating_sub(24 * 3_600_000));
+    hook_check(&files, now_ms)
+}
+
+fn hook_check(files: &[PathBuf], now_ms: u64) -> Check {
+    let g = hook_errors(files, now_ms.saturating_sub(24 * 3_600_000));
     if g.is_empty() {
         return pass("hook errors", "none in the last 24h");
     }
@@ -336,11 +359,16 @@ mod tests {
     use super::*;
 
     const DYLD: &str =
-        "dyld[72458]: Library not loaded: /opt/homebrew/opt/llhttp/lib/libllhttp.9.3.dylib";
+        "dyld[…]: Library not loaded: /opt/homebrew/opt/llhttp/lib/libllhttp.9.3.dylib";
 
     fn rec(ts: &str) -> String {
+        rec_pid(ts, 72458)
+    }
+
+    fn rec_pid(ts: &str, pid: u32) -> String {
+        let dyld = DYLD.replace('…', &pid.to_string());
         format!(
-            r#"{{"type":"attachment","timestamp":"{ts}","attachment":{{"type":"hook_non_blocking_error","hookName":"SessionStart:startup","stderr":"Failed with non-blocking status code: {DYLD}\n"}}}}"#
+            r#"{{"type":"attachment","timestamp":"{ts}","attachment":{{"type":"hook_non_blocking_error","hookName":"SessionStart:startup","stderr":"Failed with non-blocking status code: {dyld}\n"}}}}"#
         )
     }
 
@@ -378,5 +406,34 @@ mod tests {
         let since = iso_ms("2026-11-05T00:00:00Z").unwrap();
         assert!(hook_errors(&[p], since).is_empty());
         assert!(hook_errors(&[PathBuf::from("/nonexistent/x")], since).is_empty());
+    }
+
+    #[test]
+    fn pids_group_together() {
+        let p = file(
+            "c",
+            &[
+                rec_pid("2026-11-05T17:15:36Z", 1),
+                rec_pid("2026-11-05T17:16:00Z", 22),
+            ],
+        );
+        let got = hook_errors(&[p], 0);
+        assert_eq!(got, vec![("SessionStart:startup".into(), DYLD.into(), 2)]);
+    }
+
+    #[test]
+    fn check_reports_problem_or_pass() {
+        let now = iso_ms("2026-11-05T18:00:00Z").unwrap();
+        let p = file(
+            "d",
+            &[rec("2026-11-05T17:15:36Z"), rec("2026-11-05T17:16:00Z")],
+        );
+        let c = hook_check(&[p], now);
+        assert!(!c.ok);
+        assert!(c.detail.starts_with(
+            "2 failed hook runs in 24h: SessionStart:startup — dyld[…]: Library not loaded"
+        ));
+        assert!(c.fix.unwrap().contains("run its command by hand"));
+        assert!(hook_check(&[], now).ok);
     }
 }
