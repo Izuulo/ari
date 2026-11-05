@@ -96,10 +96,10 @@ pub fn prune(root: &Path, max_age: Duration, keep: &Path) {
         let modified = fs::metadata(dir.join("events.jsonl"))
             .or_else(|_| entry.metadata())
             .and_then(|m| m.modified());
-        if let Ok(m) = modified {
-            if now.duration_since(m).is_ok_and(|age| age > max_age) {
-                let _ = fs::remove_dir_all(&dir);
-            }
+        if let Ok(m) = modified
+            && now.duration_since(m).is_ok_and(|age| age > max_age)
+        {
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 }
