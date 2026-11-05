@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 7;
+const CACHE_VERSION: u32 = 8;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -76,6 +76,16 @@ pub struct State {
     pub prompts: VecDeque<u64>,
     /// Last permission mode a hook reported.
     pub permission_mode: Option<String>,
+    /// Set by a resumed session's start, cleared at the main agent's Stop.
+    pub resume: Option<Resume>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Resume {
+    pub away_ms: Option<u64>,
+    pub cold: Option<bool>,
+    pub rebuild_usd: Option<f64>,
 }
 
 /// Wall time not spent by Claude itself, folded from events.
@@ -395,6 +405,7 @@ impl State {
                 }
                 self.background = ev.bg.unwrap_or(0);
                 if ev.a.is_none() {
+                    self.resume = None;
                     if let Some(b) = &ev.bgs {
                         self.background_names = b.clone();
                     }
@@ -430,7 +441,14 @@ impl State {
                 });
             }
             "TaskCreated" | "TaskCompleted" => self.update_tasks(ev),
-            "SessionStart" => self.ended = false,
+            "SessionStart" => {
+                self.ended = false;
+                self.resume = (ev.kind.as_deref() == Some("resume")).then(|| Resume {
+                    away_ms: ev.dur,
+                    cold: ev.cold,
+                    rebuild_usd: ev.usd,
+                });
+            }
             "SessionEnd" => {
                 self.ended = true;
                 self.turn_active = false;
@@ -824,6 +842,30 @@ pub fn load_session(dir: &Path) -> State {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resume_set_then_cleared_on_stop() {
+        let mut st = State::default();
+        st.apply(&Event {
+            kind: Some("resume".into()),
+            dur: Some(10_800_000),
+            cold: Some(true),
+            usd: Some(0.4),
+            ..ev("SessionStart")
+        });
+        let r = st.resume.clone().unwrap();
+        assert_eq!(
+            (r.away_ms, r.cold, r.rebuild_usd),
+            (Some(10_800_000), Some(true), Some(0.4))
+        );
+        st.apply(&ev("Stop"));
+        assert_eq!(st.resume, None);
+        st.apply(&Event {
+            kind: Some("startup".into()),
+            ..ev("SessionStart")
+        });
+        assert_eq!(st.resume, None);
+    }
+
     #[test]
     fn permission_mode_is_last_seen() {
         let mut st = State::default();

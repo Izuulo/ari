@@ -46,6 +46,12 @@ pub struct Event {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dur: Option<u64>,
+    /// Resume only: the prompt cache likely expired while away.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cold: Option<bool>,
+    /// Resume only: estimated cache rebuild cost in USD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usd: Option<f64>,
     /// (passed, failed), when this was a test run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<(u32, u32)>,
@@ -129,6 +135,15 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         "SessionStart" => {
             ev.kind = owned("source");
             ev.path = owned("transcript_path");
+            ev.dur = raw
+                .get("seconds_since_last_response")
+                .and_then(Value::as_f64)
+                .filter(|v| *v >= 0.0)
+                .map(|v| (v * 1000.0) as u64);
+            ev.cold = raw
+                .get("prompt_cache_likely_expired")
+                .and_then(Value::as_bool);
+            ev.usd = raw.get("estimated_cache_write_usd").and_then(Value::as_f64);
         }
         "SessionEnd" => ev.kind = owned("reason"),
         "PreCompact" | "PostCompact" => ev.kind = owned("trigger"),
@@ -420,6 +435,23 @@ mod tests {
 
     fn n(v: Value) -> Event {
         normalize(&v, 1).unwrap()
+    }
+
+    #[test]
+    fn resume_fields_on_session_start() {
+        let ev = n(
+            json!({"hook_event_name": "SessionStart", "source": "resume",
+            "seconds_since_last_response": 10800, "prompt_cache_likely_expired": true,
+            "estimated_cache_write_usd": 0.4}),
+        );
+        assert_eq!(
+            (ev.dur, ev.cold, ev.usd),
+            (Some(10_800_000), Some(true), Some(0.4))
+        );
+        let ev = n(json!({"hook_event_name": "SessionStart", "source": "resume"}));
+        assert_eq!((ev.dur, ev.cold, ev.usd), (None, None, None));
+        let j = serde_json::to_string(&ev).unwrap();
+        assert!(!j.contains("cold") && !j.contains("usd"));
     }
 
     #[test]

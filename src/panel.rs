@@ -593,6 +593,23 @@ fn header(
             c.span(format!("◉ {msg}"), verdict_style(Verdict::NeedsYou)),
         ]);
     }
+    if let Some(r) = &st.resume {
+        let mut t = "↻ resumed".to_string();
+        if let Some(ms) = r.away_ms {
+            t += &format!(" after {}", age(ms));
+        }
+        if r.cold == Some(true) {
+            t += " · cache cold";
+        }
+        if let Some(usd) = r.rebuild_usd {
+            t += &format!(" · ~${usd:.2} to rebuild");
+        }
+        rows.push(vec![if r.cold == Some(true) {
+            c.span(t, Style::new().fg(Color::Yellow))
+        } else {
+            c.dim(t)
+        }]);
+    }
     let (done, total) = st.tasks_done();
     if total == 0 {
         if let Some(p) = plan {
@@ -1225,6 +1242,29 @@ mod tests {
             ..Default::default()
         };
         (st, u)
+    }
+
+    #[test]
+    fn resume_row() {
+        let (mut st, u) = multi();
+        assert!(!render(&st, &u, View::default(), 100, 30).contains("resumed"));
+        st.resume = Some(crate::state::Resume::default());
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(
+            out.contains("↻ resumed\n") || out.contains("↻ resumed "),
+            "{out}"
+        );
+        assert!(!out.contains("resumed after"));
+        st.resume = Some(crate::state::Resume {
+            away_ms: Some(3 * 3_600_000),
+            cold: Some(true),
+            rebuild_usd: Some(0.4),
+        });
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(
+            out.contains("↻ resumed after 3h · cache cold · ~$0.40 to rebuild"),
+            "{out}"
+        );
     }
 
     #[test]
