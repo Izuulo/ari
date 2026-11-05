@@ -1,0 +1,12 @@
+{
+  "name": "ari",
+  "description": "ARI: a zero-token status panel for Claude Code",
+  "owner": { "name": "Izuulo", "url": "https://github.com/Izuulo" },
+  "plugins": [
+    {
+      "name": "ari",
+      "source": "./",
+      "description": "Health verdict, task progress, agents, errors and usage for Claude Code, without spending a token."
+    }
+  ]
+}

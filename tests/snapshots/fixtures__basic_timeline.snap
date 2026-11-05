@@ -1,0 +1,52 @@
+---
+source: tests/fixtures.rs
+expression: "replay::format(&fixture(\"basic\"))"
+---
+  +0.0s  main       · SessionStart       startup
+  +0.7s  main       · UserPromptSubmit   Do these steps in order, using the tools named: 1. Use TaskCreate to create three tasks: "write script", "run script", "explore files". 2. Use TaskUpdate to mark "write script" in_progress. Use Write…
+  +3.6s  main       ▶ PreToolUse         ToolSearch
+  +3.6s  main       ✓ PostToolUse        ToolSearch
+  +5.3s  main       ▶ PreToolUse         updating plan
+  +5.3s  main       · TaskCreated        task #1 write script
+  +5.3s  main       ✓ PostToolUse        task #1 write script pending
+  +5.5s  main       ▶ PreToolUse         updating plan
+  +5.6s  main       · TaskCreated        task #2 run script
+  +5.6s  main       ✓ PostToolUse        task #2 run script pending
+  +5.8s  main       ▶ PreToolUse         updating plan
+  +5.8s  main       · TaskCreated        task #3 explore files
+  +5.8s  main       ✓ PostToolUse        task #3 explore files pending
+  +7.2s  main       ▶ PreToolUse         updating plan
+  +7.2s  main       ✓ PostToolUse        task #1 in_progress
+  +9.1s  main       ▶ PreToolUse         editing hello.py
+  +9.2s  main       ✓ PostToolUse        editing hello.py
+ +11.3s  main       ▶ PreToolUse         updating plan
+ +11.4s  main       · TaskCompleted      task #1 write script completed
+ +11.4s  main       ✓ PostToolUse        task #1 completed
+ +11.5s  main       ▶ PreToolUse         updating plan
+ +11.6s  main       ✓ PostToolUse        task #2 in_progress
+ +12.1s  main       ▶ PreToolUse         $ python3 hello.py
+ +13.3s  main       ✗ PostToolUseFailure $ python3 hello.py · exit 1 · SyntaxError: unexpected EOF while parsing
+ +15.4s  main       ▶ PreToolUse         editing hello.py
+ +15.4s  main       ✓ PostToolUse        editing hello.py
+ +16.0s  main       ▶ PreToolUse         $ python3 hello.py
+ +16.1s  main       ✓ PostToolUse        $ python3 hello.py
+ +17.5s  main       ▶ PreToolUse         updating plan
+ +17.5s  main       · TaskCompleted      task #2 run script completed
+ +17.5s  main       ✓ PostToolUse        task #2 completed
+ +17.7s  main       ▶ PreToolUse         updating plan
+ +17.7s  main       ✓ PostToolUse        task #3 in_progress
+ +18.6s  main       ▶ PreToolUse         agent Explore: List files and read hello.py
+ +18.7s  main       ✓ PostToolUse        agent Explore: List files and read hello.py
+ +18.7s  Explore    · SubagentStart
+ +21.1s  main       · Stop               1 background running · The Explore subagent is still running, so I can't mark "explore files" completed or reply "done" yet. Progress so far:
+ +21.2s  Explore    ▶ PreToolUse         $ ls -la /home/user/proj
+ +21.3s  Explore    ✓ PostToolUse        $ ls -la /home/user/proj
+ +21.6s  Explore    ▶ PreToolUse         reading hello.py
+ +21.7s  Explore    ✓ PostToolUse        reading hello.py
+ +23.8s  Explore    · SubagentStop       The directory contains one file, `hello.py` (12 bytes, no other files besides the `.` and `..` entries), and `hello.py` contains a single line, `print('hi')`, …
+ +23.9s  main       · UserPromptSubmit   <task-notification> <task-id>a4176d06206b87c3a</task-id> <tool-use-id>toolu_01VnHwGNV2o1CeVsN5Kc36i1</tool-use-id> <output-file>/private/tmp/claude-501/-private-var-folders-5l--bjx2fh93vg5dbr6fhglpsq…
+ +25.6s  main       ▶ PreToolUse         updating plan
+ +25.6s  main       · TaskCompleted      task #3 explore files completed
+ +25.6s  main       ✓ PostToolUse        task #3 completed
+ +26.8s  main       · Stop               done
+ +26.9s  main       · SessionEnd         other

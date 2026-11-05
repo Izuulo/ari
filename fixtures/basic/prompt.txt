@@ -1,0 +1,7 @@
+Do these steps in order, using the tools named:
+1. Use TaskCreate to create three tasks: "write script", "run script", "explore files".
+2. Use TaskUpdate to mark "write script" in_progress. Use Write to create hello.py containing exactly: print('hi'
+   (a deliberate syntax error). Mark "write script" completed.
+3. Mark "run script" in_progress. Run `python3 hello.py` with Bash. It will fail. Fix hello.py with Edit and run `python3 hello.py` again until it succeeds. Mark "run script" completed.
+4. Mark "explore files" in_progress. Use the Agent tool to spawn an Explore subagent that lists files in the current directory and reads hello.py, then reports back in one sentence. Mark "explore files" completed.
+5. Reply "done".

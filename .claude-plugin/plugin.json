@@ -1,0 +1,10 @@
+{
+  "name": "ari",
+  "version": "0.1.0",
+  "description": "All Relevant Information: a zero-token status panel for Claude Code. Stop asking Claude how it's going.",
+  "author": { "name": "Finn Ritter", "url": "https://github.com/Izuulo" },
+  "homepage": "https://github.com/Izuulo/ari",
+  "repository": "https://github.com/Izuulo/ari",
+  "license": "MIT",
+  "keywords": ["statusline", "tui", "monitoring"]
+}
