@@ -109,7 +109,7 @@ pub fn projection(samples: &[Sample], now: u64) -> Option<u64> {
         .map(|(x, s)| (x - mx) * (s.pct - my))
         .sum();
     let slope = cov / var; // % per minute
-    if !(slope > 0.0) || last.pct >= 100.0 {
+    if slope.is_nan() || slope <= 0.0 || last.pct >= 100.0 {
         return None;
     }
     let eta = ((100.0 - last.pct) / slope * 60_000.0) as u64;
