@@ -703,20 +703,26 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
         }
         rows.push(row);
     }
-    if let (Some(wall), Some(api)) = (u.duration_ms, u.api_duration_ms) {
-        let pct = if wall > 0 {
-            api as f64 * 100.0 / wall as f64
-        } else {
-            0.0
-        };
-        rows.push(vec![
-            c.dim("time    "),
-            Span::raw(format!(
-                "{} active / {} wall · {pct:.0}%",
-                dur(api),
-                dur(wall)
-            )),
-        ]);
+    let wall = u
+        .duration_ms
+        .unwrap_or(st.last_t.saturating_sub(st.first_t));
+    if wall > 0 {
+        let sp = st.split(wall, u.api_duration_ms);
+        // API time can overlap tool time; percentages are of whichever is larger.
+        let total = wall.max(sp.claude + sp.tools + sp.waiting + sp.idle) as f64;
+        let pct = |ms: u64| (ms as f64 * 100.0 / total).round();
+        let mut text = dur(wall);
+        for (name, ms) in [
+            ("claude", sp.claude),
+            ("tools", sp.tools),
+            ("you", sp.waiting),
+            ("idle", sp.idle),
+        ] {
+            if pct(ms) > 0.0 {
+                text += &format!(" · {name} {:.0}%", pct(ms));
+            }
+        }
+        rows.push(vec![c.dim("time    "), Span::raw(text)]);
     }
     let (done, _) = st.tasks_done();
     let cost = match u.cost_usd {
@@ -951,6 +957,21 @@ mod tests {
         assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn time_split_row() {
+        let (mut st, mut u) = multi();
+        st.time.tools_ms = 22_000;
+        st.time.waiting_ms = 9_000;
+        st.time.idle_ms = 8_000;
+        u.duration_ms = Some(100_000);
+        u.api_duration_ms = Some(61_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains("time    1m40s · claude 61% · tools 22% · you 9% · idle 8%"),
+            "{out}"
+        );
     }
 
     #[test]

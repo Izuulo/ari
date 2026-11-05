@@ -55,6 +55,29 @@ pub struct State {
     pub background: u32,
     /// Recent test runs, oldest first.
     pub test_runs: VecDeque<TestRun>,
+    pub time: TimeSplit,
+}
+
+/// Wall time not spent by Claude itself, folded from events.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TimeSplit {
+    /// Main agent's tool time; subagents run in parallel and would double-count.
+    pub tools_ms: u64,
+    /// A permission or input prompt was open.
+    pub waiting_ms: u64,
+    /// Between Stop and the next prompt.
+    pub idle_ms: u64,
+    pub waiting_since: Option<u64>,
+    pub idle_since: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Split {
+    pub claude: u64,
+    pub tools: u64,
+    pub waiting: u64,
+    pub idle: u64,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
@@ -172,6 +195,9 @@ impl State {
                 ..Default::default()
             });
         }
+        if let Some(since) = self.time.waiting_since.take() {
+            self.time.waiting_ms += ev.t.saturating_sub(since);
+        }
         let aid = ev.a.as_deref().unwrap_or("main");
         if ev.a.is_some() || ev.tool.is_some() {
             let a = self.agent_mut(aid, ev);
@@ -179,6 +205,9 @@ impl State {
         }
         match ev.e.as_str() {
             "UserPromptSubmit" => {
+                if let Some(since) = self.time.idle_since.take() {
+                    self.time.idle_ms += ev.t.saturating_sub(since);
+                }
                 let msg = ev.msg.as_deref().unwrap_or("");
                 self.needs_you = None;
                 self.start_turn();
@@ -209,6 +238,9 @@ impl State {
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
+                if ev.a.is_none() {
+                    self.time.tools_ms += ev.dur.unwrap_or(0);
+                }
                 if let Some((pass, fail)) = ev.tests {
                     self.test_runs.push_back(TestRun {
                         t: ev.t,
@@ -239,6 +271,7 @@ impl State {
             }
             "Notification" => {
                 if ev.kind.as_deref().is_some_and(|k| NEEDS_YOU.contains(&k)) {
+                    self.time.waiting_since = Some(ev.t);
                     self.needs_you = Some(
                         ev.msg
                             .clone()
@@ -261,6 +294,7 @@ impl State {
                 self.background = ev.bg.unwrap_or(0);
                 self.agents[0].running_since = None;
                 if self.background == 0 {
+                    self.time.idle_since.get_or_insert(ev.t);
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
@@ -522,6 +556,18 @@ impl State {
             return Verdict::Retrying;
         }
         Verdict::OnTrack
+    }
+
+    /// Wall time split four ways. Claude is the API time when known, else what's left.
+    pub fn split(&self, wall_ms: u64, api_ms: Option<u64>) -> Split {
+        let t = &self.time;
+        let others = t.tools_ms + t.waiting_ms + t.idle_ms;
+        Split {
+            claude: api_ms.unwrap_or(wall_ms.saturating_sub(others)),
+            tools: t.tools_ms,
+            waiting: t.waiting_ms,
+            idle: t.idle_ms,
+        }
     }
 
     /// The latest test run had failures.
@@ -870,6 +916,43 @@ mod tests {
         assert_eq!(s.verdict(0), Verdict::Idle);
         let s = run(&[prompt("go"), stop(0)]);
         assert_eq!(s.verdict(0), Verdict::Idle);
+    }
+
+    #[test]
+    fn time_split() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let post = |t: u64, dur: u64, agent: Option<&str>| Event {
+            t,
+            dur: Some(dur),
+            a: agent.map(Into::into),
+            ..tool("PostToolUse", "Bash:make", Some(true))
+        };
+        let needs = Event {
+            kind: Some("permission_prompt".into()),
+            ..ev("Notification")
+        };
+        let s = run(&[
+            at(0, prompt("go")),
+            post(5_000, 5_000, None),
+            post(9_000, 4_000, Some("sub1")),
+            at(10_000, needs),
+            at(40_000, call("main", "Bash", 1, "$ make")),
+            at(50_000, stop(0)),
+            at(110_000, prompt("again")),
+        ]);
+        assert_eq!(
+            (s.time.tools_ms, s.time.waiting_ms, s.time.idle_ms),
+            (5_000, 30_000, 60_000),
+            "subagent tool time not counted"
+        );
+        let sp = s.split(120_000, Some(20_000));
+        assert_eq!(
+            (sp.claude, sp.tools, sp.waiting, sp.idle),
+            (20_000, 5_000, 30_000, 60_000)
+        );
+        let sp = s.split(120_000, None);
+        assert_eq!(sp.claude, 25_000, "remainder when api time is unknown");
+        assert_eq!(s.split(50_000, None).claude, 0, "never negative");
     }
 
     #[test]
