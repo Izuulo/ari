@@ -31,8 +31,8 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
 
 ```
-╭─ ARI (•_•) ────────────────────────────────── 13:03 ─╮
-│ ● ON TRACK                 milestone: calculator fix │
+╭─ ARI ─────────────────────────────── ~/calc · 13:03 ─╮
+│ ● ON TRACK · calculator fix                          │
 │ ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
@@ -40,21 +40,18 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 │ ├─⠦ Explore reading calc.py · 1 call · 1s · 16k tok  │
 │ └─⠦ Explore reading test_calc.py · 1 call · 0s       │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 10s  python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ usage ──────────────────────────────────────────────┤
+│ ▲ at this pace: 5h limit in ~55m                     │
 │ ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ 71%  142k/200k              │
 │ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m                │
-│ ▲ at this pace: 5h limit in ~55m                     │
 ├─ session ────────────────────────────────────────────┤
-│ tokens  6.2M · 26.8k out · 2 turns                   │
-│ cache   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱ 86% hit                 │
-│         saved ≈ $11.40 vs uncached                   │
 │ cost    $2.69 · $0.67/task done                      │
+│ tokens  6.2M · 26.8k out · cache 86% hit, saved $11… │
 ╰──────────────────────────────────────────────────────╯
 ```
 
-Keys: `q` quit, `e` more errors, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
+Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
 
 ### What a session got done: `ari recap`
 

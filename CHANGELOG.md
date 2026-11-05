@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clearer panel (from a UI audit): error rows name the real command (not a leading `cd`) and show `exit N` when the output names no problem; fixed errors fold into one count line (`e` lists them, `passed on retry`); the session section is three lines, cost first; unknown meters are left out; the pace warning leads the usage section; the session title sits after the verdict (no `milestone:`); the header shows the folder without `cd`; permission modes read `auto mode`, `plan mode`…; the face is off by default; task bars use the same `▰▱` cells as usage; stale agents show `?`; untracked sessions say `– not tracked`; agent summaries drop Markdown and stop after a sentence; the session list puts what a session is doing on its own line when narrow; the live panel lists its keys.
+
 - Sessions without hook events say `no hooks yet` (or `WORKING` while their transcript is moving) instead of a misleading `IDLE`.
 - The panel uses Claude Code's session title as the milestone.
 - **`ari recap`**: what a session got done (tasks, errors fixed, tests before → after, files, commits, time, cost, models), for the whole session, `--since prompt` or `--since 30m`; `--md` for a PR. `r` in `ari watch` shows it since your last prompt.
