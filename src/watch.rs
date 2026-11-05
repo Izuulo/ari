@@ -36,6 +36,9 @@ struct App {
     x: bar::Extras,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
+    /// When the recap view was last built, and whether events arrived since.
+    recap_built: Option<Instant>,
+    recap_dirty: bool,
     last_verdict: Option<Verdict>,
     color: bool,
 }
@@ -77,15 +80,19 @@ impl App {
             mtime(&dir.join("usage.json")),
         );
         let changed = now != self.mtimes;
+        self.recap_dirty |= now.0 != self.mtimes.0;
         // Built on demand: a full replay plus `git log` is too much for every refresh.
         if !self.view.recap {
             self.x.recap = None;
-        } else if changed || self.x.recap.is_none() {
+            self.recap_built = None;
+        } else if recap_due(self.recap_built, self.recap_dirty) {
             self.x.recap = Some(crate::recap::build(
                 dir,
                 crate::recap::Since::Prompt,
                 hook::now_ms(),
             ));
+            self.recap_built = Some(Instant::now());
+            self.recap_dirty = false;
         }
         if changed {
             self.mtimes = now;
@@ -305,6 +312,8 @@ pub fn run(args: &[String]) -> ! {
         x: bar::Extras::default(),
         mtimes: (None, None),
         picked_at: None,
+        recap_built: None,
+        recap_dirty: false,
         last_verdict: None,
         color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()),
     };
@@ -405,6 +414,21 @@ mod key_tests {
     use super::*;
 
     #[test]
+    fn recap_rebuilds_only_on_new_events_and_not_too_often() {
+        use std::time::Duration;
+        let now = Instant::now();
+        assert!(recap_due(None, false), "first build");
+        assert!(!recap_due(Some(now), false), "nothing new");
+        assert!(
+            !recap_due(Some(now), true),
+            "new events, but built just now"
+        );
+        let old = now.checked_sub(Duration::from_secs(6)).unwrap();
+        assert!(recap_due(Some(old), true));
+        assert!(!recap_due(Some(old), false));
+    }
+
+    #[test]
     fn recap_key_and_escape() {
         let mut v = View::default();
         assert!(!key(&mut v, KeyCode::Char('r')));
@@ -414,4 +438,9 @@ mod key_tests {
         assert!(key(&mut v, KeyCode::Esc), "then quits");
         assert!(key(&mut v, KeyCode::Char('q')));
     }
+}
+
+/// Build the recap view now: never built yet, or new events and the last build is 5 s old.
+fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
+    built.is_none_or(|b| dirty && b.elapsed() >= Duration::from_secs(5))
 }

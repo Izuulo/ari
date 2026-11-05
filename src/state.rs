@@ -23,6 +23,13 @@ const NOT_LOOPS: [&str; 6] = [
     "ToolSearch",
 ];
 /// Notification types that mean Claude is waiting on the user (docs/DECISIONS.md D5).
+/// Prompts where Claude is blocked on you mid-turn; `idle_prompt` is idle time, not this.
+const WAITS_ON_YOU: [&str; 3] = [
+    "permission_prompt",
+    "elicitation_dialog",
+    "elicitation_url_dialog",
+];
+
 const NEEDS_YOU: [&str; 5] = [
     "permission_prompt",
     "idle_prompt",
@@ -78,6 +85,8 @@ pub struct TimeSplit {
     pub idle_ms: u64,
     pub waiting_since: Option<u64>,
     pub idle_since: Option<u64>,
+    /// End of the latest counted main-agent tool call, so overlapping calls count once.
+    pub tools_until: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -206,7 +215,12 @@ impl State {
             });
         }
         if let Some(since) = self.time.waiting_since.take() {
-            self.time.waiting_ms += ev.t.saturating_sub(since);
+            // Approving fires no hook; a Post event's tool started when the wait ended.
+            let end = match ev.e.as_str() {
+                "PostToolUse" | "PostToolUseFailure" => ev.t.saturating_sub(ev.dur.unwrap_or(0)),
+                _ => ev.t,
+            };
+            self.time.waiting_ms += end.saturating_sub(since);
         }
         let aid = ev.a.as_deref().unwrap_or("main");
         if ev.a.is_some() || ev.tool.is_some() {
@@ -253,7 +267,10 @@ impl State {
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
                 if ev.a.is_none() {
-                    self.time.tools_ms += ev.dur.unwrap_or(0);
+                    let t = &mut self.time;
+                    let start = ev.t.saturating_sub(ev.dur.unwrap_or(0)).max(t.tools_until);
+                    t.tools_ms += ev.t.saturating_sub(start);
+                    t.tools_until = t.tools_until.max(ev.t);
                 }
                 self.track_reads(ev, aid);
                 if let Some((pass, fail)) = ev.tests {
@@ -285,8 +302,14 @@ impl State {
                 a.running_since = None;
             }
             "Notification" => {
-                if ev.kind.as_deref().is_some_and(|k| NEEDS_YOU.contains(&k)) {
+                if ev
+                    .kind
+                    .as_deref()
+                    .is_some_and(|k| WAITS_ON_YOU.contains(&k))
+                {
                     self.time.waiting_since = Some(ev.t);
+                }
+                if ev.kind.as_deref().is_some_and(|k| NEEDS_YOU.contains(&k)) {
                     self.needs_you = Some(
                         ev.msg
                             .clone()
@@ -1034,6 +1057,50 @@ mod tests {
         assert_eq!(s.prompts.len(), 6, "capped");
         assert_eq!(s.prompts.back(), Some(&19));
         assert!(!s.prompts.contains(&1), "synthetic prompts are not turns");
+    }
+
+    #[test]
+    fn idle_prompt_is_not_waiting_on_you() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let idle = Event {
+            kind: Some("idle_prompt".into()),
+            ..ev("Notification")
+        };
+        let s = run(&[
+            at(0, prompt("go")),
+            at(10_000, stop(0)),
+            at(70_000, idle),
+            at(130_000, prompt("back")),
+        ]);
+        assert_eq!((s.time.waiting_ms, s.time.idle_ms), (0, 120_000));
+    }
+
+    #[test]
+    fn permission_wait_ends_when_the_tool_starts() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let perm = Event {
+            kind: Some("permission_prompt".into()),
+            ..ev("Notification")
+        };
+        // Approved at 15 s; the tool then ran 60 s and reported at 75 s.
+        let post = Event {
+            dur: Some(60_000),
+            ..tool("PostToolUse", "Bash:cargo build", Some(true))
+        };
+        let s = run(&[at(0, prompt("go")), at(10_000, perm), at(75_000, post)]);
+        assert_eq!((s.time.waiting_ms, s.time.tools_ms), (5_000, 60_000));
+    }
+
+    #[test]
+    fn overlapping_tools_count_once() {
+        let post = |t: u64, dur: u64| Event {
+            t,
+            dur: Some(dur),
+            ..tool("PostToolUse", "Agent", Some(true))
+        };
+        // Two 10 s calls in parallel, 1 s apart: 11 s of wall time.
+        let s = run(&[post(10_000, 10_000), post(11_000, 10_000)]);
+        assert_eq!(s.time.tools_ms, 11_000);
     }
 
     #[test]

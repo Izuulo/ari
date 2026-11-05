@@ -144,8 +144,14 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
             _ => {}
         }
         if e.last_t >= from {
-            r.failed_calls += e.retries + 1;
-            r.failed_ms += e.time_ms;
+            // Only the failures inside the window: subtract what this error had before it.
+            let prior = before
+                .errors
+                .iter()
+                .find(|b| b.sig == e.sig && b.first_t == e.first_t)
+                .map_or((0, 0), |b| (b.retries + 1, b.time_ms));
+            r.failed_calls += (e.retries + 1).saturating_sub(prior.0);
+            r.failed_ms += e.time_ms.saturating_sub(prior.1);
         }
     }
     r.reread = after.reread - before.reread;
@@ -175,8 +181,10 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
     if r.wall_ms > 0 {
         let (a, b) = (&after.time, &before.time);
         let tools = a.tools_ms - b.tools_ms;
-        let waiting = a.waiting_ms - b.waiting_ms;
-        let idle = a.idle_ms - b.idle_ms;
+        // A stretch already open at the window start only counts from `from` on.
+        let open = |since: Option<u64>| since.map_or(0, |s| from.saturating_sub(s));
+        let waiting = (a.waiting_ms - b.waiting_ms).saturating_sub(open(b.waiting_since));
+        let idle = (a.idle_ms - b.idle_ms).saturating_sub(open(b.idle_since));
         let api = (since == Since::Start)
             .then_some(usage.api_duration_ms)
             .flatten();
@@ -504,6 +512,60 @@ mod tests {
             "hit before the window, fixed in it"
         );
         assert_eq!(r.files, vec![("calc.py".to_string(), 1)]);
+    }
+
+    fn session_from(name: &str, events: &[Event]) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("ari-recap-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let text: String = events.iter().map(to_line).collect();
+        std::fs::write(d.join("events.jsonl"), text).unwrap();
+        d
+    }
+
+    #[test]
+    fn idle_before_the_window_is_not_counted() {
+        let ev = |t: u64, e: &str| Event {
+            t,
+            e: e.into(),
+            msg: Some("go".into()),
+            ..Default::default()
+        };
+        let edit = Event {
+            tool: Some("Edit".into()),
+            sig: Some("Edit:/x/a.rs".into()),
+            ok: Some(true),
+            dur: Some(1_000),
+            ..ev(7_230_000, "PostToolUse")
+        };
+        let d = session_from(
+            "idle",
+            &[
+                ev(0, "UserPromptSubmit"),
+                ev(10_000, "Stop"),
+                ev(7_200_000, "UserPromptSubmit"),
+                edit,
+            ],
+        );
+        let r = build(&d, Since::Prompt, 7_231_000);
+        let sp = r.split.unwrap();
+        assert_eq!((r.wall_ms, sp.idle, sp.tools), (30_000, 0, 1_000));
+    }
+
+    #[test]
+    fn mistakes_only_inside_the_window() {
+        let fail = |t: u64| Event {
+            t,
+            e: "PostToolUseFailure".into(),
+            tool: Some("Bash".into()),
+            sig: Some("Bash:make".into()),
+            ok: Some(false),
+            dur: Some(5_000),
+            ..Default::default()
+        };
+        let d = session_from("mistakes", &[fail(1_000), fail(60_000)]);
+        let r = build(&d, Since::Ago(30_000), 70_000);
+        assert_eq!((r.failed_calls, r.failed_ms), (1, 5_000));
     }
 
     #[test]

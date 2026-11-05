@@ -158,7 +158,14 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
 // suite and file totals; teach it other runners' summaries when they show up.
 fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
     let cmd = input.get("command").and_then(Value::as_str)?;
-    if !cmd.contains("test") && !cmd.contains("jest") {
+    // A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
+    let runs_tests = cmd.split_whitespace().any(|w| {
+        let w = w.rsplit('/').next().unwrap_or(w);
+        w == "test"
+            || w.starts_with("test:")
+            || ["pytest", "jest", "vitest", "nextest", "mocha"].contains(&w)
+    });
+    if !runs_tests {
         return None;
     }
     let mut sum = None;
@@ -375,6 +382,21 @@ mod tests {
             None,
             "not a test command"
         );
+        assert_eq!(
+            test_run(&cmd("grep -rn passed tests/"), cargo_red),
+            None,
+            "searching test files is not a test run"
+        );
+        let one = "== 3 passed in 0.1s ==";
+        for c in [
+            "npm run test:unit",
+            "npx jest",
+            "go test ./...",
+            "cargo nextest run",
+            "uv run pytest",
+        ] {
+            assert_eq!(test_run(&cmd(c), one), Some((3, 0)), "{c}");
+        }
         assert_eq!(
             test_run(&cmd("cargo test"), "error[E0425]"),
             None,

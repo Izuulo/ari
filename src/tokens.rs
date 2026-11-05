@@ -105,7 +105,10 @@ impl Ledger {
             self.last_hit = Some(t.cache_read as f64 / side as f64);
         }
         let model = m.get("model").and_then(Value::as_str).unwrap_or("unknown");
-        self.last_model = Some(model.to_string());
+        // `<synthetic>` entries follow interrupts and API errors; they're not a model.
+        if !model.starts_with('<') {
+            self.last_model = Some(model.to_string());
+        }
         let e = self.by_model.entry(model.to_string()).or_default();
         e.input += t.input;
         e.cache_write += t.cache_write;
@@ -374,6 +377,16 @@ mod tests {
             line("b", "claude-haiku-5-5")
         ));
         assert_eq!(l.last_model.as_deref(), Some("claude-haiku-5-5"));
+        let l = ledger_from(&format!(
+            "{}\n{}\n",
+            line("a", "claude-opus-5-5"),
+            line("b", "<synthetic>")
+        ));
+        assert_eq!(
+            l.last_model.as_deref(),
+            Some("claude-opus-5-5"),
+            "placeholder entries after interrupts are not a model"
+        );
     }
 
     #[test]
