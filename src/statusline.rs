@@ -41,6 +41,7 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
                 burn::record(&dir, &u, now);
             }
             let st = state::load_session(&dir);
+            x.compacts_in = burn::forecast(&dir, &st, cfg);
             x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
             x.transcript_age_ms =
                 tokens::transcript_for(&dir, &u).and_then(|t| tokens::transcript_age(&t, now));

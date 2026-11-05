@@ -60,6 +60,8 @@ pub struct State {
     pub reads: BTreeMap<String, Vec<u64>>,
     /// Reads repeating an identical earlier read of an unchanged file.
     pub reread: u32,
+    /// Start times of the last real prompts (turns).
+    pub prompts: VecDeque<u64>,
 }
 
 /// Wall time not spent by Claude itself, folded from events.
@@ -218,6 +220,10 @@ impl State {
                 self.needs_you = None;
                 self.start_turn();
                 if !msg.starts_with("<task-notification>") {
+                    self.prompts.push_back(ev.t);
+                    if self.prompts.len() > 6 {
+                        self.prompts.pop_front();
+                    }
                     self.turns += 1;
                     self.turn_failed = false;
                     if self.label.is_none() && !msg.is_empty() {
@@ -1014,6 +1020,17 @@ mod tests {
             "the file changed in between"
         );
         assert_eq!(run(&[read("main", "/a"), read("sub1", "/a")]).reread, 0);
+    }
+
+    #[test]
+    fn prompt_times_kept() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let mut evs = vec![at(1, prompt("<task-notification>x"))];
+        evs.extend((0..10).map(|i| at(10 + i, prompt("go"))));
+        let s = run(&evs);
+        assert_eq!(s.prompts.len(), 6, "capped");
+        assert_eq!(s.prompts.back(), Some(&19));
+        assert!(!s.prompts.contains(&1), "synthetic prompts are not turns");
     }
 
     #[test]

@@ -11,11 +11,17 @@ const MIN_GAP_MS: u64 = 30_000;
 const MAX_BYTES: u64 = 1 << 20;
 const KEEP_MS: u64 = 2 * 3_600_000;
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
 pub struct Sample {
     pub t: u64,
+    /// 5h used %, 0 with `resets_at` 0 when the payload has no rate limits.
     pub pct: f64,
     pub resets_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 fn tail(path: &Path, bytes: u64) -> String {
@@ -36,22 +42,26 @@ fn parse(text: &str) -> Vec<Sample> {
         .collect()
 }
 
-/// Append a sample when the 5h percentage moved, or every 30 s otherwise.
+/// Append a sample when anything moved, or every 30 s otherwise.
 pub fn record(dir: &Path, u: &Usage, now: u64) {
-    let Some(l) = u.five_h else { return };
-    let path = dir.join("limits.jsonl");
-    if let Some(last) = parse(&tail(&path, 256)).last()
-        && last.pct == l.pct
-        && last.resets_at == l.resets_at
-        && now.saturating_sub(last.t) < MIN_GAP_MS
-    {
+    if u.five_h.is_none() && u.ctx_pct.is_none() && u.cost_usd.is_none() {
         return;
     }
+    let l = u.five_h.unwrap_or_default();
     let s = Sample {
         t: now,
         pct: l.pct,
         resets_at: l.resets_at,
+        ctx: u.ctx_pct,
+        cost: u.cost_usd,
     };
+    let path = dir.join("limits.jsonl");
+    if let Some(last) = parse(&tail(&path, 512)).last()
+        && (Sample { t: now, ..*last }) == s
+        && now.saturating_sub(last.t) < MIN_GAP_MS
+    {
+        return;
+    }
     let Ok(line) = serde_json::to_string(&s) else {
         return;
     };
@@ -79,6 +89,49 @@ pub fn load(dir: &Path, now: u64) -> Vec<Sample> {
         .into_iter()
         .filter(|s| now.saturating_sub(s.t) <= WINDOW_MS)
         .collect()
+}
+
+/// The file's tail, unfiltered by time: enough for the last several turns.
+pub fn recent(dir: &Path) -> Vec<Sample> {
+    parse(&tail(&dir.join("limits.jsonl"), 64 * 1024))
+}
+
+/// Turns left before context reaches `at_pct`, from the median growth over the last turns.
+/// `prompts` are turn start times; a turn containing `compacted` is skipped.
+pub fn compacts_in(
+    samples: &[Sample],
+    prompts: &[u64],
+    compacted: Option<u64>,
+    at_pct: f64,
+) -> Option<u32> {
+    let ctx_before = |t: u64| samples.iter().rev().find(|s| s.t <= t)?.ctx;
+    let points: Vec<(u64, f64)> = prompts
+        .iter()
+        .filter_map(|&t| Some((t, ctx_before(t)?)))
+        .collect();
+    if points.len() < 3 {
+        return None;
+    }
+    let mut deltas: Vec<f64> = points
+        .windows(2)
+        .filter(|w| !compacted.is_some_and(|c| c > w[0].0 && c <= w[1].0))
+        .map(|w| w[1].1 - w[0].1)
+        .collect();
+    deltas.sort_by(f64::total_cmp);
+    let growth = *deltas.get(deltas.len() / 2)?;
+    let now = samples.iter().rev().find_map(|s| s.ctx)?;
+    (growth > 0.0).then(|| ((at_pct - now).max(0.0) / growth).round() as u32)
+}
+
+/// `compacts_in` for a session dir.
+pub fn forecast(dir: &Path, st: &crate::state::State, cfg: &crate::config::Config) -> Option<u32> {
+    let prompts: Vec<u64> = st.prompts.iter().copied().collect();
+    compacts_in(
+        &recent(dir),
+        &prompts,
+        st.compacted_at,
+        cfg.thresholds.compact_pct as f64,
+    )
 }
 
 /// Milliseconds until the 5h limit hits 100% at the current pace, only if that's before it resets.
@@ -129,8 +182,70 @@ mod tests {
                 t: NOW - (minutes - m) * 60_000,
                 pct: start_pct + per_min * m as f64,
                 resets_at: NOW / 1000 + resets_in_s,
+                ..Default::default()
             })
             .collect()
+    }
+
+    fn ctx_at(t: u64, ctx: f64) -> Sample {
+        Sample {
+            t,
+            ctx: Some(ctx),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn compaction_forecast() {
+        let prompts = [1_000, 2_000, 3_000, 4_000];
+        let s: Vec<Sample> = [40.0, 46.0, 52.0, 58.0]
+            .iter()
+            .zip(prompts)
+            .map(|(c, t)| ctx_at(t - 10, *c))
+            .collect();
+        assert_eq!(compacts_in(&s, &prompts, None, 90.0), Some(5));
+        assert_eq!(
+            compacts_in(&s[..2], &prompts[..2], None, 90.0),
+            None,
+            "too few turns"
+        );
+        // A compaction between the 2nd and 3rd prompt: that drop is skipped.
+        let s2: Vec<Sample> = [40.0, 46.0, 10.0, 16.0, 22.0]
+            .iter()
+            .zip([1_000, 2_000, 3_000, 4_000, 5_000])
+            .map(|(c, t)| ctx_at(t - 10, *c))
+            .collect();
+        assert_eq!(
+            compacts_in(&s2, &[1_000, 2_000, 3_000, 4_000, 5_000], Some(2_500), 90.0),
+            Some(11)
+        );
+        let flat: Vec<Sample> = prompts.iter().map(|t| ctx_at(t - 10, 40.0)).collect();
+        assert_eq!(
+            compacts_in(&flat, &prompts, None, 90.0),
+            None,
+            "not growing"
+        );
+    }
+
+    #[test]
+    fn old_lines_and_ctx_only_samples() {
+        let old = r#"{"t":5,"pct":40.0,"resets_at":9}"#;
+        assert_eq!(parse(old)[0].ctx, None);
+        let dir = std::env::temp_dir().join(format!("ari-burn-ctx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let u = Usage {
+            ctx_pct: Some(33.0),
+            cost_usd: Some(1.5),
+            ..Default::default()
+        };
+        record(&dir, &u, NOW);
+        let got = recent(&dir);
+        assert_eq!(
+            (got[0].ctx, got[0].cost),
+            (Some(33.0), Some(1.5)),
+            "no 5h limit needed"
+        );
     }
 
     #[test]

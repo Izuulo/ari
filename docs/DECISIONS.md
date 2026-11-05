@@ -35,3 +35,4 @@ Where the PRD and the Claude Code docs disagree, the docs win. Checked against C
 - **Open question 3, row position:** default `top`, so ARI's verdict sits closest to the conversation; `position = "bottom"` flips it.
 - **Open question 4, `ari watch --split`:** not built. `tmux split-window ari watch` already does it, and terminal multiplexers differ too much for one helper to be worth it.
 - **Events are normalized in the hook:** each hook writes a compact ARI event (not the raw payload) so lines stay under 4 KB and secrets in tool inputs (file contents) never land on disk.
+- **D20, compaction forecast threshold:** `thresholds.compact_pct` defaults to 90. Checked 2026-11-05 against local recordings: none contained a `PreCompact` event yet, so the default is unverified. It's configurable, and the forecast only shows within 10 turns, where a few points of error matter little. Revisit once recordings include auto-compactions.

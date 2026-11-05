@@ -618,6 +618,13 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         _ => String::new(),
     };
     let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
+    if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
+        let s = if n == 1 { "" } else { "s" };
+        rows.push(vec![c.span(
+            format!("    compacts in ~{n} turn{s}"),
+            Style::new().fg(Color::Yellow),
+        )]);
+    }
     if let Some(t) = st.compacted_at {
         rows.push(vec![c.dim(format!("    ⟲ compacted {}", local_hhmm(t)))]);
     }
@@ -1062,6 +1069,45 @@ mod tests {
         };
         assert!(row(" main ").contains(" opus-5-5 · $ cargo test"), "{out}");
         assert!(row(&st.agents[1].kind).contains("haiku-5-5 · "), "{out}");
+    }
+
+    #[test]
+    fn compaction_forecast_in_usage() {
+        let (st, u) = multi();
+        let x = Extras {
+            compacts_in: Some(4),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert!(out.contains("│     compacts in ~4 turns"), "{out}");
+        let later = Extras {
+            compacts_in: Some(11),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &later,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert!(!out.contains("compacts in"), "{out}");
     }
 
     #[test]

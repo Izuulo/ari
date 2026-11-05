@@ -16,7 +16,12 @@ pub struct Extras {
     pub burn_eta: Option<u64>,
     /// How long ago the session's transcript last changed: a sign of life without hooks.
     pub transcript_age_ms: Option<u64>,
+    /// Turns until context auto-compacts at the current growth.
+    pub compacts_in: Option<u32>,
 }
+
+/// Forecasts are only worth showing this close.
+pub const COMPACT_SOON: u32 = 10;
 
 /// A session without hook events whose transcript moved this recently is working.
 pub const ACTIVE_MS: u64 = 20_000;
@@ -237,7 +242,11 @@ pub fn render(
                     color,
                     level_color(p, cfg),
                     &format!("{} {:.0}%", cells(p / 100.0, 5, '▰', '▱'), p)
-                )
+                ) + &x
+                    .compacts_in
+                    .filter(|n| *n <= COMPACT_SOON)
+                    .map(|n| format!(" ~{n}t"))
+                    .unwrap_or_default()
             ),
             None => "ctx —".into(),
         });
@@ -453,6 +462,18 @@ mod tests {
         });
         let row = row_now(&st);
         assert!(row.contains("│ ✗ 1 │ ✗ 2/69 tests │ ctx"), "{row}");
+        let soon = Extras {
+            compacts_in: Some(4),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &soon, &Config::default(), NOW, 200, false);
+        assert!(row.contains("ctx ▰▰▰▰▱ 71% ~4t"), "{row}");
+        let later = Extras {
+            compacts_in: Some(11),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &later, &Config::default(), NOW, 200, false);
+        assert!(!row.contains("~11t"), "{row}");
         let mut done = st.clone();
         done.turn_active = false;
         done.background = 0;

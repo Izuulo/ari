@@ -87,6 +87,7 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
             t,
             pct: five(t),
             resets_at: resets_5h,
+            ..Default::default()
         })
         .collect();
     let mut cache = TokenCache {
@@ -104,7 +105,7 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
     let x = Extras {
         tokens: Some(cache),
         burn_eta: burn::projection(&samples, now),
-        transcript_age_ms: None,
+        ..Default::default()
     };
     (st, u, x, now)
 }
