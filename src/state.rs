@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 6;
+const CACHE_VERSION: u32 = 7;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -60,6 +60,9 @@ pub struct State {
     pub ended: bool,
     /// Background tasks (shells, agents) still running at the last Stop.
     pub background: u32,
+    /// Running background tasks by name, from the main agent's last Stop.
+    pub background_names: Vec<String>,
+    pub crons: Vec<String>,
     /// Recent test runs, oldest first.
     pub test_runs: VecDeque<TestRun>,
     pub time: TimeSplit,
@@ -391,6 +394,14 @@ impl State {
                     e.resolved_by = Some("main".into());
                 }
                 self.background = ev.bg.unwrap_or(0);
+                if ev.a.is_none() {
+                    if let Some(b) = &ev.bgs {
+                        self.background_names = b.clone();
+                    }
+                    if let Some(c) = &ev.crons {
+                        self.crons = c.clone();
+                    }
+                }
                 self.agents[0].running_since = None;
                 // You are idle after Stop even while background tasks run.
                 self.time.idle_since.get_or_insert(ev.t);
@@ -895,6 +906,25 @@ mod tests {
             ..ev("UserPromptSubmit")
         }
     }
+    #[test]
+    fn background_names_replace() {
+        let mut st = State::default();
+        let mk = |a: Option<&str>, b: Vec<&str>| Event {
+            a: a.map(Into::into),
+            bgs: Some(b.iter().map(|s| s.to_string()).collect()),
+            crons: Some(vec![]),
+            ..ev("Stop")
+        };
+        st.apply(&mk(None, vec!["shell: a", "shell: b"]));
+        assert_eq!(st.background_names, ["shell: a", "shell: b"]);
+        st.apply(&mk(None, vec!["shell: c"]));
+        assert_eq!(st.background_names, ["shell: c"]);
+        st.apply(&mk(Some("sub1"), vec![]));
+        assert_eq!(st.background_names, ["shell: c"]);
+        st.apply(&mk(None, vec![]));
+        assert!(st.background_names.is_empty());
+    }
+
     fn stop(bg: u32) -> Event {
         Event {
             bg: Some(bg),

@@ -696,6 +696,18 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         c.dim(tok("main").unwrap_or_default()),
     ]];
 
+    // Background subagents already have rows below; list shells, monitors, workflows.
+    for b in st
+        .background_names
+        .iter()
+        .filter(|b| !b.starts_with("subagent"))
+    {
+        rows.push(vec![c.dim(format!("  ↳ {b}"))]);
+    }
+    for k in &st.crons {
+        rows.push(vec![c.dim(format!("  ◷ {k}"))]);
+    }
+
     for (i, a) in shown.iter().enumerate() {
         let branch = if i + 1 == shown.len() && shown.len() == subs.len() {
             "└─"
@@ -1213,6 +1225,19 @@ mod tests {
             ..Default::default()
         };
         (st, u)
+    }
+
+    #[test]
+    fn background_and_cron_rows() {
+        let (mut st, u) = multi();
+        let base = render(&st, &u, View::default(), 100, 30);
+        assert!(!base.contains('↳') && !base.contains('◷'));
+        st.background_names = vec!["subagent: hidden".into(), "shell: npm run dev".into()];
+        st.crons = vec!["*/5 * * * * · check deploy".into()];
+        let out = render(&st, &u, View::default(), 100, 30);
+        assert!(out.contains("↳ shell: npm run dev"), "{out}");
+        assert!(!out.contains("subagent: hidden"));
+        assert!(out.contains("◷ */5 * * * * · check deploy"), "{out}");
     }
 
     #[test]

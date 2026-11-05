@@ -36,6 +36,12 @@ pub struct Event {
     pub todos: Option<Vec<Todo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bg: Option<u32>,
+    /// Running background tasks as `type: description`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bgs: Option<Vec<String>>,
+    /// Session crons as `schedule · prompt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crons: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,6 +147,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                 });
             ev.bg = Some(running as u32);
             ev.msg = line("last_assistant_message");
+            lists(raw, &mut ev);
         }
         "StopFailure" => {
             ev.kind = owned("error");
@@ -149,6 +156,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         "SubagentStop" => {
             ev.path = owned("agent_transcript_path");
             ev.msg = line("last_assistant_message");
+            lists(raw, &mut ev);
         }
         "TaskCreated" | "TaskCompleted" => {
             ev.task = owned("task_id").map(|id| TaskRef {
@@ -160,6 +168,41 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         _ => {}
     }
     Some(ev)
+}
+
+/// Running background tasks and session crons by name, when the payload carries them.
+fn lists(raw: &Value, ev: &mut Event) {
+    fn str_of<'a>(t: &'a Value, k: &str) -> Option<&'a str> {
+        t.get(k).and_then(Value::as_str).filter(|s| !s.is_empty())
+    }
+    let one_line = |s: String| truncate(&s.split_whitespace().collect::<Vec<_>>().join(" "), 60);
+    ev.bgs = raw
+        .get("background_tasks")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter(|t| str_of(t, "status") == Some("running"))
+                .filter_map(|t| {
+                    let name = str_of(t, "description").or_else(|| str_of(t, "command"))?;
+                    Some(one_line(format!(
+                        "{}: {name}",
+                        str_of(t, "type").unwrap_or("task")
+                    )))
+                })
+                .take(5)
+                .collect()
+        });
+    // shortcut: cron entry shape is unverified; reads schedule/prompt, skips entries with neither.
+    ev.crons = raw.get("session_crons").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(|t| match (str_of(t, "schedule"), str_of(t, "prompt")) {
+                (Some(s), Some(p)) => Some(one_line(format!("{s} · {p}"))),
+                (Some(x), None) | (None, Some(x)) => Some(one_line(x.into())),
+                _ => None,
+            })
+            .take(5)
+            .collect()
+    });
 }
 
 /// (passed, failed) in a test command's output: cargo, pytest, jest and vitest all print
@@ -564,6 +607,27 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn background_and_crons_by_name() {
+        let stop = n(json!({"hook_event_name":"Stop",
+            "background_tasks":[{"type":"subagent","description":"List files and read hello.py","status":"running"},
+            {"type":"shell","command":"npm run dev","status":"running"},{"type":"shell","status":"running"},
+            {"type":"shell","description":"done","status":"completed"}],
+            "session_crons":[{"schedule":"*/5 * * * *","prompt":"check deploy"}]}));
+        assert_eq!(
+            stop.bgs,
+            Some(vec![
+                "subagent: List files and read hello.py".into(),
+                "shell: npm run dev".into()
+            ])
+        );
+        assert_eq!(stop.crons, Some(vec!["*/5 * * * * · check deploy".into()]));
+        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[]}));
+        assert_eq!(sub.bgs, Some(vec![]));
+        assert_eq!(sub.crons, None);
+        assert_eq!(n(json!({"hook_event_name":"Stop"})).bgs, None);
     }
 
     #[test]
