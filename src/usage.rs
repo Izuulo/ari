@@ -9,6 +9,10 @@ pub struct Usage {
     pub session_id: Option<String>,
     pub transcript_path: Option<String>,
     pub model: Option<String>,
+    /// Repo name, else the project folder's name.
+    pub project: Option<String>,
+    /// Claude Code's title for the session ("next milestone").
+    pub session_name: Option<String>,
     pub ctx_pct: Option<f64>,
     pub ctx_size: Option<u64>,
     pub ctx_used: Option<u64>,
@@ -42,6 +46,17 @@ pub fn from_value(v: &Value) -> Usage {
         session_id: s("/session_id"),
         transcript_path: s("/transcript_path"),
         model: s("/model/display_name").or_else(|| s("/model/id")),
+        project: s("/workspace/repo/name").or_else(|| {
+            let dir = s("/workspace/project_dir")
+                .or_else(|| s("/workspace/current_dir"))
+                .or_else(|| s("/cwd"))?;
+            dir.trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .filter(|n| !n.is_empty())
+                .map(String::from)
+        }),
+        session_name: s("/session_name"),
         ctx_pct: f("/context_window/used_percentage"),
         ctx_size: u("/context_window/context_window_size"),
         ctx_used: u("/context_window/total_input_tokens"),
@@ -63,7 +78,7 @@ mod tests {
     #[test]
     fn full_payload() {
         let u = from_value(&json!({
-            "session_id": "abc", "transcript_path": "/t.jsonl",
+            "session_id": "abc", "transcript_path": "/t.jsonl", "workspace": {"project_dir": "/home/u/ari/"},
             "model": {"id": "claude-opus-5-5", "display_name": "Opus"},
             "cost": {"total_cost_usd": 2.69, "total_duration_ms": 840000, "total_api_duration_ms": 594000,
                      "total_lines_added": 156, "total_lines_removed": 23},
@@ -73,6 +88,11 @@ mod tests {
                             "seven_day": {"used_percentage": 34.5, "resets_at": 1738857600}}
         }));
         assert_eq!(u.model.as_deref(), Some("Opus"));
+        assert_eq!(
+            u.project.as_deref(),
+            Some("ari"),
+            "folder name without a repo"
+        );
         assert_eq!(
             (u.ctx_pct, u.ctx_used, u.ctx_size),
             (Some(71.0), Some(142000), Some(200000))
@@ -86,6 +106,16 @@ mod tests {
         );
         assert_eq!(u.seven_d.unwrap().pct, 34.5);
         assert_eq!((u.cost_usd, u.api_duration_ms), (Some(2.69), Some(594000)));
+    }
+
+    #[test]
+    fn repo_name_and_title() {
+        let u = from_value(&json!({"session_name": "next milestone",
+            "workspace": {"current_dir": "/x/sub", "project_dir": "/x", "repo": {"owner": "Izuulo", "name": "tankobon"}}}));
+        assert_eq!(
+            (u.project.as_deref(), u.session_name.as_deref()),
+            (Some("tankobon"), Some("next milestone"))
+        );
     }
 
     #[test]
