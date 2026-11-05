@@ -409,6 +409,11 @@ fn tui_loop(
     }
 }
 
+/// Build the recap view now: never built yet, or new events and the last build is 5 s old.
+fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
+    built.is_none_or(|b| dirty && b.elapsed() >= Duration::from_secs(5))
+}
+
 #[cfg(test)]
 mod key_tests {
     use super::*;
@@ -438,9 +443,4 @@ mod key_tests {
         assert!(key(&mut v, KeyCode::Esc), "then quits");
         assert!(key(&mut v, KeyCode::Char('q')));
     }
-}
-
-/// Build the recap view now: never built yet, or new events and the last build is 5 s old.
-fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
-    built.is_none_or(|b| dirty && b.elapsed() >= Duration::from_secs(5))
 }
