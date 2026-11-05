@@ -53,6 +53,8 @@ pub struct State {
     pub ended: bool,
     /// Background tasks (shells, agents) still running at the last Stop.
     pub background: u32,
+    /// Tests passed in the latest test run.
+    pub tests_passed: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -199,6 +201,9 @@ impl State {
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
+                if ev.pass.is_some() {
+                    self.tests_passed = ev.pass;
+                }
                 self.agent_mut(aid, ev).running_since = None;
                 self.tool_result(ev, aid);
                 self.update_tasks(ev);

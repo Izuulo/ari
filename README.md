@@ -25,7 +25,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 **A row in your statusline**, always visible:
 
 ```
-ARI ● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
+● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ✓ 70 tests │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
 ```
 
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
@@ -89,7 +89,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, ARI 
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-hide = ["cost"]             # compact segments to drop: tasks agents errors ctx 5h 7d cost tokens
+hide = ["cost"]             # compact segments to drop: tasks agents errors tests ctx 5h 7d cost tokens
 face = true                 # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere

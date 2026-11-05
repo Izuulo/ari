@@ -168,24 +168,18 @@ pub fn render(
         paint(
             color,
             verdict_color(v),
-            &format!("ARI {} {}", v.glyph(), v.label()),
+            &format!("{} {}", v.glyph(), v.label()),
         )
     } else {
         // No hooks to judge by, but a growing transcript means Claude is working.
         if x.looks_active() {
-            paint(color, "1;36", &format!("ARI {} WORKING", spinner(now_ms)))
+            paint(color, "1;36", &format!("{} WORKING", spinner(now_ms)))
         } else {
-            paint(color, "2", "ARI ◌ no hooks yet")
+            paint(color, "2", "◌ no hooks yet")
         }
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
-    // Which repo this row belongs to; second only to the verdict when space runs out.
-    if shown("project")
-        && let Some(p) = &u.project
-    {
-        segs.push(paint(color, "1", p));
-    }
     if from_hooks("now")
         && let Some(now) = now_doing(st, now_ms)
     {
@@ -215,6 +209,11 @@ pub fn render(
             if n > 0 { "31" } else { "2" },
             &format!("✗ {n}"),
         ));
+    }
+    if from_hooks("tests")
+        && let Some(n) = st.tests_passed
+    {
+        segs.push(paint(color, "32", &format!("✓ {n} tests")));
     }
     if shown("ctx") {
         segs.push(match u.ctx_pct {
@@ -349,7 +348,7 @@ mod tests {
                 200,
                 false
             ),
-            "ARI ● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
+            "● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
         );
     }
 
@@ -364,7 +363,7 @@ mod tests {
             200,
             false,
         );
-        assert_eq!(row, "ARI ◌ no hooks yet │ ctx — │ 5h — │ 7d —");
+        assert_eq!(row, "◌ no hooks yet │ ctx — │ 5h — │ 7d —");
     }
 
     #[test]
@@ -376,15 +375,15 @@ mod tests {
         };
         for w in [10, 30, 50, 70] {
             let row = render(&st, &u, &Extras::default(), &cfg, NOW, w, false);
-            assert!(row.starts_with("ARI ● ON TRACK"));
+            assert!(row.starts_with("● ON TRACK"));
             assert!(
-                visible_width(&row) <= w || row == "ARI ● ON TRACK",
+                visible_width(&row) <= w || row == "● ON TRACK",
                 "{w}: {row}"
             );
         }
         assert_eq!(
             render(&st, &u, &Extras::default(), &cfg, NOW, 31, false),
-            "ARI ● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ██████░░░░ 4/7"
         );
         let capped = Config {
             max_width: 31,
@@ -393,32 +392,8 @@ mod tests {
         };
         assert_eq!(
             render(&st, &u, &Extras::default(), &capped, NOW, 500, false),
-            "ARI ● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ██████░░░░ 4/7"
         );
-    }
-
-    #[test]
-    fn project_segment() {
-        let (st, mut u) = sample();
-        u.project = Some("tankobon".into());
-        let row = render(
-            &st,
-            &u,
-            &Extras::default(),
-            &Config::default(),
-            NOW,
-            200,
-            false,
-        );
-        assert!(
-            row.starts_with("ARI ● ON TRACK │ tankobon │ ⠋ thinking │ ██████"),
-            "{row}"
-        );
-        let cfg = Config {
-            hide: vec!["project".into()],
-            ..Config::default()
-        };
-        assert!(!render(&st, &u, &Extras::default(), &cfg, NOW, 200, false).contains("tankobon"));
     }
 
     #[test]
@@ -439,6 +414,17 @@ mod tests {
             row.contains("│ ⠋ $ cargo test --workspace 1m15s │"),
             "{row}"
         );
+        st.tests_passed = Some(70);
+        let row = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        assert!(row.contains("│ ✗ 1 │ ✓ 70 tests │ ctx"), "{row}");
         st.agents[0].running_since = None;
         st.turn_active = false;
         st.background = 0;
@@ -465,11 +451,11 @@ mod tests {
         let empty = State::default();
         assert!(
             render(&empty, &u, &fresh, &Config::default(), NOW, 200, false)
-                .starts_with("ARI ⠋ WORKING")
+                .starts_with("⠋ WORKING")
         );
         assert!(
             render(&empty, &u, &stale, &Config::default(), NOW, 200, false)
-                .starts_with("ARI ◌ no hooks yet")
+                .starts_with("◌ no hooks yet")
         );
     }
 
@@ -522,7 +508,7 @@ mod tests {
         let row = render(&st, &u, &Extras::default(), &cfg, NOW, 200, false);
         assert!(row.is_ascii(), "{row}");
         assert!(
-            row.starts_with("ARI * ON TRACK | | thinking | ######---- 4/7 | | 2 agents"),
+            row.starts_with("* ON TRACK | | thinking | ######---- 4/7 | | 2 agents"),
             "{row}"
         );
     }

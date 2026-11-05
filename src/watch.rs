@@ -175,10 +175,6 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         Style::new().add_modifier(Modifier::BOLD),
     ))];
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    // The label column already names the project.
-    let mut cfg = cfg.clone();
-    cfg.hide.push("project".into());
-    let cfg = &cfg;
     // Fixed-width label column: project, then Claude Code's title for the session.
     let col = (width as usize / 3).clamp(12, 36);
     for s in live {

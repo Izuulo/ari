@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Sessions without hook events say `no hooks yet` (or `WORKING` while their transcript is moving) instead of a misleading `IDLE`.
-- The project (repo or folder) shows in the compact row and the panel header; the panel uses Claude Code's session title as the milestone.
+- The panel uses Claude Code's session title as the milestone.
+- The compact row drops the `ARI` prefix and shows the latest test run's pass count (`✓ 70 tests`), read from `N passed` in cargo, pytest, jest and vitest output.
+- The panel header shows the folder it follows beside the clock (`cd ~/ari · 14:29`).
 - `ari watch --all` labels each row `project · session title` and colors the verdicts.
 - Running commands show with a live timer (`$ cargo test 1m15s`) in the row and on each agent's panel line; background tasks are counted.
 - Release builds can publish a Homebrew formula (needs the tap repo and token).
