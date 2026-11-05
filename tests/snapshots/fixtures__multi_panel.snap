@@ -8,7 +8,7 @@ expression: "out.join(\"\\n\")"
 │ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
-│ ⠏ main   $ python3 test_calc.py                      │
+│ ⠏ main   thinking…                                   │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✗ 0s   python3 test_calc.py · AssertionError         │
 ├─ usage ──────────────────────────────────────────────┤
@@ -24,9 +24,9 @@ expression: "out.join(\"\\n\")"
 │ ██████████░░░░░░░░░░ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
-│ ⠦ main      agent Explore: Describe test_calc.py     │
-│ ├─⠦ Explore reading calc.py · 1 call · 1s            │
-│ └─⠦ Explore reading test_calc.py · 1 call · 0s       │
+│ ⠦ main      agent Explore: Describe test_calc.py · … │
+│ ├─⠦ Explore thinking… · 1 call · 1s                  │
+│ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✓ 6s   python3 test_calc.py · AssertionError         │
 │        fixed by main                                 │
