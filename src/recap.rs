@@ -86,11 +86,7 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
             .rev()
             .find(|e| {
                 e.e == "UserPromptSubmit"
-                    && !e
-                        .msg
-                        .as_deref()
-                        .unwrap_or("")
-                        .starts_with("<task-notification>")
+                    && !crate::event::is_synthetic(e.msg.as_deref().unwrap_or(""))
             })
             .map_or(first, |e| e.t),
         Since::Ago(ms) => now.saturating_sub(ms),
@@ -597,6 +593,10 @@ mod tests {
             ev(3_000, "Stop"),
             prompt(4_000),
             done(5_000, "2"),
+            Event {
+                msg: Some("<agent-message from=\"w\">hi".into()),
+                ..ev(5_200, "UserPromptSubmit")
+            },
         ];
         let text: String = events.iter().map(to_line).collect();
         std::fs::write(d.join("events.jsonl"), text).unwrap();

@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 9;
+const CACHE_VERSION: u32 = 10;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -293,7 +293,7 @@ impl State {
             self.first_t = ev.t;
         }
         self.last_t = self.last_t.max(ev.t);
-        if ev.pm.is_some() {
+        if ev.pm.is_some() && ev.a.is_none() {
             self.permission_mode.clone_from(&ev.pm);
         }
         if self.agents.is_empty() {
@@ -325,7 +325,7 @@ impl State {
                 let msg = ev.msg.as_deref().unwrap_or("");
                 self.needs_you = None;
                 self.start_turn();
-                if !msg.starts_with("<task-notification>") {
+                if !crate::event::is_synthetic(msg) {
                     // An Esc interrupt fires no Stop; the next prompt ends that turn.
                     self.end_turn(ev.t, true);
                     self.prompts.push_back(ev.t);
@@ -495,6 +495,8 @@ impl State {
                 self.end_turn(ev.t, true);
                 self.turn_active = false;
                 self.background = 0;
+                self.background_names.clear();
+                self.crons.clear();
                 for a in &mut self.agents {
                     a.running_since = None;
                 }
@@ -929,6 +931,15 @@ mod tests {
         assert_eq!(st.permission_mode.as_deref(), Some("plan"));
         st.apply(&ev(3, Some("auto")));
         assert_eq!(st.permission_mode.as_deref(), Some("auto"));
+        st.apply(&Event {
+            a: Some("sub1".into()),
+            ..ev(4, Some("plan"))
+        });
+        assert_eq!(
+            st.permission_mode.as_deref(),
+            Some("auto"),
+            "a subagent's mode is not the session's"
+        );
     }
 
     #[test]
@@ -1014,6 +1025,10 @@ mod tests {
         assert_eq!(st.background_names, ["shell: c"]);
         st.apply(&mk(None, vec![]));
         assert!(st.background_names.is_empty());
+        st.background_names = vec!["shell: d".into()];
+        st.crons = vec!["*/5 x".into()];
+        st.apply(&ev("SessionEnd"));
+        assert!(st.background_names.is_empty() && st.crons.is_empty());
     }
 
     fn stop(bg: u32) -> Event {
@@ -1478,6 +1493,13 @@ mod tests {
         s.apply(&at(10, "UserPromptSubmit", Some("a")));
         s.apply(&at(11, "UserPromptSubmit", Some("<task-notification>x")));
         assert_eq!(s.turn_log[0].end, None, "synthetic prompt keeps it open");
+        s.apply(&at(
+            12,
+            "UserPromptSubmit",
+            Some("<agent-message from=\"w\">hi"),
+        ));
+        assert_eq!(s.turn_log[0].end, None, "agent message keeps it open");
+        assert_eq!((s.turn_log.len(), s.turns, s.prompts.len()), (1, 1, 1));
         s.apply(&at(30, "UserPromptSubmit", Some("b")));
         assert_eq!((s.turn_log[0].end, s.turn_log[0].ok), (Some(30), true));
         assert_eq!(s.turn_log[1].end, None);

@@ -374,6 +374,11 @@ fn failure_line(err: &str) -> &str {
         .unwrap_or("")
 }
 
+/// Prompts the harness injects (task results, agent-team messages), not typed by you.
+pub fn is_synthetic(msg: &str) -> bool {
+    msg.starts_with("<task-notification>") || msg.starts_with("<agent-message")
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars.saturating_sub(1)) {
         Some((i, _)) if s[i..].chars().nth(1).is_some() => format!("{}…", &s[..i]),
