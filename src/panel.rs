@@ -870,6 +870,25 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
 
 fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
     let mut rows = Vec::new();
+    if let Some(pr) = &u.pr {
+        // GitLab writes merge requests as !N, GitHub PRs as #N.
+        let (label, sign) = if pr.mr {
+            ("mr      ", '!')
+        } else {
+            ("pr      ", '#')
+        };
+        let mut row = vec![c.dim(label), Span::raw(format!("{sign}{}", pr.number))];
+        if let Some(state) = &pr.review_state {
+            let style = match state.as_str() {
+                "approved" => Style::new().fg(Color::Green),
+                "changes_requested" => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                _ => Style::new().add_modifier(Modifier::DIM),
+            };
+            row.push(Span::raw(" · "));
+            row.push(c.span(state.replace('_', " "), style));
+        }
+        rows.push(row);
+    }
     if let Some(t) = &x.tokens
         && t.total().total() > 0
     {
@@ -1126,6 +1145,24 @@ mod tests {
     fn multi_agent_panel() {
         let (st, u) = multi();
         insta::assert_snapshot!(render(&st, &u, View::default(), 50, 40));
+    }
+
+    #[test]
+    fn pull_request_row() {
+        let (st, mut u) = multi();
+        u.pr = Some(crate::usage::Pr {
+            number: 14,
+            review_state: Some("changes_requested".into()),
+            mr: false,
+        });
+        let out = render(&st, &u, View::default(), 50, 40);
+        assert!(out.contains("pr      #14 · changes requested"), "{out}");
+        u.pr = Some(crate::usage::Pr {
+            number: 3,
+            review_state: None,
+            mr: true,
+        });
+        assert!(render(&st, &u, View::default(), 50, 40).contains("mr      !3 "));
     }
 
     #[test]
