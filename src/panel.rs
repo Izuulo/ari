@@ -852,7 +852,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
     let shown: Vec<_> = subs
         .iter()
-        .filter(|a| view.expand_agents || !a.done || recent_done.contains(&a.id.as_str()))
+        .filter(|a| !a.done || (!view.expand_agents && recent_done.contains(&a.id.as_str())))
         .collect();
     let name_w = std::iter::once(4)
         .chain(shown.iter().map(|a| a.kind.width()))
@@ -899,12 +899,8 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         rows.push(vec![c.dim(format!("  ◷ {k}"))]);
     }
 
-    for (i, a) in shown.iter().enumerate() {
-        let branch = if i + 1 == shown.len() && shown.len() == subs.len() {
-            "└─"
-        } else {
-            "├─"
-        };
+    let first_sub = rows.len();
+    for a in shown.iter() {
         let (glyph, text) = match st.agent_status(a, now) {
             AgentStatus::Running => (
                 spin.clone(),
@@ -947,7 +943,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             ),
         };
         rows.push(vec![
-            c.dim(branch),
+            Span::raw(""),
             glyph,
             Span::raw(" "),
             Span::raw(pad(&crate::event::truncate(&a.kind, name_w))),
@@ -956,10 +952,114 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Span::raw(text),
         ]);
     }
-    let hidden = subs.len() - shown.len();
-    if hidden > 0 {
-        rows.push(vec![c.dim(format!("└─ … {hidden} more done (a)"))]);
+    let ledger = |id: &str| x.tokens.as_ref().and_then(|t| t.agents.get(id));
+    let toks = |ids: &[&crate::state::Agent]| -> u64 {
+        ids.iter()
+            .filter_map(|a| ledger(&a.id))
+            .map(|l| l.total())
+            .sum()
+    };
+    let tok_part = |n: u64| {
+        if n > 0 {
+            format!(" · {} tok", fmt_tokens(n))
+        } else {
+            String::new()
+        }
+    };
+    let mut fold = None;
+    if view.expand_agents {
+        // One row per (kind, model), newest group first; instant no-call helpers fold together.
+        let is_helper = |a: &crate::state::Agent| {
+            a.calls == 0 && a.ended_t.unwrap_or(a.last_t) < a.started + 1_000
+        };
+        let mut all: Vec<&crate::state::Agent> = subs.iter().copied().filter(|a| a.done).collect();
+        all.sort_by_key(|a| std::cmp::Reverse(a.ended_t.unwrap_or(a.last_t)));
+        let mut groups: Vec<((String, String), Vec<&crate::state::Agent>)> = vec![];
+        let mut helpers = 0;
+        for a in all {
+            if is_helper(a) {
+                helpers += 1;
+                continue;
+            }
+            let m = ledger(&a.id)
+                .and_then(|l| l.last_model.as_deref())
+                .filter(|m| *m != "unknown")
+                .map(crate::tokens::short_model)
+                .unwrap_or_default();
+            let key = (a.kind.clone(), m);
+            match groups.iter_mut().find(|g| g.0 == key) {
+                Some(g) => g.1.push(a),
+                None => groups.push((key, vec![a])),
+            }
+        }
+        let n_x = |n: usize| {
+            if n > 1 {
+                format!("{n}× ")
+            } else {
+                String::new()
+            }
+        };
+        let mut line = |text: String| {
+            rows.push(vec![
+                Span::raw(""),
+                c.span("✓", Style::new().fg(Color::Green)),
+                Span::raw(format!(" {text}")),
+            ])
+        };
+        for ((kind, m), g) in &groups {
+            let time: u64 = g
+                .iter()
+                .map(|a| a.ended_t.unwrap_or(a.last_t).saturating_sub(a.started))
+                .sum();
+            let m = if m.is_empty() {
+                String::new()
+            } else {
+                format!(" · {m}")
+            };
+            line(format!(
+                "{}{kind}{m}{} · {}",
+                n_x(g.len()),
+                tok_part(toks(g)),
+                dur(time)
+            ));
+        }
+        if helpers > 0 {
+            line(format!("{}helpers", n_x(helpers)));
+        }
+    } else if subs.len() > shown.len() {
+        let hidden: Vec<_> = subs
+            .iter()
+            .copied()
+            .filter(|a| !shown.iter().any(|s| s.id == a.id))
+            .collect();
+        let mut kinds: Vec<(&str, usize)> = vec![];
+        for a in &hidden {
+            match kinds.iter_mut().find(|k| k.0 == a.kind) {
+                Some(k) => k.1 += 1,
+                None => kinds.push((&a.kind, 1)),
+            }
+        }
+        kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let named: String = kinds
+            .iter()
+            .take(3)
+            .map(|(k, n)| format!(" · {n} {k}"))
+            .collect();
+        fold = Some(vec![c.dim(format!(
+            "└─ ✓ {} more done{named}{} (a)",
+            hidden.len(),
+            tok_part(toks(&hidden))
+        ))]);
     }
+    let last = rows.len().saturating_sub(1);
+    for (i, r) in rows.iter_mut().enumerate().skip(first_sub) {
+        r[0] = c.dim(if i == last && fold.is_none() {
+            "└─"
+        } else {
+            "├─"
+        });
+    }
+    rows.extend(fold);
     rows
 }
 
@@ -2208,16 +2308,151 @@ mod tests {
         assert!(out.contains("recent result"), "{out}");
         assert!(!out.contains("instant result"), "{out}");
         assert!(!out.contains("oldone result"), "{out}");
-        assert!(out.contains("… 2 more done (a)"), "{out}");
+        assert!(
+            out.contains("✓ 2 more done · 1 instant · 1 oldone (a)"),
+            "{out}"
+        );
         let all = View {
             expand_agents: true,
             ..View::default()
         };
         let out = render(&st, &u, all, 70, 60);
         assert!(
-            out.contains("instant result") && out.contains("oldone result"),
+            out.contains("✓ oldone") && out.contains("✓ helpers"),
             "{out}"
         );
+    }
+
+    fn long_list() -> (State, Usage, Extras) {
+        use crate::state::Agent;
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        st.agents.retain(|a| a.id == "main");
+        let mut led = std::collections::BTreeMap::new();
+        let mut add =
+            |st: &mut State, id: String, kind: &str, calls: u32, model: Option<&str>, i: u64| {
+                let ended = NOW - 60_000 - i * 1_000;
+                st.agents.push(Agent {
+                    id: id.clone(),
+                    kind: kind.into(),
+                    calls,
+                    started: ended - if calls > 0 { 30_000 } else { 100 },
+                    last_t: ended,
+                    ended_t: Some(ended),
+                    done: true,
+                    ..Default::default()
+                });
+                if let Some(m) = model {
+                    led.insert(
+                        id,
+                        Ledger {
+                            output: 1000,
+                            last_model: Some(m.into()),
+                            ..Default::default()
+                        },
+                    );
+                }
+            };
+        for i in 0..2 {
+            add(
+                &mut st,
+                format!("o{i}"),
+                "general-purpose",
+                3,
+                Some("claude-opus-5-5"),
+                i,
+            );
+        }
+        for i in 0..30 {
+            add(
+                &mut st,
+                format!("s{i}"),
+                "general-purpose",
+                3,
+                Some("claude-sonnet-5-5"),
+                10 + i,
+            );
+        }
+        for i in 0..3 {
+            add(&mut st, format!("h{i}"), "agent", 0, None, 50 + i);
+        }
+        st.agents.push(Agent {
+            id: "run".into(),
+            kind: "runner".into(),
+            calls: 1,
+            started: NOW - 5_000,
+            last_t: NOW - 1_000,
+            ..Default::default()
+        });
+        let x = Extras {
+            tokens: Some(TokenCache {
+                agents: led,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        (st, u, x)
+    }
+
+    fn render_ex(st: &State, u: &Usage, x: &Extras, view: View) -> String {
+        to_plain(&lines(
+            st,
+            u,
+            x,
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            90,
+            80,
+            false,
+        ))
+    }
+
+    #[test]
+    fn long_list_default_folds_with_summary() {
+        let (st, u, x) = long_list();
+        let out = render_ex(&st, &u, &x, View::default());
+        assert!(out.contains("runner"), "{out}");
+        assert!(
+            out.contains("✓ 32 more done · 29 general-purpose · 3 agent · 29k tok (a)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn long_list_expanded_groups() {
+        let (st, u, x) = long_list();
+        let v = View {
+            expand_agents: true,
+            ..View::default()
+        };
+        let out = render_ex(&st, &u, &x, v);
+        assert!(
+            out.contains("✓ 30× general-purpose · sonnet-5-5 · 30k tok"),
+            "{out}"
+        );
+        assert!(
+            out.contains("✓ 2× general-purpose · opus-5-5 · 2k tok"),
+            "{out}"
+        );
+        assert!(out.contains("✓ 3× helpers"), "{out}");
+        assert!(out.contains("runner"), "{out}");
+        let rows = out
+            .lines()
+            .filter(|l| l.contains("├─") || l.contains("└─"))
+            .count();
+        assert_eq!(rows, 4, "{out}");
+    }
+
+    #[test]
+    fn two_done_agents_show_without_fold() {
+        let (mut st, u, x) = long_list();
+        st.agents
+            .retain(|a| a.id == "main" || a.id == "o0" || a.id == "o1");
+        let out = render_ex(&st, &u, &x, View::default());
+        assert!(!out.contains("more done"), "{out}");
+        assert_eq!(out.matches("general-pur").count(), 2, "{out}");
     }
 
     #[test]
