@@ -168,25 +168,40 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         ),
         Style::new().add_modifier(Modifier::BOLD),
     ))];
+    // Fixed-width label column: project, then Claude Code's title for the session.
+    let col = (width as usize / 3).clamp(12, 36);
     for s in live {
-        let name = s
-            .cwd
-            .as_deref()
-            .and_then(|c| c.rsplit('/').next())
-            .unwrap_or(&s.id)
-            .to_string();
+        let u = load_usage(&s.dir);
+        let project = u
+            .project
+            .clone()
+            .or_else(|| {
+                s.cwd
+                    .as_deref()
+                    .and_then(|c| c.rsplit('/').next())
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| s.id.chars().take(8).collect());
+        let label = match &u.session_name {
+            Some(n) => format!("{project} · {n}"),
+            None => project.clone(),
+        };
+        let label = crate::event::truncate(&label, col);
+        let pad = col.saturating_sub(unicode_width::UnicodeWidthStr::width(label.as_str()));
         let row = bar::render(
             &state::load_session(&s.dir),
-            &load_usage(&s.dir),
+            &u,
             &bar::Extras::default(),
             cfg,
             now,
-            (width as usize).saturating_sub(name.len() + 2),
+            (width as usize).saturating_sub(col + 2),
             false,
         );
+        let (head, tail) = label.split_at(project.len().min(label.len()));
         out.push(Line::from(vec![
-            Span::styled(name, Style::new().add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
+            Span::styled(head.to_string(), Style::new().add_modifier(Modifier::BOLD)),
+            Span::styled(tail.to_string(), Style::new().add_modifier(Modifier::DIM)),
+            Span::raw(" ".repeat(pad + 2)),
             Span::raw(row),
         ]));
     }
