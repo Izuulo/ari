@@ -196,6 +196,7 @@ pub fn lines(
             rows: header(
                 st,
                 u.session_name.as_deref(),
+                x.looks_active(),
                 &c,
                 v,
                 cfg.thresholds.stuck_repeats,
@@ -309,10 +310,24 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
     }
 }
 
-fn header(st: &State, title: Option<&str>, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
+fn header(
+    st: &State,
+    title: Option<&str>,
+    active: bool,
+    c: &Ctx,
+    v: Verdict,
+    repeats: u8,
+) -> Vec<Row> {
     let mut rows = Vec::new();
     if st.first_t == 0 {
-        rows.push(vec![c.dim("◌ no hooks yet")]);
+        rows.push(vec![if active {
+            c.span(
+                "● WORKING · no hooks yet, so no details",
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            c.dim("◌ no hooks yet")
+        }]);
         rows.push(vec![
             c.dim("start a new Claude Code session, or /reload-plugins"),
         ]);
@@ -403,14 +418,13 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     } else {
         c.dim("◌")
     };
-    let main_act = main.act.clone().unwrap_or_else(|| {
-        (if st.turn_active {
-            "thinking…"
-        } else {
-            "idle"
-        })
-        .into()
-    });
+    // The command running now, with its timer; otherwise thinking or idle.
+    let main_act = match (st.tool_running(main, now), st.turn_active) {
+        (Some(ms), _) => format!("{} · {}", main.act.as_deref().unwrap_or("working"), dur(ms)),
+        (None, true) if st.background > 0 => format!("{} in background", st.background),
+        (None, true) => "thinking…".into(),
+        (None, false) => "idle".into(),
+    };
     let mut rows = vec![vec![
         main_glyph,
         Span::raw(" "),
@@ -434,7 +448,12 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
                 spin.clone(),
                 format!(
                     "{} · {} call{} · {}{}",
-                    a.act.as_deref().unwrap_or("starting"),
+                    match st.tool_running(a, now) {
+                        Some(ms) =>
+                            format!("{} {}", a.act.as_deref().unwrap_or("working"), dur(ms)),
+                        None if a.calls == 0 => "starting".into(),
+                        None => "thinking…".into(),
+                    },
                     a.calls,
                     if a.calls == 1 { "" } else { "s" },
                     dur(now.saturating_sub(a.started)),
@@ -710,11 +729,13 @@ mod tests {
         };
         st.agents = vec![
             Agent {
-                act: Some("editing src/auth/session.rs".into()),
+                act: Some("$ cargo test".into()),
+                running_since: Some(NOW - 8_000),
                 ..agent("main", "main")
             },
             Agent {
                 act: Some("grep refresh_token".into()),
+                running_since: Some(NOW - 3_000),
                 calls: 14,
                 ..agent("a1", "Explore")
             },
