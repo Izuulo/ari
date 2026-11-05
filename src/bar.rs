@@ -104,7 +104,7 @@ pub fn render(
     width: usize,
     color: bool,
 ) -> String {
-    let v = st.verdict(now_ms);
+    let v = st.verdict_with(now_ms, cfg.thresholds.stuck_repeats);
     let mut segs: Vec<String> = vec![paint(
         color,
         verdict_color(v),

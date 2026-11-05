@@ -240,7 +240,7 @@ pub fn run(args: &[String]) -> ! {
         loop {
             app.refresh();
             let now = hook::now_ms();
-            let v = app.st.verdict(now);
+            let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
             if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
                 let mut out = std::io::stdout();
                 out.write_all(b"\x07")?;

@@ -178,7 +178,7 @@ pub fn lines(
         color,
         inner: w.saturating_sub(4),
     };
-    let v = st.verdict(now);
+    let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
         return vec![Line::from(fit(row, w))];
@@ -187,7 +187,7 @@ pub fn lines(
     let mut sections = vec![
         Section {
             title: None,
-            rows: header(st, &c, v, now),
+            rows: header(st, &c, v, cfg.thresholds.stuck_repeats),
         },
         Section {
             title: Some("agents"),
@@ -282,7 +282,7 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
     }
 }
 
-fn header(st: &State, c: &Ctx, v: Verdict, _now: u64) -> Vec<Row> {
+fn header(st: &State, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
     let mut rows = Vec::new();
     let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
     let mut row = vec![left];
@@ -301,6 +301,11 @@ fn header(st: &State, c: &Ctx, v: Verdict, _now: u64) -> Vec<Row> {
         }
     }
     rows.push(row);
+    if v == Verdict::Stuck
+        && let Some(why) = st.stuck_reason(repeats)
+    {
+        rows.push(vec![c.span(format!("↻ {why}"), verdict_style(v))]);
+    }
     if let Some(msg) = &st.needs_you {
         rows.push(vec![
             c.span(format!("◉ {msg}"), verdict_style(Verdict::NeedsYou)),
@@ -723,6 +728,18 @@ mod tests {
         st.agents[0].act = Some("editing 日本語のファイル名がとても長いです🦀🦀🦀🦀🦀🦀.rs".into());
         let out = render(&st, &u, View::default(), 40, 40);
         assert!(out.contains('…'), "{out}");
+    }
+
+    #[test]
+    fn stuck_reason_in_header() {
+        let (mut st, u) = multi();
+        st.errors[1].retries = 3;
+        st.recent.push_back((false, st.errors[1].sig.clone()));
+        let out = render(&st, &u, View::default(), 50, 40);
+        assert!(
+            out.contains("↻ STUCK") && out.contains("↻ edit lib.rs failed 4× in a row"),
+            "{out}"
+        );
     }
 
     #[test]
