@@ -2440,7 +2440,7 @@ mod tests {
         assert!(out.contains("runner"), "{out}");
         let rows = out
             .lines()
-            .filter(|l| l.contains("├─") || l.contains("└─"))
+            .filter(|l| l.contains("─✓") || l.contains("─⠋"))
             .count();
         assert_eq!(rows, 4, "{out}");
     }
