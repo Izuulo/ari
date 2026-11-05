@@ -139,6 +139,12 @@ pub fn render(
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
+    // Which repo this row belongs to; second only to the verdict when space runs out.
+    if shown("project")
+        && let Some(p) = &u.project
+    {
+        segs.push(paint(color, "1", p));
+    }
 
     if from_hooks("tasks") {
         let (done, total) = st.tasks_done();
@@ -339,6 +345,30 @@ mod tests {
             render(&st, &u, &Extras::default(), &capped, NOW, 500, false),
             "ARI ● ON TRACK │ ██████░░░░ 4/7"
         );
+    }
+
+    #[test]
+    fn project_segment() {
+        let (st, mut u) = sample();
+        u.project = Some("tankobon".into());
+        let row = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        assert!(
+            row.starts_with("ARI ● ON TRACK │ tankobon │ ██████"),
+            "{row}"
+        );
+        let cfg = Config {
+            hide: vec!["project".into()],
+            ..Config::default()
+        };
+        assert!(!render(&st, &u, &Extras::default(), &cfg, NOW, 200, false).contains("tankobon"));
     }
 
     #[test]

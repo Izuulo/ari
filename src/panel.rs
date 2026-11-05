@@ -193,7 +193,13 @@ pub fn lines(
     let mut sections = vec![
         Section {
             title: None,
-            rows: header(st, &c, v, cfg.thresholds.stuck_repeats),
+            rows: header(
+                st,
+                u.session_name.as_deref(),
+                &c,
+                v,
+                cfg.thresholds.stuck_repeats,
+            ),
         },
         Section {
             title: Some("agents"),
@@ -229,8 +235,19 @@ pub fn lines(
             verdict_style(v).remove_modifier(Modifier::REVERSED),
         ));
     }
-    title.push(Span::raw(" "));
     let right = format!(" {clock} ─╮");
+    // Which project this panel is following, so several sessions can't be confused.
+    if let Some(p) = &u.project {
+        let room = w.saturating_sub(row_width(&title) + right.width() + 5);
+        if room >= 4 {
+            title.push(Span::styled(" · ", bstyle));
+            title.extend(fit(
+                vec![c.span(p.clone(), Style::new().add_modifier(Modifier::BOLD))],
+                room,
+            ));
+        }
+    }
+    title.push(Span::raw(" "));
     let fill = w.saturating_sub(row_width(&title) + right.width());
     title.push(Span::styled("─".repeat(fill), bstyle));
     title.push(Span::styled(right, bstyle));
@@ -292,7 +309,7 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
     }
 }
 
-fn header(st: &State, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
+fn header(st: &State, title: Option<&str>, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
     let mut rows = Vec::new();
     if st.first_t == 0 {
         rows.push(vec![c.dim("◌ no hooks yet")]);
@@ -303,7 +320,8 @@ fn header(st: &State, c: &Ctx, v: Verdict, repeats: u8) -> Vec<Row> {
     }
     let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
     let mut row = vec![left];
-    if let Some(label) = &st.label {
+    // Claude Code's own session title beats a truncated first prompt.
+    if let Some(label) = title.map(String::from).or_else(|| st.label.clone()) {
         let used = row_width(&row);
         let room = c.inner.saturating_sub(used + 2);
         if room >= 14 {
@@ -869,6 +887,18 @@ mod tests {
         let text = to_plain(&asc);
         assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
         insta::assert_snapshot!("ascii", text);
+    }
+
+    #[test]
+    fn project_and_session_title_in_header() {
+        let (st, mut u) = multi();
+        u.project = Some("tankobon".into());
+        u.session_name = Some("next milestone".into());
+        let out = render(&st, &u, View::default(), 50, 40);
+        let first: Vec<&str> = out.lines().take(2).collect();
+        assert!(first[0].starts_with("╭─ ARI (•_•) · tankobon ─"), "{out}");
+        assert!(first[1].ends_with("milestone: next milestone │"), "{out}");
+        render(&st, &u, View::default(), 20, 10);
     }
 
     #[test]
