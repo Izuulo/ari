@@ -1,0 +1,26 @@
+---
+source: tests/fixtures.rs
+expression: out
+---
+╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
+│ ✓ DONE  milestone: Do these steps in order, using t… │
+│ ████████████████████ 4/4 tasks                       │
+├─ agents ─────────────────────────────────────────────┤
+│ ◌ main      idle · 417k tok                          │
+│ ├─✓ Explore done 2s · 32k tok · `calc.py` defines a… │
+│ └─✓ Explore done 1s · 32k tok · The file imports `a… │
+├─ errors ─────────────────────────────────────────────┤
+│ ✓ 10s  python3 test_calc.py · AssertionError         │
+│        fixed by main                                 │
+├─ usage ──────────────────────────────────────────────┤
+│ ctx —                                                │
+│ 5h  —                                                │
+│ ▲ at this pace: 5h limit in ~55m                     │
+│ 7d  —                                                │
+├─ session ────────────────────────────────────────────┤
+│ tokens  481k · 3.1k out · 1 turn                     │
+│ cache   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱ 90% hit                 │
+│         saved ≈ $0.39 vs uncached                    │
+│ time    30s active / 40s wall · 75%                  │
+│ cost    $0.12 · $0.03/task done                      │
+╰──────────────────────────────────────────────────────╯

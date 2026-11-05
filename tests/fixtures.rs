@@ -85,6 +85,7 @@ fn multi_panel() {
             let lines = panel::lines(
                 s,
                 &Usage::default(),
+                &Default::default(),
                 &Config::default(),
                 panel::View::default(),
                 *t,
@@ -112,4 +113,53 @@ fn multi_verdicts() {
         }
     }
     assert_eq!(seen, ["IDLE", "ON TRACK", "RETRYING", "ON TRACK", "DONE"]);
+}
+
+/// End of the multi run with tokens read from its real transcripts, plus cost.
+#[test]
+fn multi_panel_with_tokens() {
+    use ari_cli::{bar::Extras, config::Config, panel, state::State, tokens, usage::Usage};
+    let events = fixture("multi");
+    let mut s = State::default();
+    for ev in &events {
+        s.apply(ev);
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/multi");
+    for a in s.agents.iter_mut().filter(|a| a.id != "main") {
+        a.transcript = Some(
+            dir.join(format!("subagents/agent-{}.jsonl", a.id))
+                .to_string_lossy()
+                .into(),
+        );
+    }
+    let tmp = std::env::temp_dir().join(format!("ari-fixture-tokens-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let main = dir.join("transcript.jsonl");
+    let x = Extras {
+        tokens: Some(tokens::update(&tmp, &s, main.to_str())),
+        burn_eta: Some(55 * 60_000),
+    };
+    let u = Usage {
+        cost_usd: Some(0.12),
+        duration_ms: Some(40_000),
+        api_duration_ms: Some(30_000),
+        ..Default::default()
+    };
+    let t = events.last().unwrap().t;
+    let lines = panel::lines(
+        &s,
+        &u,
+        &x,
+        &Config::default(),
+        panel::View::default(),
+        t,
+        "12:00",
+        56,
+        60,
+        false,
+    );
+    let out = panel::to_plain(&lines);
+    assert!(out.contains("481k · 3.1k out · 1 turn"), "{out}");
+    insta::assert_snapshot!(out);
 }
