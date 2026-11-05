@@ -103,7 +103,7 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 | **Plays nice** | Chains your existing statusline instead of replacing it; `ari uninstall` restores it byte for byte |
 | **Zero tokens** | Nothing is ever injected into Claude's context |
 
-Progress comes only from Claude Code's own task list. When there isn't one, ARI says `no plan yet` rather than guess. On newer models the task tools are off unless you start Claude Code with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`.
+Progress comes only from Claude Code's own task list. When there isn't one, the statusline leaves progress out and the panel says `no plan yet`, rather than guess. On newer models the task tools are off unless you start Claude Code with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`.
 
 ## Config
 
