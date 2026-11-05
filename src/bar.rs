@@ -125,14 +125,22 @@ pub fn render(
     color: bool,
 ) -> String {
     let v = st.verdict_with(now_ms, cfg.thresholds.stuck_repeats);
-    let mut segs: Vec<String> = vec![paint(
-        color,
-        verdict_color(v),
-        &format!("ARI {} {}", v.glyph(), v.label()),
-    )];
+    // No hook events at all (plugin missing, or installed after this session began):
+    // ARI can't judge the session, so it says so instead of claiming IDLE.
+    let hooked = st.first_t > 0;
+    let mut segs: Vec<String> = vec![if hooked {
+        paint(
+            color,
+            verdict_color(v),
+            &format!("ARI {} {}", v.glyph(), v.label()),
+        )
+    } else {
+        paint(color, "2", "ARI ◌ no hooks yet")
+    }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
+    let from_hooks = |id: &str| hooked && shown(id);
 
-    if shown("tasks") {
+    if from_hooks("tasks") {
         let (done, total) = st.tasks_done();
         segs.push(if total == 0 {
             paint(color, "2", "no plan yet")
@@ -144,11 +152,11 @@ pub fn render(
         });
     }
     let agents = st.running_agents(now_ms);
-    if shown("agents") && agents > 0 {
+    if from_hooks("agents") && agents > 0 {
         let s = if agents == 1 { "" } else { "s" };
         segs.push(format!("{} {agents} agent{s}", spinner(now_ms)));
     }
-    if shown("errors") {
+    if from_hooks("errors") {
         let n = st.open_errors();
         segs.push(paint(
             color,
@@ -220,6 +228,7 @@ mod tests {
         let mut st = State {
             turn_active: true,
             turns: 1,
+            first_t: NOW - 60_000,
             ..Default::default()
         };
         st.agents.push(Agent {
@@ -303,7 +312,7 @@ mod tests {
             200,
             false,
         );
-        assert_eq!(row, "ARI ◌ IDLE │ no plan yet │ ✗ 0 │ ctx — │ 5h — │ 7d —");
+        assert_eq!(row, "ARI ◌ no hooks yet │ ctx — │ 5h — │ 7d —");
     }
 
     #[test]
