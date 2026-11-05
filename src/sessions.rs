@@ -82,7 +82,7 @@ pub fn list(root: &Path) -> Vec<SessionInfo> {
             }
         })
         .collect();
-    out.sort_by(|a, b| b.last_ms.cmp(&a.last_ms));
+    out.sort_by_key(|s| std::cmp::Reverse(s.last_ms));
     out
 }
 
