@@ -89,6 +89,58 @@ pub struct TimeSplit {
     pub tools_until: u64,
 }
 
+/// Checkbox progress of a Markdown plan the session wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanFile {
+    pub name: String,
+    pub done: usize,
+    pub total: usize,
+}
+
+/// With no task list (the task tools are off by default), the newest Markdown file this
+/// session wrote that has `- [ ]` checkboxes stands in as its plan.
+pub fn plan_file(st: &State) -> Option<PlanFile> {
+    if st.tasks_done().1 > 0 {
+        return None;
+    }
+    let mut md: Vec<_> = st
+        .edits
+        .iter()
+        .filter(|(p, _)| p.ends_with(".md"))
+        .collect();
+    md.sort_by_key(|(_, t)| std::cmp::Reverse(**t));
+    md.into_iter().take(5).find_map(|(p, _)| {
+        let (done, total) = checkboxes(&std::fs::read_to_string(p).ok()?);
+        (total > 0).then(|| PlanFile {
+            name: p.rsplit('/').next().unwrap_or(p).to_string(),
+            done,
+            total,
+        })
+    })
+}
+
+/// (checked, total) Markdown task-list boxes: `- [ ]`, `- [x]`, `* [X]`.
+pub fn checkboxes(text: &str) -> (usize, usize) {
+    let (mut done, mut total) = (0, 0);
+    for l in text.lines().map(str::trim_start) {
+        let Some(rest) = l.strip_prefix("- [").or_else(|| l.strip_prefix("* [")) else {
+            continue;
+        };
+        if rest.get(1..2) != Some("]") {
+            continue;
+        }
+        match rest.get(..1) {
+            Some(" ") => total += 1,
+            Some("x" | "X") => {
+                total += 1;
+                done += 1;
+            }
+            _ => {}
+        }
+    }
+    (done, total)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Split {
     pub claude: u64,
@@ -739,6 +791,40 @@ pub fn load_session(dir: &Path) -> State {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn checkboxes_count_task_list_items_only() {
+        let md = "- [ ] a\n  - [x] b\n* [X] c\n- [?] no\n- [] no\n[ ] no\n- [ ]";
+        assert_eq!(super::checkboxes(md), (2, 4));
+    }
+
+    #[test]
+    fn newest_markdown_plan_stands_in_for_tasks() {
+        let dir = std::env::temp_dir().join(format!("ari-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plan = dir.join("m6-richness.md");
+        let notes = dir.join("notes.md");
+        std::fs::write(&plan, "- [x] one\n- [x] two\n- [ ] three\n").unwrap();
+        std::fs::write(&notes, "no boxes here\n").unwrap();
+        let mut st = super::State::default();
+        st.edits.insert(plan.to_string_lossy().into(), 1);
+        st.edits.insert(notes.to_string_lossy().into(), 2); // newer, but no checkboxes
+        st.edits
+            .insert(dir.join("a.rs").to_string_lossy().into(), 3);
+        let got = super::plan_file(&st);
+        st.tasks.push(super::Task::default());
+        let with_tasks = super::plan_file(&st);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            got,
+            Some(super::PlanFile {
+                name: "m6-richness.md".into(),
+                done: 2,
+                total: 3
+            })
+        );
+        assert_eq!(with_tasks, None, "a real task list wins");
+    }
+
     use super::*;
     use crate::event::{TaskRef, Todo};
 

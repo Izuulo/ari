@@ -22,6 +22,8 @@ pub struct Extras {
     pub conflicts: Vec<crate::conflicts::Conflict>,
     /// `ari recap --since prompt`, built only while the panel shows it.
     pub recap: Option<crate::recap::Recap>,
+    /// A Markdown plan's checkboxes, when there's no task list.
+    pub plan: Option<crate::state::PlanFile>,
 }
 
 /// Forecasts are only worth showing this close.
@@ -212,6 +214,16 @@ pub fn render(
         segs.push(format!(
             "{} {done}/{total}",
             cells(done as f64 / total as f64, 10, '█', '░')
+        ));
+    } else if from_hooks("tasks")
+        && let Some(p) = &x.plan
+    {
+        segs.push(format!(
+            "{} {} {}/{}",
+            crate::event::truncate(p.name.trim_end_matches(".md"), 24),
+            cells(p.done as f64 / p.total as f64, 10, '█', '░'),
+            p.done,
+            p.total
         ));
     }
     let agents = st.running_agents(now_ms);
@@ -579,6 +591,16 @@ mod tests {
             false,
         );
         assert!(!row.contains("plan") && !row.contains('░'), "{row}");
+        let x = Extras {
+            plan: Some(crate::state::PlanFile {
+                name: "m6-richness.md".into(),
+                done: 3,
+                total: 15,
+            }),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &x, &Config::default(), NOW, 200, false);
+        assert!(row.contains("m6-richness ██░░░░░░░░ 3/15"), "{row}");
     }
 
     #[test]

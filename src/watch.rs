@@ -106,6 +106,7 @@ impl App {
             let now = hook::now_ms();
             self.x.burn_eta = burn::projection(&burn::load(dir, now), now);
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
+            self.x.plan = state::plan_file(&self.st);
         }
     }
 
@@ -221,6 +222,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
                 .and_then(|t| tokens::transcript_age(&t, now)),
             conflicts: crate::conflicts::cached(root, &s.dir, now),
+            plan: state::plan_file(&st),
             ..Default::default()
         };
         // The row's own columns and the header carry these; "✗ 0" is noise in a list.

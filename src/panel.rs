@@ -211,6 +211,7 @@ pub fn lines(
             rows: {
                 let mut rows = header(
                     st,
+                    x.plan.as_ref(),
                     u.session_name.as_deref(),
                     x.looks_active(),
                     &c,
@@ -532,6 +533,7 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
 
 fn header(
     st: &State,
+    plan: Option<&crate::state::PlanFile>,
     title: Option<&str>,
     active: bool,
     c: &Ctx,
@@ -590,7 +592,20 @@ fn header(
     }
     let (done, total) = st.tasks_done();
     if total == 0 {
-        rows.push(vec![c.dim("no plan yet")]);
+        match plan {
+            Some(p) => {
+                let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
+                let n = c.inner.saturating_sub(tail.width()).min(20);
+                rows.push(vec![
+                    c.span(
+                        cells(p.done as f64 / p.total as f64, n, '█', '░'),
+                        Style::new().fg(Color::Cyan),
+                    ),
+                    Span::raw(tail),
+                ]);
+            }
+            None => rows.push(vec![c.dim("no plan yet")]),
+        }
     } else {
         let tail = format!(" {done}/{total} tasks");
         let n = c.inner.saturating_sub(tail.width()).min(20);
