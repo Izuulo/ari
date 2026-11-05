@@ -419,6 +419,16 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         }?;
         (l.total() > 0).then(|| format!(" · {} tok", fmt_tokens(l.total())))
     };
+    let model = |id: &str| {
+        let t = x.tokens.as_ref()?;
+        let l = if id == "main" {
+            Some(&t.main)
+        } else {
+            t.agents.get(id)
+        }?;
+        let m = l.last_model.as_deref().filter(|m| *m != "unknown")?;
+        Some(c.dim(format!("{} · ", crate::tokens::short_model(m))))
+    };
     let Some(main) = st.agents.first() else {
         return vec![vec![c.dim("no activity yet")]];
     };
@@ -458,6 +468,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Style::new().add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
+        model("main").unwrap_or_default(),
         Span::raw(main_act),
         c.dim(tok("main").unwrap_or_default()),
     ]];
@@ -515,6 +526,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Span::raw(" "),
             Span::raw(pad(&a.kind)),
             Span::raw(" "),
+            model(&a.id).unwrap_or_default(),
             Span::raw(text),
         ]);
     }
@@ -1008,6 +1020,48 @@ mod tests {
             )),
             "{out}"
         );
+    }
+
+    #[test]
+    fn model_per_agent() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (st, u) = multi();
+        let led = |m: &str| Ledger {
+            output: 1,
+            last_model: Some(m.into()),
+            ..Default::default()
+        };
+        let sub = st.agents[1].id.clone();
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert(sub, led("claude-haiku-5-5"));
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: led("claude-opus-5-5-20261001"),
+                agents,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        let row = |name: &str| {
+            out.lines()
+                .find(|l| l.contains(name))
+                .unwrap_or("")
+                .to_string()
+        };
+        assert!(row(" main ").contains(" opus-5-5 · $ cargo test"), "{out}");
+        assert!(row(&st.agents[1].kind).contains("haiku-5-5 · "), "{out}");
     }
 
     #[test]

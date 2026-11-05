@@ -36,6 +36,8 @@ pub struct Ledger {
     pub last_hit: Option<f64>,
     pub prev_hit: Option<f64>,
     pub by_model: BTreeMap<String, ModelTokens>,
+    /// Model of the latest counted response.
+    pub last_model: Option<String>,
 }
 
 impl Ledger {
@@ -103,11 +105,23 @@ impl Ledger {
             self.last_hit = Some(t.cache_read as f64 / side as f64);
         }
         let model = m.get("model").and_then(Value::as_str).unwrap_or("unknown");
+        self.last_model = Some(model.to_string());
         let e = self.by_model.entry(model.to_string()).or_default();
         e.input += t.input;
         e.cache_write += t.cache_write;
         e.cache_read += t.cache_read;
         e.output += t.output;
+    }
+}
+
+/// `claude-opus-5-5-20261001` → `opus-5-5`; other providers' names pass through.
+pub fn short_model(id: &str) -> String {
+    let id = id.strip_prefix("claude-").unwrap_or(id);
+    match id.rsplit_once('-') {
+        Some((head, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => {
+            head.into()
+        }
+        _ => id.into(),
     }
 }
 
@@ -342,6 +356,24 @@ mod tests {
             key(&c),
             "second pass adds nothing"
         );
+    }
+
+    #[test]
+    fn model_names() {
+        assert_eq!(short_model("claude-opus-5-5-20261001"), "opus-5-5");
+        assert_eq!(short_model("claude-haiku-5-5"), "haiku-5-5");
+        assert_eq!(short_model("deepseek-chat"), "deepseek-chat");
+        let line = |id: &str, model: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"{id}","model":"{model}","usage":{{"input_tokens":1,"output_tokens":1}}}}}}"#
+            )
+        };
+        let l = ledger_from(&format!(
+            "{}\n{}\n",
+            line("a", "claude-opus-5-5"),
+            line("b", "claude-haiku-5-5")
+        ));
+        assert_eq!(l.last_model.as_deref(), Some("claude-haiku-5-5"));
     }
 
     #[test]
