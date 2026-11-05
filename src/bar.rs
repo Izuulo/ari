@@ -22,6 +22,8 @@ pub struct Extras {
     pub conflicts: Vec<crate::conflicts::Conflict>,
     /// `ari recap --since prompt`, built only while the panel shows it.
     pub recap: Option<crate::recap::Recap>,
+    /// A Markdown plan's checkboxes, when there's no task list.
+    pub plan: Option<crate::state::PlanFile>,
 }
 
 /// Forecasts are only worth showing this close.
@@ -160,6 +162,17 @@ fn short_dur(ms: u64) -> String {
     }
 }
 
+/// `2026-11-05-m6-richness` → `m6-richness`: dated plan names waste the row.
+fn undated(name: &str) -> &str {
+    let b = name.as_bytes();
+    let dated = b.len() > 11
+        && [4, 7, 10].iter().all(|&i| b[i] == b'-')
+        && [0, 1, 2, 3, 5, 6, 8, 9]
+            .iter()
+            .all(|&i| b[i].is_ascii_digit());
+    if dated { &name[11..] } else { name }
+}
+
 pub fn render(
     st: &State,
     u: &Usage,
@@ -212,6 +225,16 @@ pub fn render(
         segs.push(format!(
             "{} {done}/{total}",
             cells(done as f64 / total as f64, 10, '█', '░')
+        ));
+    } else if from_hooks("tasks")
+        && let Some(p) = &x.plan
+    {
+        segs.push(format!(
+            "{} {} {}/{}",
+            crate::event::truncate(undated(p.name.trim_end_matches(".md")), 24),
+            cells(p.done as f64 / p.total as f64, 10, '█', '░'),
+            p.done,
+            p.total
         ));
     }
     let agents = st.running_agents(now_ms);
@@ -579,6 +602,16 @@ mod tests {
             false,
         );
         assert!(!row.contains("plan") && !row.contains('░'), "{row}");
+        let x = Extras {
+            plan: Some(crate::state::PlanFile {
+                name: "2026-11-05-m6-richness.md".into(),
+                done: 3,
+                total: 15,
+            }),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &x, &Config::default(), NOW, 200, false);
+        assert!(row.contains("m6-richness ██░░░░░░░░ 3/15"), "{row}");
     }
 
     #[test]

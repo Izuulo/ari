@@ -42,6 +42,7 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
             }
             let st = state::load_session(&dir);
             x.compacts_in = burn::forecast(&dir, &st, cfg);
+            x.plan = state::plan_file(&st);
             if let Some(root) = paths::state_root() {
                 x.conflicts = crate::conflicts::cached(&root, &dir, now);
             }
