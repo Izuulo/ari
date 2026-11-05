@@ -25,6 +25,18 @@ pub struct Usage {
     pub api_duration_ms: Option<u64>,
     pub lines_added: Option<u64>,
     pub lines_removed: Option<u64>,
+    /// Open pull request (or GitLab merge request) for the current branch.
+    pub pr: Option<Pr>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Pr {
+    pub number: u64,
+    /// `approved`, `pending`, `changes_requested` or `draft`, as Claude Code sends it.
+    pub review_state: Option<String>,
+    /// A GitLab merge request rather than a GitHub PR.
+    pub mr: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
@@ -71,6 +83,11 @@ pub fn from_value(v: &Value) -> Usage {
         api_duration_ms: u("/cost/total_api_duration_ms"),
         lines_added: u("/cost/total_lines_added"),
         lines_removed: u("/cost/total_lines_removed"),
+        pr: u("/pr/number").map(|number| Pr {
+            number,
+            review_state: s("/pr/review_state"),
+            mr: s("/pr/kind").as_deref() == Some("mr"),
+        }),
     }
 }
 
@@ -121,6 +138,28 @@ mod tests {
             (u.project.as_deref(), u.session_name.as_deref()),
             (Some("tankobon"), Some("next milestone"))
         );
+    }
+
+    #[test]
+    fn pull_request() {
+        let pr = |v| from_value(&v).pr;
+        assert_eq!(
+            pr(json!({"pr": {"number": 14, "url": "https://x/14", "review_state": "approved"}})),
+            Some(Pr {
+                number: 14,
+                review_state: Some("approved".into()),
+                mr: false
+            })
+        );
+        assert_eq!(
+            pr(json!({"pr": {"number": 3, "kind": "mr"}})),
+            Some(Pr {
+                number: 3,
+                review_state: None,
+                mr: true
+            })
+        );
+        assert_eq!(pr(json!({})), None);
     }
 
     #[test]
