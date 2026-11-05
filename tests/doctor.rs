@@ -52,7 +52,7 @@ fn all_good() {
     );
     let (out, text) = doctor(&d, true);
     assert!(out.status.success(), "{text}");
-    assert_eq!(text.matches('✓').count(), 5, "{text}");
+    assert_eq!(text.matches('✓').count(), 6, "{text}");
     assert!(text.contains("All good."));
 }
 
