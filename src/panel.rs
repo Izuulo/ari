@@ -938,12 +938,32 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> R
     ]
 }
 
+/// The last 12 samples that carry a value, as (t, value), oldest first.
+fn recent(
+    samples: &[crate::burn::Sample],
+    f: fn(&crate::burn::Sample) -> Option<f64>,
+) -> Vec<(u64, f64)> {
+    let mut v: Vec<_> = samples
+        .iter()
+        .rev()
+        .filter_map(|s| Some((s.t, f(s)?)))
+        .take(12)
+        .collect();
+    v.reverse();
+    v
+}
+
 #[allow(clippy::too_many_arguments)]
 fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
-    let ctx_tail = match (u.ctx_used, u.ctx_size) {
+    let mut ctx_tail = match (u.ctx_used, u.ctx_size) {
         (Some(used), Some(size)) => format!("  {}/{}", tokens_k(used), tokens_k(size)),
         _ => String::new(),
     };
+    let ctxs = recent(&x.samples, |s| s.ctx);
+    if ctxs.len() >= 3 {
+        let v: Vec<f64> = ctxs.iter().map(|p| p.1).collect();
+        ctx_tail += &format!(" {}", crate::bar::spark(&v));
+    }
     let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
@@ -1168,6 +1188,18 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
         Some(cost) if done > 0 => format!("${cost:.2} · ${:.2}/task done", cost / done as f64),
         Some(cost) => format!("${cost:.2}"),
         None => "—".into(),
+    };
+    let costs = recent(&x.samples, |s| s.cost);
+    let hours = costs
+        .last()
+        .zip(costs.first())
+        .map_or(0.0, |(l, f)| (l.0 - f.0) as f64 / 3.6e6);
+    let cost = if costs.len() >= 3 && hours > 0.0 {
+        let rate = ((costs[costs.len() - 1].1 - costs[0].1) / hours).max(0.0);
+        let v: Vec<f64> = costs.iter().map(|p| p.1).collect();
+        format!("{cost} · ${rate:.2}/h {}", crate::bar::spark(&v))
+    } else {
+        cost
     };
     rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
@@ -1508,6 +1540,51 @@ mod tests {
             ..Default::default()
         };
         (st, x)
+    }
+
+    #[test]
+    fn trends() {
+        let mk = |n: usize| Extras {
+            samples: (0..n as u64)
+                .map(|i| crate::burn::Sample {
+                    t: i * 1_800_000,
+                    ctx: Some(10.0 * (i + 1) as f64),
+                    cost: Some(1.0 + i as f64),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let u = Usage {
+            cost_usd: Some(3.0),
+            ctx_pct: Some(30.0),
+            ..Default::default()
+        };
+        let go = |x: &Extras| {
+            to_plain(&lines(
+                &State::default(),
+                &u,
+                x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                100,
+                40,
+                false,
+            ))
+        };
+        let out = go(&mk(3));
+        let ctx = out.lines().find(|l| l.contains("ctx")).unwrap();
+        assert!(
+            ctx.contains(&format!("30% {}", crate::bar::spark(&[10., 20., 30.]))),
+            "{ctx}"
+        );
+        let cost = out.lines().find(|l| l.contains("cost")).unwrap();
+        assert!(cost.contains("$3.00 · $2.00/h ▁▄█"), "{cost}");
+        let out = go(&mk(2));
+        assert!(!out.contains("/h"), "{out}");
+        assert!(!out.contains('▁'), "{out}");
     }
 
     fn render_x(st: &State, x: &Extras, w: u16, h: u16) -> String {
