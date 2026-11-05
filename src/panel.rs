@@ -12,6 +12,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub struct View {
     pub expand_errors: bool,
     pub expand_agents: bool,
+    /// Show the recap (`Extras::recap`) in place of the sections.
+    pub recap: bool,
 }
 
 type Row = Vec<Span<'static>>;
@@ -243,6 +245,18 @@ pub fn lines(
             rows: session(st, u, x, cfg, &c),
         },
     ];
+    if view.recap
+        && let Some(text) = &x.recap
+    {
+        sections.truncate(1);
+        sections.push(Section {
+            title: Some("recap (r to close)"),
+            rows: text
+                .lines()
+                .map(|l| vec![Span::raw(l.to_string())])
+                .collect(),
+        });
+    }
     collapse(&mut sections, height as usize);
 
     let border = c.dim("");
@@ -1192,6 +1206,52 @@ mod tests {
             format!("│ {:<66} │", "⚠ a.rs also in tankobon #bbbb"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn recap_view_replaces_sections() {
+        let (st, u) = multi();
+        let x = Extras {
+            recap: Some("recap     ~/proj · since your last prompt\ndone      2 tasks\n            ✓ scaffold the very long task name here\n".into()),
+            ..Default::default()
+        };
+        let view = View {
+            recap: true,
+            ..View::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            40,
+            30,
+            false,
+        ));
+        for l in out.lines() {
+            assert!(l.width() <= 40, "{l}");
+        }
+        assert!(out.contains("├─ recap (r to close) "), "{out}");
+        assert!(out.contains("│ done      2 tasks"), "{out}");
+        assert!(!out.contains("├─ agents"), "{out}");
+        insta::assert_snapshot!("recap_view", out);
+        // Recap toggled on before it's built: the normal sections stay.
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            40,
+            30,
+            false,
+        ));
+        assert!(out.contains("├─ agents"), "{out}");
     }
 
     #[test]

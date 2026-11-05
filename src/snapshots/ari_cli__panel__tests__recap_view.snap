@@ -1,0 +1,13 @@
+---
+source: src/panel.rs
+expression: out
+---
+╭─ ARI (•_•) ────────────────── 12:41 ─╮
+│ ● ON TRACK  milestone: auth refactor │
+│ ███████████░░░░░░░░░ 4/7 tasks       │
+│ ▸ now: hook up token refresh         │
+├─ recap (r to close) ─────────────────┤
+│ recap     ~/proj · since your last … │
+│ done      2 tasks                    │
+│             ✓ scaffold the very lon… │
+╰──────────────────────────────────────╯

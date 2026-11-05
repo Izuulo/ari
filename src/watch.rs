@@ -76,7 +76,15 @@ impl App {
             mtime(&dir.join("events.jsonl")),
             mtime(&dir.join("usage.json")),
         );
-        if now != self.mtimes {
+        let changed = now != self.mtimes;
+        // Built on demand: a full replay plus `git log` is too much for every refresh.
+        if !self.view.recap {
+            self.x.recap = None;
+        } else if changed || self.x.recap.is_none() {
+            let r = crate::recap::build(dir, crate::recap::Since::Prompt, hook::now_ms());
+            self.x.recap = Some(crate::recap::text_or_quiet(&r));
+        }
+        if changed {
             self.mtimes = now;
             self.st = state::load_session(dir);
             self.usage = load_usage(dir);
@@ -334,6 +342,20 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
+/// Apply a key to the view; true means quit.
+fn key(view: &mut View, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Esc if view.recap => view.recap = false,
+        KeyCode::Esc => return true,
+        KeyCode::Char('e') => view.expand_errors ^= true,
+        KeyCode::Char('a') => view.expand_agents ^= true,
+        KeyCode::Char('r') => view.recap ^= true,
+        _ => {}
+    }
+    false
+}
+
 /// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment.
 pub type Frame = (Vec<Line<'static>>, bool, Alignment);
 
@@ -363,14 +385,30 @@ fn tui_loop(
         if let Event::Key(k) = event::read()?
             && k.kind == KeyEventKind::Press
         {
-            match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-                KeyCode::Char('e') => view.expand_errors ^= true,
-                KeyCode::Char('a') => view.expand_agents ^= true,
-                KeyCode::Tab => tab = true,
-                _ => {}
+            if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+                return Ok(());
+            }
+            if k.code == KeyCode::Tab {
+                tab = true;
+            } else if key(&mut view, k.code) {
+                return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn recap_key_and_escape() {
+        let mut v = View::default();
+        assert!(!key(&mut v, KeyCode::Char('r')));
+        assert!(v.recap);
+        assert!(!key(&mut v, KeyCode::Esc), "esc closes the recap first");
+        assert!(!v.recap);
+        assert!(key(&mut v, KeyCode::Esc), "then quits");
+        assert!(key(&mut v, KeyCode::Char('q')));
     }
 }

@@ -54,7 +54,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 ╰──────────────────────────────────────────────────────╯
 ```
 
-Keys: `q` quit, `e` more errors, `a` all agents, `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
+Keys: `q` quit, `e` more errors, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
 
 ### What a session got done: `ari recap`
 
