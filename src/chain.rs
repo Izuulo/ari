@@ -24,8 +24,27 @@ pub fn run_all(cmds: &[String], stdin: &[u8], timeout: Duration) -> Vec<Vec<u8>>
         .collect();
     running
         .into_iter()
-        .filter_map(|r| finish(r, deadline))
+        .filter_map(|r| match finish(r, deadline) {
+            Outcome::Output(o) => Some(o),
+            _ => None,
+        })
         .collect()
+}
+
+/// How one chained command went. `ari doctor` reports it; rendering only keeps `Output`.
+#[derive(Debug, PartialEq)]
+pub enum Outcome {
+    Output(Vec<u8>),
+    /// Ran fine and printed nothing (e.g. Orca's statusline outside Orca).
+    Empty,
+    Failed,
+    TimedOut,
+    CantStart,
+}
+
+pub fn probe(cmd: &str, stdin: &[u8], timeout: Duration) -> Outcome {
+    let deadline = Instant::now() + timeout;
+    spawn(cmd, stdin).map_or(Outcome::CantStart, |r| finish(r, deadline))
 }
 
 fn spawn(cmd: &str, stdin: &[u8]) -> Option<Running> {
@@ -59,21 +78,23 @@ fn spawn(cmd: &str, stdin: &[u8]) -> Option<Running> {
     Some(Running { child, buf, eof })
 }
 
-fn finish(mut r: Running, deadline: Instant) -> Option<Vec<u8>> {
+fn finish(mut r: Running, deadline: Instant) -> Outcome {
     let tick = Duration::from_millis(2);
     let status = loop {
-        if let Some(s) = r.child.try_wait().ok()? {
-            break s;
+        match r.child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {}
+            Err(_) => return Outcome::Failed,
         }
         if Instant::now() >= deadline {
             let _ = r.child.kill();
             let _ = r.child.wait();
-            return None;
+            return Outcome::TimedOut;
         }
         thread::sleep(tick);
     };
     if !status.success() {
-        return None;
+        return Outcome::Failed;
     }
     // A backgrounded grandchild can hold stdout open; take what arrived by the deadline.
     while !r.eof.load(Ordering::Acquire) && Instant::now() < deadline {
@@ -83,8 +104,12 @@ fn finish(mut r: Running, deadline: Instant) -> Option<Vec<u8>> {
     if out.last() == Some(&b'\n') {
         out.pop();
     }
-    // A statusline that prints nothing (e.g. Orca's outside Orca) must not add a blank row.
-    (!out.is_empty()).then_some(out)
+    // A statusline that prints nothing must not add a blank row.
+    if out.is_empty() {
+        Outcome::Empty
+    } else {
+        Outcome::Output(out)
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +172,15 @@ mod tests {
     #[test]
     fn empty_output_adds_no_row() {
         assert_eq!(run(&["cat >/dev/null", "true", "echo x"], "{}"), vec!["x"]);
+    }
+
+    #[test]
+    fn probe_outcomes() {
+        let t = Duration::from_millis(300);
+        assert_eq!(probe("printf hi", b"", t), Outcome::Output(b"hi".to_vec()));
+        assert_eq!(probe("cat >/dev/null", b"{}", t), Outcome::Empty);
+        assert_eq!(probe("exit 3", b"", t), Outcome::Failed);
+        assert_eq!(probe("sleep 2", b"", t), Outcome::TimedOut);
     }
 
     #[test]
