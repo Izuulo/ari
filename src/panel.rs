@@ -272,7 +272,8 @@ pub fn lines(
             rows: turns(st, x, &rc, now),
         },
     ];
-    sections.retain(|s| s.title != Some("turns") || !s.rows.is_empty());
+    // A section with nothing to say is left out rather than drawn with dashes.
+    sections.retain(|s| s.title.is_none() || !s.rows.is_empty());
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -725,11 +726,9 @@ fn header(
                 Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )
         } else {
-            c.dim("– not tracked")
+            c.dim("– not tracked: began before ARI")
         }]);
-        rows.push(vec![c.dim(
-            "started before ARI's hooks loaded: start a new session, or /reload-plugins",
-        )]);
+        rows.push(vec![c.dim("start a new session, or /reload-plugins")]);
         return rows;
     }
     let left = if v == Verdict::Done && st.tests_failing() {
@@ -1114,17 +1113,15 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     rows
 }
 
-fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> Row {
-    let Some(p) = pct else {
-        return vec![Span::raw(format!("{name:<4}")), c.dim("—")];
-    };
+fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> Option<Row> {
+    let p = pct?;
     let label = format!(" {p:.0}%{tail}");
     let n = c.inner.saturating_sub(4 + label.width()).min(20);
-    vec![
+    Some(vec![
         Span::raw(format!("{name:<4}")),
         c.span(cells(p / 100.0, n, '▰', '▱'), level(p, cfg)),
         Span::raw(label),
-    ]
+    ])
 }
 
 const TREND_MS: u64 = 30 * 60_000;
@@ -1179,7 +1176,15 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
     if let Some(t) = trend(&recent(&x.samples, |s| s.ctx)) {
         ctx_tail += &format!(" {t}");
     }
-    let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
+    let mut rows = Vec::new();
+    // The warning that matters most leads the section.
+    if let Some(eta) = x.burn_eta {
+        rows.push(vec![c.span(
+            format!("▲ at this pace: 5h limit in ~{}", age(eta)),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]);
+    }
+    rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
         rows.push(vec![c.span(
@@ -1199,20 +1204,14 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
             }
         })
     };
-    rows.push(meter(
+    rows.extend(meter(
         "5h",
         u.five_h.map(|l| l.pct),
         lim(u.five_h).unwrap_or_default(),
         cfg,
         c,
     ));
-    if let Some(eta) = x.burn_eta {
-        rows.push(vec![c.span(
-            format!("▲ at this pace: 5h limit in ~{}", age(eta)),
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )]);
-    }
-    rows.push(meter(
+    rows.extend(meter(
         "7d",
         u.seven_d.map(|l| l.pct),
         lim(u.seven_d).unwrap_or_default(),
@@ -1301,40 +1300,41 @@ fn cache_suffix(u: &Usage, now: u64) -> String {
     out
 }
 
+/// Cost, tokens and cache, tests, time: a short ledger, cost first.
 fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
     let mut rows = Vec::new();
+    if let Some(cost) = u.cost_usd {
+        let (done, _) = st.tasks_done();
+        let mut text = format!("${cost:.2}");
+        if done > 0 {
+            text += &format!(" · ${:.2}/task done", cost / done as f64);
+        }
+        let costs = recent(&x.samples, |s| s.cost);
+        if let Some(r) = rate(&costs) {
+            text += &format!(" · ${r:.2}/h");
+        }
+        if let Some(t) = trend(&costs) {
+            text += &format!(" {t}");
+        }
+        rows.push(vec![c.dim("cost    "), Span::raw(text)]);
+    }
     if let Some(t) = &x.tokens
         && t.total().total() > 0
     {
         let total = t.total();
-        let turns = if st.turns == 1 {
-            "1 turn".into()
-        } else {
-            format!("{} turns", st.turns)
-        };
-        rows.push(vec![
-            c.dim("tokens  "),
-            Span::raw(format!(
-                "{} · {} out · {turns}",
-                fmt_tokens(total.total()),
-                fmt_tokens(total.output)
-            )),
-        ]);
+        let mut text = format!(
+            "{} · {} out",
+            fmt_tokens(total.total()),
+            fmt_tokens(total.output)
+        );
         if let Some(hit) = total.hit() {
-            let label = format!(" {:.0}% hit{}", hit * 100.0, cache_suffix(u, now));
-            let n = c.inner.saturating_sub(8 + label.width()).min(20);
-            rows.push(vec![
-                c.dim("cache   "),
-                c.span(cells(hit, n, '▰', '▱'), Style::new().fg(Color::Cyan)),
-                Span::raw(label),
-            ]);
+            text += &format!(" · cache {:.0}% hit", hit * 100.0);
+            if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
+                text += &format!(", saved ${saved:.2}");
+            }
+            text += &cache_suffix(u, now);
         }
-        if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
-            rows.push(vec![
-                c.dim("        "),
-                Span::raw(format!("saved ≈ ${saved:.2} vs uncached")),
-            ]);
-        }
+        rows.push(vec![c.dim("tokens  "), Span::raw(text)]);
         if let Some((from, to)) = t.drop_alert() {
             rows.push(vec![c.span(
                 format!(
@@ -1389,30 +1389,14 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
             ("tools", sp.tools),
             ("you", sp.waiting),
             ("idle", sp.idle),
-            ("other", sp.other),
         ] {
-            // Unattributed time only shows once it is big enough to matter.
-            if pct(ms) > 0.0 && (name != "other" || pct(ms) >= 5.0) {
+            // Unattributed time is left out: it explains nothing.
+            if pct(ms) > 0.0 {
                 text += &format!(" · {name} {:.0}%", pct(ms));
             }
         }
         rows.push(vec![c.dim("time    "), Span::raw(text)]);
     }
-    let (done, _) = st.tasks_done();
-    let cost = match u.cost_usd {
-        Some(cost) if done > 0 => format!("${cost:.2} · ${:.2}/task done", cost / done as f64),
-        Some(cost) => format!("${cost:.2}"),
-        None => "—".into(),
-    };
-    let costs = recent(&x.samples, |s| s.cost);
-    let mut cost = cost;
-    if let Some(r) = rate(&costs) {
-        cost += &format!(" · ${r:.2}/h");
-    }
-    if let Some(t) = trend(&costs) {
-        cost += &format!(" {t}");
-    }
-    rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
 }
 
@@ -2068,15 +2052,13 @@ mod tests {
     }
 
     #[test]
-    fn time_split_other_only_from_5_percent() {
+    fn time_split_leaves_out_unattributed_time() {
         let (mut st, mut u) = multi();
         st.time.tools_ms = 22_000;
         u.duration_ms = Some(100_000);
         u.api_duration_ms = Some(61_000);
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(out.contains("tools 22% · other 17%"), "{out}");
-        u.api_duration_ms = Some(75_000);
-        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("claude 61% · tools 22%"), "{out}");
         assert!(!out.contains("other"), "{out}");
     }
 
@@ -2159,12 +2141,15 @@ mod tests {
         ));
         let r: String = out
             .lines()
-            .find(|l| l.contains("cache   "))
+            .find(|l| l.contains("tokens  "))
             .unwrap()
             .trim_end_matches('│')
             .trim_end()
             .to_string();
-        r
+        // What follows the hit rate, minus the savings: just the cache's own notes.
+        let tail = r.split_once("% hit").unwrap().1;
+        let notes = tail.find(" · ").map_or("", |i| &tail[i..]);
+        format!("% hit{notes}")
     }
 
     #[test]

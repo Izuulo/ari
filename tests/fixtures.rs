@@ -161,6 +161,6 @@ fn multi_panel_with_tokens() {
         false,
     );
     let out = panel::to_plain(&lines);
-    assert!(out.contains("481k · 3.1k out · 1 turn"), "{out}");
+    assert!(out.contains("481k · 3.1k out · cache 90% hit"), "{out}");
     insta::assert_snapshot!(out);
 }
