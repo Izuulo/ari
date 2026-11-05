@@ -36,6 +36,9 @@ struct App {
     x: bar::Extras,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
+    /// When the recap view was last built, and whether events arrived since.
+    recap_built: Option<Instant>,
+    recap_dirty: bool,
     last_verdict: Option<Verdict>,
     color: bool,
 }
@@ -76,7 +79,22 @@ impl App {
             mtime(&dir.join("events.jsonl")),
             mtime(&dir.join("usage.json")),
         );
-        if now != self.mtimes {
+        let changed = now != self.mtimes;
+        self.recap_dirty |= now.0 != self.mtimes.0;
+        // Built on demand: a full replay plus `git log` is too much for every refresh.
+        if !self.view.recap {
+            self.x.recap = None;
+            self.recap_built = None;
+        } else if recap_due(self.recap_built, self.recap_dirty) {
+            self.x.recap = Some(crate::recap::build(
+                dir,
+                crate::recap::Since::Prompt,
+                hook::now_ms(),
+            ));
+            self.recap_built = Some(Instant::now());
+            self.recap_dirty = false;
+        }
+        if changed {
             self.mtimes = now;
             self.st = state::load_session(dir);
             self.usage = load_usage(dir);
@@ -87,6 +105,7 @@ impl App {
             ));
             let now = hook::now_ms();
             self.x.burn_eta = burn::projection(&burn::load(dir, now), now);
+            self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
         }
     }
 
@@ -121,6 +140,9 @@ impl App {
             return waiting(&self.mode);
         }
         let mut x = self.x.clone();
+        if let Some(d) = &self.dir {
+            x.conflicts = crate::conflicts::cached(&self.root, d, now);
+        }
         x.transcript_age_ms = self
             .dir
             .as_deref()
@@ -175,10 +197,6 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         Style::new().add_modifier(Modifier::BOLD),
     ))];
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    // The label column already names the project.
-    let mut cfg = cfg.clone();
-    cfg.hide.push("project".into());
-    let cfg = &cfg;
     // Fixed-width label column: project, then Claude Code's title for the session.
     let col = (width as usize / 3).clamp(12, 36);
     for s in live {
@@ -203,6 +221,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
                 .and_then(|t| tokens::transcript_age(&t, now)),
+            conflicts: crate::conflicts::cached(root, &s.dir, now),
             ..Default::default()
         };
         let row = bar::render(
@@ -293,6 +312,8 @@ pub fn run(args: &[String]) -> ! {
         x: bar::Extras::default(),
         mtimes: (None, None),
         picked_at: None,
+        recap_built: None,
+        recap_dirty: false,
         last_verdict: None,
         color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()),
     };
@@ -333,6 +354,20 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
+/// Apply a key to the view; true means quit.
+fn key(view: &mut View, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('q') => return true,
+        KeyCode::Esc if view.recap => view.recap = false,
+        KeyCode::Esc => return true,
+        KeyCode::Char('e') => view.expand_errors ^= true,
+        KeyCode::Char('a') => view.expand_agents ^= true,
+        KeyCode::Char('r') => view.recap ^= true,
+        _ => {}
+    }
+    false
+}
+
 /// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment.
 pub type Frame = (Vec<Line<'static>>, bool, Alignment);
 
@@ -362,14 +397,50 @@ fn tui_loop(
         if let Event::Key(k) = event::read()?
             && k.kind == KeyEventKind::Press
         {
-            match k.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-                KeyCode::Char('e') => view.expand_errors ^= true,
-                KeyCode::Char('a') => view.expand_agents ^= true,
-                KeyCode::Tab => tab = true,
-                _ => {}
+            if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+                return Ok(());
+            }
+            if k.code == KeyCode::Tab {
+                tab = true;
+            } else if key(&mut view, k.code) {
+                return Ok(());
             }
         }
+    }
+}
+
+/// Build the recap view now: never built yet, or new events and the last build is 5 s old.
+fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
+    built.is_none_or(|b| dirty && b.elapsed() >= Duration::from_secs(5))
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn recap_rebuilds_only_on_new_events_and_not_too_often() {
+        use std::time::Duration;
+        let now = Instant::now();
+        assert!(recap_due(None, false), "first build");
+        assert!(!recap_due(Some(now), false), "nothing new");
+        assert!(
+            !recap_due(Some(now), true),
+            "new events, but built just now"
+        );
+        let old = now.checked_sub(Duration::from_secs(6)).unwrap();
+        assert!(recap_due(Some(old), true));
+        assert!(!recap_due(Some(old), false));
+    }
+
+    #[test]
+    fn recap_key_and_escape() {
+        let mut v = View::default();
+        assert!(!key(&mut v, KeyCode::Char('r')));
+        assert!(v.recap);
+        assert!(!key(&mut v, KeyCode::Esc), "esc closes the recap first");
+        assert!(!v.recap);
+        assert!(key(&mut v, KeyCode::Esc), "then quits");
+        assert!(key(&mut v, KeyCode::Char('q')));
     }
 }

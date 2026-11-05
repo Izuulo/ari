@@ -2,6 +2,7 @@
 
 use crate::bar::{Extras, cells, countdown, fmt_tokens, spinner};
 use crate::config::Config;
+use crate::recap::Recap;
 use crate::state::{AgentStatus, ErrorRec, State, Verdict};
 use crate::usage::{Limit, Usage};
 use ratatui::style::{Color, Modifier, Style};
@@ -12,6 +13,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub struct View {
     pub expand_errors: bool,
     pub expand_agents: bool,
+    /// Show the recap (`Extras::recap`) in place of the sections.
+    pub recap: bool,
 }
 
 type Row = Vec<Span<'static>>;
@@ -68,6 +71,18 @@ fn level(pct: f64, cfg: &Config) -> Style {
     } else {
         Color::Green
     })
+}
+
+/// `/Users/me/ari/` → `~/ari`.
+pub fn tilde(dir: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    let home = std::env::var("HOME").unwrap_or_default();
+    match dir.strip_prefix(home.trim_end_matches('/')) {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
+        _ => dir.to_string(),
+    }
 }
 
 /// Local wall-clock `HH:MM`.
@@ -193,14 +208,26 @@ pub fn lines(
     let mut sections = vec![
         Section {
             title: None,
-            rows: header(
-                st,
-                u.session_name.as_deref(),
-                x.looks_active(),
-                &c,
-                v,
-                cfg.thresholds.stuck_repeats,
-            ),
+            rows: {
+                let mut rows = header(
+                    st,
+                    u.session_name.as_deref(),
+                    x.looks_active(),
+                    &c,
+                    v,
+                    cfg.thresholds.stuck_repeats,
+                );
+                if let Some(s) = crate::conflicts::summary(&x.conflicts) {
+                    rows.insert(
+                        1.min(rows.len()),
+                        vec![c.span(
+                            s,
+                            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )],
+                    );
+                }
+                rows
+            },
         },
         Section {
             title: Some("agents"),
@@ -219,11 +246,20 @@ pub fn lines(
             rows: session(st, u, x, cfg, &c),
         },
     ];
+    if view.recap
+        && let Some(r) = &x.recap
+    {
+        sections.truncate(1);
+        sections.push(Section {
+            title: Some("recap (r to close)"),
+            rows: vec![vec![c.dim(format!("since {}", r.since))]],
+        });
+        sections.extend(recap_sections(r, &c, false));
+    }
     collapse(&mut sections, height as usize);
 
     let border = c.dim("");
     let bstyle = border.style;
-    let mut out = Vec::new();
     // ╭─ ARI (•_•) ──── 12:41 ─╮
     let mut title = vec![
         Span::styled("╭─ ", bstyle),
@@ -237,23 +273,35 @@ pub fn lines(
         ));
     }
     let right = format!(" {clock} ─╮");
-    // Which project this panel is following, so several sessions can't be confused.
-    if let Some(p) = &u.project {
+    // Which repo this panel is following, so several sessions can't be confused.
+    let mut tail = Vec::new();
+    if let Some(d) = &u.dir {
         let room = w.saturating_sub(row_width(&title) + right.width() + 5);
         if room >= 4 {
-            title.push(Span::styled(" · ", bstyle));
-            title.extend(fit(
-                vec![c.span(p.clone(), Style::new().add_modifier(Modifier::BOLD))],
+            tail.push(Span::raw(" "));
+            tail.extend(fit(
+                vec![c.span(
+                    format!("cd {}", tilde(d)),
+                    Style::new().add_modifier(Modifier::BOLD),
+                )],
                 room,
             ));
+            tail.push(Span::styled(" ·", bstyle));
         }
     }
     title.push(Span::raw(" "));
-    let fill = w.saturating_sub(row_width(&title) + right.width());
+    let fill = w.saturating_sub(row_width(&title) + row_width(&tail) + right.width());
     title.push(Span::styled("─".repeat(fill), bstyle));
+    title.extend(tail);
     title.push(Span::styled(right, bstyle));
-    out.push(Line::from(fit(title, w)));
+    frame(title, sections, &c, w, cfg.ascii)
+}
 
+/// The box around the sections: `title` is the full top row, then `├─ name ─┤` headers,
+/// `│ row │` lines and the bottom edge.
+fn frame(title: Row, sections: Vec<Section>, c: &Ctx, w: usize, ascii: bool) -> Vec<Line<'static>> {
+    let bstyle = c.dim("").style;
+    let mut out = vec![Line::from(fit(title, w))];
     for sec in sections {
         if let Some(t) = sec.title {
             let head = format!("├─ {t} ");
@@ -277,11 +325,183 @@ pub fn lines(
         format!("╰{}╯", "─".repeat(w.saturating_sub(2))),
         bstyle,
     )));
-    if cfg.ascii {
+    if ascii {
         crate::ascii::map_lines(out)
     } else {
         out
     }
+}
+
+/// `ari recap` as a box: `╭─ ARI recap · since start ── cd ~/proj ─╮`, then the sections.
+pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<'static>> {
+    let w = (width as usize).max(12);
+    let c = Ctx {
+        color,
+        inner: w.saturating_sub(4),
+    };
+    let bstyle = c.dim("").style;
+    let mut title = vec![
+        Span::styled("╭─ ", bstyle),
+        c.span("ARI recap", Style::new().add_modifier(Modifier::BOLD)),
+        c.dim(format!(" · since {} ", r.since)),
+    ];
+    let right = " ─╮";
+    let mut tail = Vec::new();
+    let room = w.saturating_sub(row_width(&title) + right.width() + 2);
+    if !r.dir.is_empty() && room >= 4 {
+        tail = fit(
+            vec![c.span(
+                format!(" cd {}", tilde(&r.dir)),
+                Style::new().add_modifier(Modifier::BOLD),
+            )],
+            room,
+        );
+    }
+    let fill = w.saturating_sub(row_width(&title) + row_width(&tail) + right.width());
+    title.push(Span::styled("─".repeat(fill), bstyle));
+    title.extend(tail);
+    title.push(Span::styled(right, bstyle));
+    frame(title, recap_sections(r, &c, true), &c, w, ascii)
+}
+
+/// The recap's sections; `header` adds the verdict and milestone rows (the panel has its own).
+fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
+    let mut out = Vec::new();
+    if header {
+        let mut rows =
+            vec![vec![c.span(
+                r.verdict.clone(),
+                Style::new().add_modifier(Modifier::BOLD),
+            )]];
+        if let Some(t) = &r.title {
+            rows.push(vec![c.dim(format!("milestone: {t}"))]);
+        }
+        out.push(Section { title: None, rows });
+    }
+    if r.events == 0 {
+        out.push(Section {
+            title: None,
+            rows: vec![vec![
+                c.dim(format!("nothing happened since {}", local_hhmm(r.from))),
+            ]],
+        });
+        return out;
+    }
+    let ok = |t: String| vec![c.span("✓ ", Style::new().fg(Color::Green)), Span::raw(t)];
+    let total = r.done.len() + r.open.len();
+    if total > 0 {
+        let mut rows = vec![vec![
+            c.span(
+                cells(r.done.len() as f64 / total as f64, 20, '█', '░'),
+                Style::new().fg(Color::Green),
+            ),
+            Span::raw(format!(" {}/{total} tasks", r.done.len())),
+        ]];
+        rows.extend(r.done.iter().map(|t| ok(t.clone())));
+        rows.extend(
+            r.open
+                .iter()
+                .map(|t| vec![c.dim("◻ "), Span::raw(t.clone())]),
+        );
+        out.push(Section {
+            title: Some("tasks"),
+            rows,
+        });
+    }
+    if r.errors_hit + r.fixed.len() + r.still_open.len() > 0 {
+        let mut rows = vec![vec![Span::raw(format!(
+            "{} hit · {} fixed · {} open",
+            r.errors_hit,
+            r.fixed.len(),
+            r.still_open.len()
+        ))]];
+        rows.extend(
+            r.fixed
+                .iter()
+                .map(|(what, by)| ok(format!("{what} · fixed by {by}"))),
+        );
+        rows.extend(r.still_open.iter().map(|what| {
+            vec![
+                c.span("✗ ", Style::new().fg(Color::Red)),
+                Span::raw(what.clone()),
+            ]
+        }));
+        out.push(Section {
+            title: Some("errors"),
+            rows,
+        });
+    }
+    if !r.files.is_empty() {
+        let mut rows: Vec<Row> = r
+            .files
+            .iter()
+            .take(8)
+            .map(|(f, n)| {
+                let mut row = vec![Span::raw(f.clone())];
+                if *n > 1 {
+                    row.push(c.dim(format!(" ×{n}")));
+                }
+                row
+            })
+            .collect();
+        if r.files.len() > 8 {
+            rows.push(vec![c.dim(format!("and {} more", r.files.len() - 8))]);
+        }
+        out.push(Section {
+            title: Some("files"),
+            rows,
+        });
+    }
+    if !r.commits.is_empty() {
+        let rows = r
+            .commits
+            .iter()
+            .map(|line| match line.split_once(' ') {
+                Some((hash, msg)) => vec![
+                    c.span(hash.to_string(), Style::new().fg(Color::Yellow)),
+                    Span::raw(format!(" {msg}")),
+                ],
+                None => vec![Span::raw(line.clone())],
+            })
+            .collect();
+        out.push(Section {
+            title: Some("commits"),
+            rows,
+        });
+    }
+    let mut rows = Vec::new();
+    let mut row = |label: &str, value: String| {
+        rows.push(vec![c.dim(format!("{label:<9}")), Span::raw(value)]);
+    };
+    if let Some(t) = crate::recap::tests_line(r) {
+        row("tests", t);
+    }
+    if let Some(t) = crate::recap::split_line(r) {
+        row("time", t);
+    }
+    let mut cost = Vec::new();
+    if let Some(v) = r.cost {
+        cost.push(format!("${v:.2}"));
+    }
+    if let Some((a, d)) = r.lines {
+        cost.push(format!("+{a} −{d} lines"));
+    }
+    if !cost.is_empty() {
+        row("cost", cost.join(" · "));
+    }
+    if !r.models.is_empty() {
+        row("models", r.models.join(", "));
+    }
+    if let Some(m) = crate::recap::mistakes_line(r) {
+        row("mistakes", m);
+    }
+    if !rows.is_empty() {
+        out.push(Section {
+            title: Some("session"),
+            rows,
+        });
+    }
+    out
 }
 
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
@@ -333,7 +553,14 @@ fn header(
         ]);
         return rows;
     }
-    let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
+    let left = if v == Verdict::Done && st.tests_failing() {
+        c.span(
+            format!("{} {} · tests failing", v.glyph(), v.label()),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))
+    };
     let mut row = vec![left];
     // Claude Code's own session title beats a truncated first prompt.
     if let Some(label) = title.map(String::from).or_else(|| st.label.clone()) {
@@ -394,11 +621,27 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         }?;
         (l.total() > 0).then(|| format!(" · {} tok", fmt_tokens(l.total())))
     };
+    let model = |id: &str| {
+        let t = x.tokens.as_ref()?;
+        let l = if id == "main" {
+            Some(&t.main)
+        } else {
+            t.agents.get(id)
+        }?;
+        let m = l.last_model.as_deref().filter(|m| *m != "unknown")?;
+        Some(c.dim(format!("{} · ", crate::tokens::short_model(m))))
+    };
     let Some(main) = st.agents.first() else {
         return vec![vec![c.dim("no activity yet")]];
     };
     let subs: Vec<_> = st.agents.iter().skip(1).collect();
-    let mut done: Vec<_> = subs.iter().filter(|a| a.done).collect();
+    // Finished agents worth showing: did some work, and finished in the last 10 minutes.
+    let mut done: Vec<_> = subs
+        .iter()
+        .filter(|a| a.done)
+        .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
+        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 10 * 60_000)
+        .collect();
     done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
     let shown: Vec<_> = subs
@@ -433,6 +676,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Style::new().add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
+        model("main").unwrap_or_default(),
         Span::raw(main_act),
         c.dim(tok("main").unwrap_or_default()),
     ]];
@@ -490,6 +734,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Span::raw(" "),
             Span::raw(pad(&a.kind)),
             Span::raw(" "),
+            model(&a.id).unwrap_or_default(),
             Span::raw(text),
         ]);
     }
@@ -501,6 +746,24 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
 }
 
 fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
+    let mut rows = errors_list(st, c, view, now);
+    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
+    if time > 0 || st.reread > 0 {
+        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
+        let s = if failed == 1 { "" } else { "s" };
+        let mut parts = vec![format!("{failed} failed call{s}"), dur(time)];
+        if st.reread > 0 {
+            let s = if st.reread == 1 { "" } else { "s" };
+            parts.push(format!("{} re-read{s}", st.reread));
+        }
+        rows.push(vec![
+            c.dim(format!("cost of mistakes: {}", parts.join(" · "))),
+        ]);
+    }
+    rows
+}
+
+fn errors_list(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     if st.errors.is_empty() {
         return vec![vec![c.dim("no errors")]];
     }
@@ -563,6 +826,13 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         _ => String::new(),
     };
     let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
+    if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
+        let s = if n == 1 { "" } else { "s" };
+        rows.push(vec![c.span(
+            format!("    compacts in ~{n} turn{s}"),
+            Style::new().fg(Color::Yellow),
+        )]);
+    }
     if let Some(t) = st.compacted_at {
         rows.push(vec![c.dim(format!("    ⟲ compacted {}", local_hhmm(t)))]);
     }
@@ -643,20 +913,61 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )]);
         }
     }
-    if let (Some(wall), Some(api)) = (u.duration_ms, u.api_duration_ms) {
-        let pct = if wall > 0 {
-            api as f64 * 100.0 / wall as f64
-        } else {
-            0.0
-        };
-        rows.push(vec![
-            c.dim("time    "),
-            Span::raw(format!(
-                "{} active / {} wall · {pct:.0}%",
-                dur(api),
-                dur(wall)
-            )),
-        ]);
+    if let Some(last) = st.test_runs.back() {
+        let mut row = vec![
+            c.dim("tests   "),
+            if last.fail > 0 {
+                c.span(
+                    format!("✗ {}/{}", last.fail, last.pass + last.fail),
+                    Style::new().fg(Color::Red),
+                )
+            } else {
+                c.span(format!("✓ {}", last.pass), Style::new().fg(Color::Green))
+            },
+        ];
+        let runs: Vec<_> = st.test_runs.iter().rev().take(10).rev().collect();
+        if runs.len() > 1 {
+            let lo = runs.iter().map(|r| r.pass).min().unwrap_or(0);
+            let hi = runs.iter().map(|r| r.pass).max().unwrap_or(0);
+            row.push(Span::raw(" · "));
+            for r in &runs {
+                let i = if hi > lo {
+                    (r.pass - lo) * 7 / (hi - lo)
+                } else {
+                    7
+                };
+                let bar = "▁▂▃▄▅▆▇█".chars().nth(i as usize).unwrap_or('█');
+                let style = if r.fail > 0 {
+                    Style::new().fg(Color::Red)
+                } else {
+                    Style::new()
+                };
+                row.push(c.span(bar.to_string(), style));
+            }
+            row.push(c.dim(format!(" last {} runs", runs.len())));
+        }
+        rows.push(row);
+    }
+    let wall = u
+        .duration_ms
+        .unwrap_or(st.last_t.saturating_sub(st.first_t));
+    if wall > 0 {
+        let sp = st.split(wall, u.api_duration_ms);
+        // API time can overlap tool time; percentages are of whichever is larger.
+        let total = wall.max(sp.claude + sp.tools + sp.waiting + sp.idle) as f64;
+        let pct = |ms: u64| (ms as f64 * 100.0 / total).round();
+        let mut text = dur(wall);
+        for (name, ms) in [
+            ("claude", sp.claude),
+            ("tools", sp.tools),
+            ("you", sp.waiting),
+            ("idle", sp.idle),
+        ] {
+            if pct(ms) > 0.0 {
+                text += &format!(" · {name} {:.0}%", pct(ms));
+            }
+        }
+        rows.push(vec![c.dim("time    "), Span::raw(text)]);
     }
     let (done, _) = st.tasks_done();
     let cost = match u.cost_usd {
@@ -871,6 +1182,306 @@ mod tests {
     }
 
     #[test]
+    fn test_history_row_and_done_failing() {
+        use crate::state::TestRun;
+        let (mut st, u) = multi();
+        for (pass, fail) in [(10, 0), (40, 0), (69, 0), (67, 2)] {
+            st.test_runs.push_back(TestRun { t: NOW, pass, fail });
+        }
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(out.contains("tests   ✗ 2/69 · ▁▄█▇ last 4 runs"), "{out}");
+        st.turn_active = false;
+        st.background = 0;
+        st.agents.iter_mut().for_each(|a| a.done = true);
+        st.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        st.errors.clear();
+        st.recent.clear();
+        st.last_main_result = None;
+        assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn time_split_row() {
+        let (mut st, mut u) = multi();
+        st.time.tools_ms = 22_000;
+        st.time.waiting_ms = 9_000;
+        st.time.idle_ms = 8_000;
+        u.duration_ms = Some(100_000);
+        u.api_duration_ms = Some(61_000);
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains("time    1m40s · claude 61% · tools 22% · you 9% · idle 8%"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn mistake_cost_footer() {
+        let (mut st, u) = multi();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("cost of mistakes"), "{out}");
+        st.errors[0].retries = 1;
+        st.errors[0].time_ms = 5_000;
+        st.reread = 1;
+        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains(&format!(
+                "cost of mistakes: {failed} failed calls · 5s · 1 re-read"
+            )),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn model_per_agent() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (st, u) = multi();
+        let led = |m: &str| Ledger {
+            output: 1,
+            last_model: Some(m.into()),
+            ..Default::default()
+        };
+        let sub = st.agents[1].id.clone();
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert(sub, led("claude-haiku-5-5"));
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: led("claude-opus-5-5-20261001"),
+                agents,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        let row = |name: &str| {
+            out.lines()
+                .find(|l| l.contains(name))
+                .unwrap_or("")
+                .to_string()
+        };
+        assert!(row(" main ").contains(" opus-5-5 · $ cargo test"), "{out}");
+        assert!(row(&st.agents[1].kind).contains("haiku-5-5 · "), "{out}");
+    }
+
+    #[test]
+    fn compaction_forecast_in_usage() {
+        let (st, u) = multi();
+        let x = Extras {
+            compacts_in: Some(4),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert!(out.contains("│     compacts in ~4 turns"), "{out}");
+        let later = Extras {
+            compacts_in: Some(11),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &later,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert!(!out.contains("compacts in"), "{out}");
+    }
+
+    #[test]
+    fn hides_instant_and_old_finished_agents() {
+        use crate::state::Agent;
+        let (mut st, u) = multi();
+        let done = |id: &str, calls: u32, started: u64, ended: u64| Agent {
+            id: id.into(),
+            kind: id.into(),
+            calls,
+            started,
+            last_t: ended,
+            ended_t: Some(ended),
+            done: true,
+            result: Some(format!("{id} result")),
+            ..Default::default()
+        };
+        st.agents.retain(|a| a.id == "main");
+        st.agents.push(done("instant", 0, NOW - 5_000, NOW - 5_000));
+        st.agents
+            .push(done("oldone", 9, NOW - 30 * 60_000, NOW - 20 * 60_000));
+        st.agents
+            .push(done("recent", 4, NOW - 90_000, NOW - 60_000));
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("recent result"), "{out}");
+        assert!(!out.contains("instant result"), "{out}");
+        assert!(!out.contains("oldone result"), "{out}");
+        assert!(out.contains("… 2 more done (a)"), "{out}");
+        let all = View {
+            expand_agents: true,
+            ..View::default()
+        };
+        let out = render(&st, &u, all, 70, 60);
+        assert!(
+            out.contains("instant result") && out.contains("oldone result"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn conflict_under_header() {
+        let (st, u) = multi();
+        let x = Extras {
+            conflicts: vec![crate::conflicts::Conflict {
+                path: "/x/a.rs".into(),
+                other: "tankobon #bbbb".into(),
+            }],
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert_eq!(
+            out.lines().nth(2).unwrap_or(""),
+            format!("│ {:<66} │", "⚠ a.rs also in tankobon #bbbb"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn recap_view_replaces_sections() {
+        let (st, u) = multi();
+        let x = Extras {
+            recap: Some(sample_recap()),
+            ..Default::default()
+        };
+        let view = View {
+            recap: true,
+            ..View::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            40,
+            30,
+            false,
+        ));
+        for l in out.lines() {
+            assert!(l.width() <= 40, "{l}");
+        }
+        assert!(out.contains("├─ recap (r to close) "), "{out}");
+        assert!(out.contains("│ ✓ scaffold"), "{out}");
+        assert!(out.contains("├─ errors "), "{out}");
+        assert!(!out.contains("├─ agents"), "{out}");
+        insta::assert_snapshot!("recap_view", out);
+        // Recap toggled on before it's built: the normal sections stay.
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            view,
+            NOW,
+            "12:41",
+            40,
+            30,
+            false,
+        ));
+        assert!(out.contains("├─ agents"), "{out}");
+    }
+
+    fn sample_recap() -> crate::recap::Recap {
+        crate::recap::Recap {
+            dir: "/x/proj".into(),
+            title: Some("auth refactor".into()),
+            since: "start".into(),
+            events: 40,
+            verdict: "✓ DONE".into(),
+            done: vec!["scaffold".into(), "build".into()],
+            open: vec!["write docs".into()],
+            errors_hit: 1,
+            fixed: vec![("cargo test".into(), "main".into())],
+            tests: Some((
+                Some(crate::state::TestRun {
+                    t: 1,
+                    pass: 58,
+                    fail: 0,
+                }),
+                crate::state::TestRun {
+                    t: 2,
+                    pass: 71,
+                    fail: 0,
+                },
+            )),
+            files: vec![("src/a.rs".into(), 2), ("src/b.rs".into(), 1)],
+            commits: vec!["abc1234 feat: retry the token refresh".into()],
+            wall_ms: 21 * 60_000,
+            cost: Some(2.69),
+            lines: Some((156, 23)),
+            models: vec!["opus-5-5 (main)".into(), "haiku-5-5 (2 agents)".into()],
+            failed_calls: 1,
+            failed_ms: 2_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn recap_box() {
+        let r = sample_recap();
+        let out = recap_lines(&r, 60, false, false);
+        for l in &out {
+            assert!(l.width() <= 60, "{:?}", to_plain(std::slice::from_ref(l)));
+        }
+        let text = to_plain(&out);
+        insta::assert_snapshot!("recap_box", text);
+        let narrow = to_plain(&recap_lines(&r, 30, false, false));
+        assert!(narrow.lines().all(|l| l.width() <= 30), "{narrow}");
+        let asc = to_plain(&recap_lines(&r, 60, false, true));
+        assert!(asc.starts_with("+- ARI recap"), "{asc}");
+    }
+
+    #[test]
     fn ascii_keeps_layout() {
         let (st, u) = multi();
         let uni = lines(
@@ -913,11 +1524,12 @@ mod tests {
     #[test]
     fn project_and_session_title_in_header() {
         let (st, mut u) = multi();
-        u.project = Some("tankobon".into());
+        u.dir = Some("/x/tankobon/".into());
         u.session_name = Some("next milestone".into());
         let out = render(&st, &u, View::default(), 50, 40);
         let first: Vec<&str> = out.lines().take(2).collect();
-        assert!(first[0].starts_with("╭─ ARI (•_•) · tankobon ─"), "{out}");
+        assert!(first[0].starts_with("╭─ ARI (•_•) ─"), "{out}");
+        assert!(first[0].contains("─ cd /x/tankobon · "), "{out}");
         assert!(first[1].ends_with("milestone: next milestone │"), "{out}");
         render(&st, &u, View::default(), 20, 10);
     }
@@ -937,5 +1549,8 @@ mod tests {
         assert_eq!(sig_words(&e("StopFailure:rate_limit")), "api rate_limit");
         assert_eq!(sig_words(&e("WebFetch")), "webfetch");
         assert_eq!(local_hhmm(NOW).len(), 5);
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(tilde(&format!("{home}/ari/")), "~/ari");
+        assert_eq!(tilde(&format!("{home}x/ari")), format!("{home}x/ari"));
     }
 }

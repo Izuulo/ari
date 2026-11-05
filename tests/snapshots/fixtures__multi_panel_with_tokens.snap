@@ -6,12 +6,13 @@ expression: out
 │ ✓ DONE  milestone: Do these steps in order, using t… │
 │ ████████████████████ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
-│ ◌ main      idle · 417k tok                          │
-│ ├─✓ Explore done 2s · 32k tok · `calc.py` defines a… │
-│ └─✓ Explore done 1s · 32k tok · The file imports `a… │
+│ ◌ main      haiku-5-5 · idle · 417k tok              │
+│ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · `calc.p… │
+│ └─✓ Explore haiku-5-5 · done 1s · 32k tok · The fil… │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✓ 10s  python3 test_calc.py · AssertionError         │
 │        fixed by main                                 │
+│ cost of mistakes: 1 failed call · 1s                 │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
@@ -21,6 +22,6 @@ expression: out
 │ tokens  481k · 3.1k out · 1 turn                     │
 │ cache   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱ 90% hit                 │
 │         saved ≈ $0.39 vs uncached                    │
-│ time    30s active / 40s wall · 75%                  │
+│ time    40s · claude 75% · tools 10%                 │
 │ cost    $0.12 · $0.03/task done                      │
 ╰──────────────────────────────────────────────────────╯

@@ -25,7 +25,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 **A row in your statusline**, always visible:
 
 ```
-ARI ● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
+● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ✓ 70 tests │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
 ```
 
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
@@ -54,7 +54,29 @@ ARI ● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗
 ╰──────────────────────────────────────────────────────╯
 ```
 
-Keys: `q` quit, `e` more errors, `a` all agents, `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
+Keys: `q` quit, `e` more errors, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
+
+### What a session got done: `ari recap`
+
+```
+recap     ~/proj · auth refactor · since start
+verdict   ✓ DONE
+done      4 tasks
+            ✓ scaffold
+            ✓ build
+errors    1 hit · 1 fixed · 0 open
+tests     58 passed → 71 passed
+files     2 edited
+            calc.py ×2
+            test_calc.py
+commits   1
+            e885f9c feat: retry the token refresh
+time      21m · claude 64% · tools 22% · idle 14%
+cost      $2.69 · +156 −23 lines
+models    opus-5-5 (main), haiku-5-5 (2 agents)
+```
+
+`--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
 
 ### The verdict
 
@@ -89,7 +111,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, ARI 
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-hide = ["cost"]             # compact segments to drop: tasks agents errors ctx 5h 7d cost tokens
+hide = ["cost"]             # compact segments to drop: conflicts tasks agents errors tests ctx 5h 7d cost tokens
 face = true                 # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere
@@ -104,6 +126,7 @@ timeout_ms = 300            # a chained command slower than this is skipped
 ctx_warn = 60               # context % turns yellow
 ctx_crit = 80               # and red
 stuck_repeats = 3           # repeats before STUCK
+compact_pct = 90            # context % where auto-compaction happens, for the forecast
 
 [prices.claude-opus-5-5]    # optional, $ per million tokens, for the cache-savings estimate
 input = 0.0

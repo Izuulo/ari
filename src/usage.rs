@@ -11,6 +11,8 @@ pub struct Usage {
     pub model: Option<String>,
     /// Repo name, else the project folder's name.
     pub project: Option<String>,
+    /// The project folder's full path.
+    pub dir: Option<String>,
     /// Claude Code's title for the session ("next milestone").
     pub session_name: Option<String>,
     pub ctx_pct: Option<f64>,
@@ -42,20 +44,22 @@ pub fn from_value(v: &Value) -> Usage {
             resets_at: u(&format!("/rate_limits/{name}/resets_at")).unwrap_or(0),
         })
     };
+    let dir = s("/workspace/project_dir")
+        .or_else(|| s("/workspace/current_dir"))
+        .or_else(|| s("/cwd"));
     Usage {
         session_id: s("/session_id"),
         transcript_path: s("/transcript_path"),
         model: s("/model/display_name").or_else(|| s("/model/id")),
         project: s("/workspace/repo/name").or_else(|| {
-            let dir = s("/workspace/project_dir")
-                .or_else(|| s("/workspace/current_dir"))
-                .or_else(|| s("/cwd"))?;
-            dir.trim_end_matches('/')
+            dir.as_deref()?
+                .trim_end_matches('/')
                 .rsplit('/')
                 .next()
                 .filter(|n| !n.is_empty())
                 .map(String::from)
         }),
+        dir,
         session_name: s("/session_name"),
         ctx_pct: f("/context_window/used_percentage"),
         ctx_size: u("/context_window/context_window_size"),
@@ -93,6 +97,7 @@ mod tests {
             Some("ari"),
             "folder name without a repo"
         );
+        assert_eq!(u.dir.as_deref(), Some("/home/u/ari/"));
         assert_eq!(
             (u.ctx_pct, u.ctx_used, u.ctx_size),
             (Some(71.0), Some(142000), Some(200000))

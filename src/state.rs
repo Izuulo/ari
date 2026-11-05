@@ -2,14 +2,14 @@
 
 use crate::event::Event;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -23,6 +23,13 @@ const NOT_LOOPS: [&str; 6] = [
     "ToolSearch",
 ];
 /// Notification types that mean Claude is waiting on the user (docs/DECISIONS.md D5).
+/// Prompts where Claude is blocked on you mid-turn; `idle_prompt` is idle time, not this.
+const WAITS_ON_YOU: [&str; 3] = [
+    "permission_prompt",
+    "elicitation_dialog",
+    "elicitation_url_dialog",
+];
+
 const NEEDS_YOU: [&str; 5] = [
     "permission_prompt",
     "idle_prompt",
@@ -53,6 +60,49 @@ pub struct State {
     pub ended: bool,
     /// Background tasks (shells, agents) still running at the last Stop.
     pub background: u32,
+    /// Recent test runs, oldest first.
+    pub test_runs: VecDeque<TestRun>,
+    pub time: TimeSplit,
+    /// "agent\tpath" → input hashes read since the file last changed.
+    pub reads: BTreeMap<String, Vec<u64>>,
+    /// Reads repeating an identical earlier read of an unchanged file.
+    pub reread: u32,
+    /// Absolute path → last successful edit time, for conflicts across sessions.
+    pub edits: BTreeMap<String, u64>,
+    /// Start times of the last real prompts (turns).
+    pub prompts: VecDeque<u64>,
+}
+
+/// Wall time not spent by Claude itself, folded from events.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TimeSplit {
+    /// Main agent's tool time; subagents run in parallel and would double-count.
+    pub tools_ms: u64,
+    /// A permission or input prompt was open.
+    pub waiting_ms: u64,
+    /// Between Stop and the next prompt.
+    pub idle_ms: u64,
+    pub waiting_since: Option<u64>,
+    pub idle_since: Option<u64>,
+    /// End of the latest counted main-agent tool call, so overlapping calls count once.
+    pub tools_until: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Split {
+    pub claude: u64,
+    pub tools: u64,
+    pub waiting: u64,
+    pub idle: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
+pub struct TestRun {
+    pub t: u64,
+    pub pass: u32,
+    pub fail: u32,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -94,6 +144,8 @@ pub struct ErrorRec {
     pub resolved_t: Option<u64>,
     pub resolved_by: Option<String>,
     pub turn: u32,
+    /// Σ duration of this error's failed calls.
+    pub time_ms: u64,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -162,6 +214,14 @@ impl State {
                 ..Default::default()
             });
         }
+        if let Some(since) = self.time.waiting_since.take() {
+            // Approving fires no hook; a Post event's tool started when the wait ended.
+            let end = match ev.e.as_str() {
+                "PostToolUse" | "PostToolUseFailure" => ev.t.saturating_sub(ev.dur.unwrap_or(0)),
+                _ => ev.t,
+            };
+            self.time.waiting_ms += end.saturating_sub(since);
+        }
         let aid = ev.a.as_deref().unwrap_or("main");
         if ev.a.is_some() || ev.tool.is_some() {
             let a = self.agent_mut(aid, ev);
@@ -169,10 +229,17 @@ impl State {
         }
         match ev.e.as_str() {
             "UserPromptSubmit" => {
+                if let Some(since) = self.time.idle_since.take() {
+                    self.time.idle_ms += ev.t.saturating_sub(since);
+                }
                 let msg = ev.msg.as_deref().unwrap_or("");
                 self.needs_you = None;
                 self.start_turn();
                 if !msg.starts_with("<task-notification>") {
+                    self.prompts.push_back(ev.t);
+                    if self.prompts.len() > 6 {
+                        self.prompts.pop_front();
+                    }
                     self.turns += 1;
                     self.turn_failed = false;
                     if self.label.is_none() && !msg.is_empty() {
@@ -199,6 +266,23 @@ impl State {
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
+                if ev.a.is_none() {
+                    let t = &mut self.time;
+                    let start = ev.t.saturating_sub(ev.dur.unwrap_or(0)).max(t.tools_until);
+                    t.tools_ms += ev.t.saturating_sub(start);
+                    t.tools_until = t.tools_until.max(ev.t);
+                }
+                self.track_reads(ev, aid);
+                if let Some((pass, fail)) = ev.tests {
+                    self.test_runs.push_back(TestRun {
+                        t: ev.t,
+                        pass,
+                        fail,
+                    });
+                    if self.test_runs.len() > 20 {
+                        self.test_runs.pop_front();
+                    }
+                }
                 self.agent_mut(aid, ev).running_since = None;
                 self.tool_result(ev, aid);
                 self.update_tasks(ev);
@@ -218,6 +302,13 @@ impl State {
                 a.running_since = None;
             }
             "Notification" => {
+                if ev
+                    .kind
+                    .as_deref()
+                    .is_some_and(|k| WAITS_ON_YOU.contains(&k))
+                {
+                    self.time.waiting_since = Some(ev.t);
+                }
                 if ev.kind.as_deref().is_some_and(|k| NEEDS_YOU.contains(&k)) {
                     self.needs_you = Some(
                         ev.msg
@@ -241,6 +332,7 @@ impl State {
                 self.background = ev.bg.unwrap_or(0);
                 self.agents[0].running_since = None;
                 if self.background == 0 {
+                    self.time.idle_since.get_or_insert(ev.t);
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
@@ -350,6 +442,7 @@ impl State {
         {
             e.retries += 1;
             e.last_t = ev.t;
+            e.time_ms += ev.dur.unwrap_or(0);
             e.msg = msg;
             e.kind = ev.kind.clone();
             return;
@@ -363,6 +456,7 @@ impl State {
             first_t: ev.t,
             last_t: ev.t,
             turn: self.turns,
+            time_ms: ev.dur.unwrap_or(0),
             ..Default::default()
         });
     }
@@ -502,6 +596,45 @@ impl State {
             return Verdict::Retrying;
         }
         Verdict::OnTrack
+    }
+
+    fn track_reads(&mut self, ev: &Event, aid: &str) {
+        let Some((tool, path)) = ev.sig.as_deref().and_then(|s| s.split_once(':')) else {
+            return;
+        };
+        match tool {
+            "Read" if ev.ok == Some(true) => {
+                let seen = self.reads.entry(format!("{aid}\t{path}")).or_default();
+                let h = ev.h.unwrap_or(0);
+                if seen.contains(&h) {
+                    self.reread += 1;
+                } else {
+                    seen.push(h);
+                }
+            }
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" if ev.ok == Some(true) => {
+                self.edits.insert(path.to_string(), ev.t);
+                self.reads.retain(|k, _| !k.ends_with(&format!("\t{path}")));
+            }
+            _ => {}
+        }
+    }
+
+    /// Wall time split four ways. Claude is the API time when known, else what's left.
+    pub fn split(&self, wall_ms: u64, api_ms: Option<u64>) -> Split {
+        let t = &self.time;
+        let others = t.tools_ms + t.waiting_ms + t.idle_ms;
+        Split {
+            claude: api_ms.unwrap_or(wall_ms.saturating_sub(others)),
+            tools: t.tools_ms,
+            waiting: t.waiting_ms,
+            idle: t.idle_ms,
+        }
+    }
+
+    /// The latest test run had failures.
+    pub fn tests_failing(&self) -> bool {
+        self.test_runs.back().is_some_and(|r| r.fail > 0)
     }
 
     pub fn tasks_done(&self) -> (usize, usize) {
@@ -845,6 +978,186 @@ mod tests {
         assert_eq!(s.verdict(0), Verdict::Idle);
         let s = run(&[prompt("go"), stop(0)]);
         assert_eq!(s.verdict(0), Verdict::Idle);
+    }
+
+    #[test]
+    fn time_split() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let post = |t: u64, dur: u64, agent: Option<&str>| Event {
+            t,
+            dur: Some(dur),
+            a: agent.map(Into::into),
+            ..tool("PostToolUse", "Bash:make", Some(true))
+        };
+        let needs = Event {
+            kind: Some("permission_prompt".into()),
+            ..ev("Notification")
+        };
+        let s = run(&[
+            at(0, prompt("go")),
+            post(5_000, 5_000, None),
+            post(9_000, 4_000, Some("sub1")),
+            at(10_000, needs),
+            at(40_000, call("main", "Bash", 1, "$ make")),
+            at(50_000, stop(0)),
+            at(110_000, prompt("again")),
+        ]);
+        assert_eq!(
+            (s.time.tools_ms, s.time.waiting_ms, s.time.idle_ms),
+            (5_000, 30_000, 60_000),
+            "subagent tool time not counted"
+        );
+        let sp = s.split(120_000, Some(20_000));
+        assert_eq!(
+            (sp.claude, sp.tools, sp.waiting, sp.idle),
+            (20_000, 5_000, 30_000, 60_000)
+        );
+        let sp = s.split(120_000, None);
+        assert_eq!(sp.claude, 25_000, "remainder when api time is unknown");
+        assert_eq!(s.split(50_000, None).claude, 0, "never negative");
+    }
+
+    #[test]
+    fn mistake_cost() {
+        let fail = |dur| Event {
+            dur: Some(dur),
+            ..tool("PostToolUseFailure", "Bash:make", Some(false))
+        };
+        let s = run(&[prompt("go"), fail(2_000), fail(3_000)]);
+        assert_eq!(s.errors[0].time_ms, 5_000);
+        let read = |agent: &str, path: &str| Event {
+            a: (agent != "main").then(|| agent.to_string()),
+            tool: Some("Read".into()),
+            sig: Some(format!("Read:{path}")),
+            h: Some(path.len() as u64),
+            ok: Some(true),
+            ..ev("PostToolUse")
+        };
+        let edit = |path: &str| Event {
+            tool: Some("Edit".into()),
+            sig: Some(format!("Edit:{path}")),
+            ok: Some(true),
+            ..ev("PostToolUse")
+        };
+        assert_eq!(run(&[read("main", "/a"), read("main", "/a")]).reread, 1);
+        assert_eq!(
+            run(&[read("main", "/a"), edit("/a"), read("main", "/a")]).reread,
+            0,
+            "the file changed in between"
+        );
+        assert_eq!(run(&[read("main", "/a"), read("sub1", "/a")]).reread, 0);
+    }
+
+    #[test]
+    fn prompt_times_kept() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let mut evs = vec![at(1, prompt("<task-notification>x"))];
+        evs.extend((0..10).map(|i| at(10 + i, prompt("go"))));
+        let s = run(&evs);
+        assert_eq!(s.prompts.len(), 6, "capped");
+        assert_eq!(s.prompts.back(), Some(&19));
+        assert!(!s.prompts.contains(&1), "synthetic prompts are not turns");
+    }
+
+    #[test]
+    fn idle_prompt_is_not_waiting_on_you() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let idle = Event {
+            kind: Some("idle_prompt".into()),
+            ..ev("Notification")
+        };
+        let s = run(&[
+            at(0, prompt("go")),
+            at(10_000, stop(0)),
+            at(70_000, idle),
+            at(130_000, prompt("back")),
+        ]);
+        assert_eq!((s.time.waiting_ms, s.time.idle_ms), (0, 120_000));
+    }
+
+    #[test]
+    fn permission_wait_ends_when_the_tool_starts() {
+        let at = |t: u64, e: Event| Event { t, ..e };
+        let perm = Event {
+            kind: Some("permission_prompt".into()),
+            ..ev("Notification")
+        };
+        // Approved at 15 s; the tool then ran 60 s and reported at 75 s.
+        let post = Event {
+            dur: Some(60_000),
+            ..tool("PostToolUse", "Bash:cargo build", Some(true))
+        };
+        let s = run(&[at(0, prompt("go")), at(10_000, perm), at(75_000, post)]);
+        assert_eq!((s.time.waiting_ms, s.time.tools_ms), (5_000, 60_000));
+    }
+
+    #[test]
+    fn overlapping_tools_count_once() {
+        let post = |t: u64, dur: u64| Event {
+            t,
+            dur: Some(dur),
+            ..tool("PostToolUse", "Agent", Some(true))
+        };
+        // Two 10 s calls in parallel, 1 s apart: 11 s of wall time.
+        let s = run(&[post(10_000, 10_000), post(11_000, 10_000)]);
+        assert_eq!(s.time.tools_ms, 11_000);
+    }
+
+    #[test]
+    fn test_runs_history() {
+        let t = |pass, fail| Event {
+            tests: Some((pass, fail)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        };
+        let mut s = run(&[prompt("go"), t(5, 0), t(6, 1)]);
+        assert_eq!(s.test_runs.len(), 2);
+        assert_eq!(s.test_runs.back().map(|r| (r.pass, r.fail)), Some((6, 1)));
+        for i in 0..30 {
+            s.apply(&t(i, 0));
+        }
+        assert_eq!(s.test_runs.len(), 20, "capped");
+    }
+
+    #[test]
+    fn done_with_failing_tests() {
+        let red = Event {
+            tests: Some((67, 2)),
+            ..tool("PostToolUseFailure", "Bash:cargo test", Some(false))
+        };
+        let s = run(&[
+            prompt("go"),
+            task("1", Some("a"), Some("completed")),
+            red,
+            stop(0),
+        ]);
+        assert!(s.tests_failing());
+        let green = Event {
+            tests: Some((69, 0)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        };
+        let s = run(&[
+            prompt("go"),
+            task("1", Some("a"), Some("completed")),
+            green,
+            stop(0),
+        ]);
+        assert!(!s.tests_failing());
+        assert_eq!(s.verdict(0), Verdict::Done);
+    }
+
+    #[test]
+    fn old_cache_version_rebuilds() {
+        let dir = std::env::temp_dir().join(format!("ari-state-v2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let line = crate::event::to_line(&prompt("go"));
+        std::fs::write(dir.join("events.jsonl"), &line).unwrap();
+        let stale = format!(
+            "{{\"v\":2,\"offset\":{},\"state\":{{\"turns\":99}}}}",
+            line.len()
+        );
+        std::fs::write(dir.join("state.json"), stale).unwrap();
+        assert_eq!(load_session(&dir).turns, 1);
     }
 
     #[test]

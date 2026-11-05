@@ -40,6 +40,8 @@ pub struct Thresholds {
     pub ctx_warn: u8,
     pub ctx_crit: u8,
     pub stuck_repeats: u8,
+    /// Context % where Claude Code auto-compacts, for the forecast.
+    pub compact_pct: u8,
 }
 
 /// Dollars per million tokens.
@@ -84,6 +86,7 @@ impl Default for Thresholds {
             ctx_warn: 60,
             ctx_crit: 80,
             stuck_repeats: 3,
+            compact_pct: 90,
         }
     }
 }

@@ -16,7 +16,16 @@ pub struct Extras {
     pub burn_eta: Option<u64>,
     /// How long ago the session's transcript last changed: a sign of life without hooks.
     pub transcript_age_ms: Option<u64>,
+    /// Turns until context auto-compacts at the current growth.
+    pub compacts_in: Option<u32>,
+    /// Files another live session is editing too.
+    pub conflicts: Vec<crate::conflicts::Conflict>,
+    /// `ari recap --since prompt`, built only while the panel shows it.
+    pub recap: Option<crate::recap::Recap>,
 }
+
+/// Forecasts are only worth showing this close.
+pub const COMPACT_SOON: u32 = 10;
 
 /// A session without hook events whose transcript moved this recently is working.
 pub const ACTIVE_MS: u64 = 20_000;
@@ -164,27 +173,32 @@ pub fn render(
     // No hook events at all (plugin missing, or installed after this session began):
     // ARI can't judge the session, so it says so instead of claiming IDLE.
     let hooked = st.first_t > 0;
-    let mut segs: Vec<String> = vec![if hooked {
+    let mut segs: Vec<String> = vec![if hooked && v == Verdict::Done && st.tests_failing() {
+        paint(
+            color,
+            "1;33",
+            &format!("{} {} · tests failing", v.glyph(), v.label()),
+        )
+    } else if hooked {
         paint(
             color,
             verdict_color(v),
-            &format!("ARI {} {}", v.glyph(), v.label()),
+            &format!("{} {}", v.glyph(), v.label()),
         )
     } else {
         // No hooks to judge by, but a growing transcript means Claude is working.
         if x.looks_active() {
-            paint(color, "1;36", &format!("ARI {} WORKING", spinner(now_ms)))
+            paint(color, "1;36", &format!("{} WORKING", spinner(now_ms)))
         } else {
-            paint(color, "2", "ARI ◌ no hooks yet")
+            paint(color, "2", "◌ no hooks yet")
         }
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
-    // Which repo this row belongs to; second only to the verdict when space runs out.
-    if shown("project")
-        && let Some(p) = &u.project
+    if shown("conflicts")
+        && let Some(c) = crate::conflicts::summary(&x.conflicts)
     {
-        segs.push(paint(color, "1", p));
+        segs.push(paint(color, "1;33", &c));
     }
     if from_hooks("now")
         && let Some(now) = now_doing(st, now_ms)
@@ -216,6 +230,19 @@ pub fn render(
             &format!("✗ {n}"),
         ));
     }
+    if from_hooks("tests")
+        && let Some(r) = st.test_runs.back()
+    {
+        segs.push(if r.fail > 0 {
+            paint(
+                color,
+                "31",
+                &format!("✗ {}/{} tests", r.fail, r.pass + r.fail),
+            )
+        } else {
+            paint(color, "32", &format!("✓ {} tests", r.pass))
+        });
+    }
     if shown("ctx") {
         segs.push(match u.ctx_pct {
             Some(p) => format!(
@@ -224,7 +251,11 @@ pub fn render(
                     color,
                     level_color(p, cfg),
                     &format!("{} {:.0}%", cells(p / 100.0, 5, '▰', '▱'), p)
-                )
+                ) + &x
+                    .compacts_in
+                    .filter(|n| *n <= COMPACT_SOON)
+                    .map(|n| format!(" ~{n}t"))
+                    .unwrap_or_default()
             ),
             None => "ctx —".into(),
         });
@@ -272,7 +303,7 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Agent, ErrorRec, Task};
+    use crate::state::{Agent, ErrorRec, Task, TestRun};
 
     const NOW: u64 = 1_738_419_600_000; // 1h40m before the 5h reset below
 
@@ -349,7 +380,7 @@ mod tests {
                 200,
                 false
             ),
-            "ARI ● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
+            "● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
         );
     }
 
@@ -364,7 +395,7 @@ mod tests {
             200,
             false,
         );
-        assert_eq!(row, "ARI ◌ no hooks yet │ ctx — │ 5h — │ 7d —");
+        assert_eq!(row, "◌ no hooks yet │ ctx — │ 5h — │ 7d —");
     }
 
     #[test]
@@ -376,15 +407,15 @@ mod tests {
         };
         for w in [10, 30, 50, 70] {
             let row = render(&st, &u, &Extras::default(), &cfg, NOW, w, false);
-            assert!(row.starts_with("ARI ● ON TRACK"));
+            assert!(row.starts_with("● ON TRACK"));
             assert!(
-                visible_width(&row) <= w || row == "ARI ● ON TRACK",
+                visible_width(&row) <= w || row == "● ON TRACK",
                 "{w}: {row}"
             );
         }
         assert_eq!(
             render(&st, &u, &Extras::default(), &cfg, NOW, 31, false),
-            "ARI ● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ██████░░░░ 4/7"
         );
         let capped = Config {
             max_width: 31,
@@ -393,32 +424,8 @@ mod tests {
         };
         assert_eq!(
             render(&st, &u, &Extras::default(), &capped, NOW, 500, false),
-            "ARI ● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ██████░░░░ 4/7"
         );
-    }
-
-    #[test]
-    fn project_segment() {
-        let (st, mut u) = sample();
-        u.project = Some("tankobon".into());
-        let row = render(
-            &st,
-            &u,
-            &Extras::default(),
-            &Config::default(),
-            NOW,
-            200,
-            false,
-        );
-        assert!(
-            row.starts_with("ARI ● ON TRACK │ tankobon │ ⠋ thinking │ ██████"),
-            "{row}"
-        );
-        let cfg = Config {
-            hide: vec!["project".into()],
-            ..Config::default()
-        };
-        assert!(!render(&st, &u, &Extras::default(), &cfg, NOW, 200, false).contains("tankobon"));
     }
 
     #[test]
@@ -438,6 +445,70 @@ mod tests {
         assert!(
             row.contains("│ ⠋ $ cargo test --workspace 1m15s │"),
             "{row}"
+        );
+        let row_now = |st: &State| {
+            render(
+                st,
+                &u,
+                &Extras::default(),
+                &Config::default(),
+                NOW,
+                200,
+                false,
+            )
+        };
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 70,
+            fail: 0,
+        });
+        let row = row_now(&st);
+        assert!(row.contains("│ ✗ 1 │ ✓ 70 tests │ ctx"), "{row}");
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 67,
+            fail: 2,
+        });
+        let row = row_now(&st);
+        assert!(row.contains("│ ✗ 1 │ ✗ 2/69 tests │ ctx"), "{row}");
+        let soon = Extras {
+            compacts_in: Some(4),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &soon, &Config::default(), NOW, 200, false);
+        assert!(row.contains("ctx ▰▰▰▰▱ 71% ~4t"), "{row}");
+        let later = Extras {
+            compacts_in: Some(11),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &later, &Config::default(), NOW, 200, false);
+        assert!(!row.contains("~11t"), "{row}");
+        let clash = Extras {
+            conflicts: vec![crate::conflicts::Conflict {
+                path: "/x/a.rs".into(),
+                other: "tankobon #bbbb".into(),
+            }],
+            ..Default::default()
+        };
+        let row = render(&st, &u, &clash, &Config::default(), NOW, 200, false);
+        assert!(
+            row.starts_with("● ON TRACK │ ⚠ a.rs also in tankobon #bbbb │"),
+            "{row}"
+        );
+        let mut done = st.clone();
+        done.turn_active = false;
+        done.background = 0;
+        done.errors.clear();
+        done.recent.clear();
+        done.last_main_result = None;
+        done.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        assert_eq!(done.verdict(NOW), Verdict::Done);
+        assert!(
+            row_now(&done).starts_with("✓ DONE · tests failing │"),
+            "{}",
+            row_now(&done)
         );
         st.agents[0].running_since = None;
         st.turn_active = false;
@@ -465,11 +536,11 @@ mod tests {
         let empty = State::default();
         assert!(
             render(&empty, &u, &fresh, &Config::default(), NOW, 200, false)
-                .starts_with("ARI ⠋ WORKING")
+                .starts_with("⠋ WORKING")
         );
         assert!(
             render(&empty, &u, &stale, &Config::default(), NOW, 200, false)
-                .starts_with("ARI ◌ no hooks yet")
+                .starts_with("◌ no hooks yet")
         );
     }
 
@@ -522,7 +593,7 @@ mod tests {
         let row = render(&st, &u, &Extras::default(), &cfg, NOW, 200, false);
         assert!(row.is_ascii(), "{row}");
         assert!(
-            row.starts_with("ARI * ON TRACK | | thinking | ######---- 4/7 | | 2 agents"),
+            row.starts_with("* ON TRACK | | thinking | ######---- 4/7 | | 2 agents"),
             "{row}"
         );
     }

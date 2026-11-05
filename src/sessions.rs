@@ -24,7 +24,7 @@ fn json(p: &Path) -> Option<Value> {
     serde_json::from_slice(&std::fs::read(p).ok()?).ok()
 }
 
-fn cwd_of(dir: &Path) -> Option<String> {
+pub fn cwd_of(dir: &Path) -> Option<String> {
     let from = |v: Value, ptrs: &[&str]| {
         ptrs.iter()
             .find_map(|p| v.pointer(p)?.as_str().map(String::from))

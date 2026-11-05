@@ -40,6 +40,9 @@ pub struct Event {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dur: Option<u64>,
+    /// (passed, failed), when this was a test run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests: Option<(u32, u32)>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -84,7 +87,10 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
     match ev.e.as_str() {
         "PostToolUse" => {
             ev.ok = Some(true);
-            task_tool(&mut ev, input, raw.get("tool_response").unwrap_or(&null));
+            let resp = raw.get("tool_response").unwrap_or(&null);
+            task_tool(&mut ev, input, resp);
+            let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
+            ev.tests = test_run(input, &format!("{}\n{}", out("stdout"), out("stderr")));
         }
         "PostToolUseFailure" => {
             ev.ok = Some(false);
@@ -98,6 +104,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                     .map(|n| format!("exit {}", n.trim()))
             };
             ev.msg = Some(truncate(failure_line(err), 160));
+            ev.tests = test_run(input, err);
         }
         "UserPromptSubmit" => {
             ev.msg = s("prompt")
@@ -143,6 +150,40 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         _ => {}
     }
     Some(ev)
+}
+
+/// (passed, failed) in a test command's output: cargo, pytest, jest and vitest all print
+/// `N passed` and `N failed`.
+// shortcut: sums every count (cargo prints one line per test binary) and skips jest/vitest
+// suite and file totals; teach it other runners' summaries when they show up.
+fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
+    let cmd = input.get("command").and_then(Value::as_str)?;
+    // A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
+    let runs_tests = cmd.split_whitespace().any(|w| {
+        let w = w.rsplit('/').next().unwrap_or(w);
+        w == "test"
+            || w.starts_with("test:")
+            || ["pytest", "jest", "vitest", "nextest", "mocha"].contains(&w)
+    });
+    if !runs_tests {
+        return None;
+    }
+    let mut sum = None;
+    for line in out
+        .lines()
+        .filter(|l| !l.contains("Suites") && !l.contains("Files"))
+    {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        for p in w.windows(2) {
+            let Ok(n) = p[0].parse::<u32>() else { continue };
+            match p[1].trim_end_matches([';', ',']) {
+                "passed" => sum.get_or_insert((0, 0)).0 += n,
+                "failed" => sum.get_or_insert((0, 0)).1 += n,
+                _ => {}
+            }
+        }
+    }
+    sum
 }
 
 fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
@@ -320,6 +361,52 @@ mod tests {
 
     fn n(v: Value) -> Event {
         normalize(&v, 1).unwrap()
+    }
+
+    #[test]
+    fn test_runs_count_passes() {
+        let cmd = |c: &str| json!({ "command": c });
+        let cargo = "test result: ok. 67 passed; 0 failed\ntest result: ok. 3 passed; 0 failed";
+        assert_eq!(test_run(&cmd("cargo test"), cargo), Some((70, 0)));
+        let cargo_red = "test result: FAILED. 67 passed; 2 failed; 0 ignored";
+        assert_eq!(test_run(&cmd("cargo test"), cargo_red), Some((67, 2)));
+        let jest =
+            "Test Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 12 passed, 13 total";
+        assert_eq!(test_run(&cmd("npx jest"), jest), Some((12, 1)));
+        assert_eq!(
+            test_run(&cmd("pytest -q"), "== 1 failed, 5 passed in 0.3s =="),
+            Some((5, 1))
+        );
+        assert_eq!(
+            test_run(&cmd("cat notes"), "5 passed"),
+            None,
+            "not a test command"
+        );
+        assert_eq!(
+            test_run(&cmd("grep -rn passed tests/"), cargo_red),
+            None,
+            "searching test files is not a test run"
+        );
+        let one = "== 3 passed in 0.1s ==";
+        for c in [
+            "npm run test:unit",
+            "npx jest",
+            "go test ./...",
+            "cargo nextest run",
+            "uv run pytest",
+        ] {
+            assert_eq!(test_run(&cmd(c), one), Some((3, 0)), "{c}");
+        }
+        assert_eq!(
+            test_run(&cmd("cargo test"), "error[E0425]"),
+            None,
+            "no summary"
+        );
+        let ev = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"}, "tool_response": {"stdout": cargo, "stderr": ""}}),
+        );
+        assert_eq!(ev.tests, Some((70, 0)));
     }
 
     #[test]

@@ -21,11 +21,9 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Git branch and uncommitted file count | Which branch Claude is changing | New: run `git` in the statusline, debounced |
 | Pull request number and review state (approved, changes requested) | Know when a PR needs you | Have it (`pr.*` in the statusline payload) |
 | Lines added and removed | Size of the change at a glance | Have it (`cost.total_lines_*`) |
-| Files touched this session, most-edited first | What Claude actually changed | Have it (Edit/Write events) |
 | Model, effort level, fast mode | Why a session is slow or expensive | Have it |
 | Worktree name | Tell parallel worktree sessions apart | Have it (`workspace.git_worktree`) |
 | Background shells and scheduled wake-ups by name | "dev server running", "checks again at 15:00" | Have it (`background_tasks`, `session_crons` on Stop) |
-| Test results: passed / failed counts from the last test command | "12 passed, 1 failed" without reading logs | New: parse common test-runner output |
 | What a permission prompt is asking for | Decide without switching windows | Have it (notification message) |
 | Turn timeline: one line per turn with duration, cost and outcome | See where time and money went | Have it |
 | Compaction count and what each one cost | Spot sessions that keep compacting | Have it |
@@ -38,10 +36,19 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Cost per hour and projected cost to finish the task list | Is this run worth it | Have it |
 | Slow-command alerts: a command running far longer than its previous runs | Catch hung builds early | Have it (per-signature durations) |
 | Repeated permission prompts for the same tool | Suggest an allow rule | Have it |
-| Detect "done but tests failing" | DONE shouldn't hide a red test run | New: test parsing (above) |
 | Subagent tree with nesting and per-branch cost | Deep agent fan-outs | Partly (spawn depth is in transcripts) |
 
-## 4. Platform and polish
+## 4. Other harnesses and providers (M6)
+
+| Idea | Why | Data |
+|---|---|---|
+| Sessions from other coding agents (starting with the one you use most; to decide) in `ari watch --all` | One panel for every agent you run | New: each harness's session logs or hooks |
+| Per-harness and per-provider branding: the tool running the session (Claude Code, Codex) and the model doing the work (Opus, GPT, DeepSeek) | See at a glance what is running where | Model names already shown as given |
+| Flaky-test detection by test name | A test that flips between pass and fail | New: per-test parsing |
+
+Shipped from this list in M5: test pass/fail counts, files touched (in `ari recap`), done-but-tests-failing.
+
+## 5. Platform and polish
 
 | Idea | Why | Data |
 |---|---|---|

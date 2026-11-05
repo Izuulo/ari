@@ -12,10 +12,12 @@ usage:
   ari doctor            check that binary, plugin, statusline and hooks are wired
   ari demo [--speed <x>] [--ascii] [--once]
                         replay a bundled session in the panel (no Claude needed)
+  ari recap [--session <id>] [--since <start|prompt|30m>] [--md]
+                        what this directory's session got done
   ari replay <dir>      print a recorded session as a timeline
   ari --version";
 
-use ari_cli::{demo, doctor, hook, replay, setup, statusline, watch};
+use ari_cli::{demo, doctor, hook, recap, replay, setup, statusline, watch};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,6 +29,7 @@ fn main() {
         Some("watch") => watch::run(&args[1..]),
         Some("doctor") => doctor::run(&args[1..]),
         Some("demo") => demo::run(&args[1..]),
+        Some("recap") => recap::run(&args[1..]),
         Some("replay") => replay::run(&args[1..]),
         Some("--version" | "-V") => println!("ari {}", env!("CARGO_PKG_VERSION")),
         _ => {
