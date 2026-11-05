@@ -2,10 +2,29 @@
 
 use crate::config::Config;
 use crate::state::{State, Verdict};
+use crate::tokens::TokenCache;
 use crate::usage::{Limit, Usage};
 
 pub const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const DEFAULT_WIDTH: usize = 120;
+
+/// What the transcripts and rate-limit history add on top of state + usage (M3).
+#[derive(Clone, Debug, Default)]
+pub struct Extras {
+    pub tokens: Option<TokenCache>,
+    /// ms until the 5h limit at the current pace, only when that's before it resets.
+    pub burn_eta: Option<u64>,
+}
+
+/// `950`, `12.4k`, `142k`, `6.2M`.
+pub fn fmt_tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..10_000 => format!("{:.1}k", n as f64 / 1e3),
+        10_000..1_000_000 => format!("{}k", n / 1000),
+        _ => format!("{:.1}M", n as f64 / 1e6),
+    }
+}
 
 pub fn spinner(now_ms: u64) -> char {
     SPINNER[(now_ms / 100 % 10) as usize]
@@ -99,6 +118,7 @@ fn limit(name: &str, l: Option<Limit>, now_ms: u64, cfg: &Config, color: bool) -
 pub fn render(
     st: &State,
     u: &Usage,
+    x: &Extras,
     cfg: &Config,
     now_ms: u64,
     width: usize,
@@ -159,6 +179,15 @@ pub fn render(
         && let Some(c) = u.cost_usd
     {
         segs.push(format!("${c:.2}"));
+    }
+    if shown("tokens")
+        && let Some(total) = x
+            .tokens
+            .as_ref()
+            .map(|t| t.total().total())
+            .filter(|n| *n > 0)
+    {
+        segs.push(format!("{} tok", fmt_tokens(total)));
     }
 
     let sep = paint(color, "2", " │ ");
@@ -246,7 +275,15 @@ mod tests {
     fn full_row() {
         let (st, u) = sample();
         assert_eq!(
-            render(&st, &u, &Config::default(), NOW, 200, false),
+            render(
+                &st,
+                &u,
+                &Extras::default(),
+                &Config::default(),
+                NOW,
+                200,
+                false
+            ),
             "ARI ● ON TRACK │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
         );
     }
@@ -256,6 +293,7 @@ mod tests {
         let row = render(
             &State::default(),
             &Usage::default(),
+            &Extras::default(),
             &Config::default(),
             NOW,
             200,
@@ -269,7 +307,7 @@ mod tests {
         let (st, u) = sample();
         let cfg = Config::default();
         for w in [10, 30, 50, 70] {
-            let row = render(&st, &u, &cfg, NOW, w, false);
+            let row = render(&st, &u, &Extras::default(), &cfg, NOW, w, false);
             assert!(row.starts_with("ARI ● ON TRACK"));
             assert!(
                 visible_width(&row) <= w || row == "ARI ● ON TRACK",
@@ -277,7 +315,7 @@ mod tests {
             );
         }
         assert_eq!(
-            render(&st, &u, &cfg, NOW, 31, false),
+            render(&st, &u, &Extras::default(), &cfg, NOW, 31, false),
             "ARI ● ON TRACK │ ██████░░░░ 4/7"
         );
         let capped = Config {
@@ -285,7 +323,7 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(
-            render(&st, &u, &capped, NOW, 500, false),
+            render(&st, &u, &Extras::default(), &capped, NOW, 500, false),
             "ARI ● ON TRACK │ ██████░░░░ 4/7"
         );
     }
@@ -297,7 +335,7 @@ mod tests {
             hide: vec!["cost".into(), "7d".into(), "agents".into()],
             ..Config::default()
         };
-        let row = render(&st, &u, &cfg, NOW, 200, false);
+        let row = render(&st, &u, &Extras::default(), &cfg, NOW, 200, false);
         assert!(
             !row.contains('$') && !row.contains("7d") && !row.contains("agents"),
             "{row}"
@@ -307,8 +345,24 @@ mod tests {
     #[test]
     fn color_does_not_change_width() {
         let (st, u) = sample();
-        let plain = render(&st, &u, &Config::default(), NOW, 200, false);
-        let colored = render(&st, &u, &Config::default(), NOW, 200, true);
+        let plain = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            false,
+        );
+        let colored = render(
+            &st,
+            &u,
+            &Extras::default(),
+            &Config::default(),
+            NOW,
+            200,
+            true,
+        );
         assert!(colored.contains("\x1b["));
         assert_eq!(visible_width(&colored), plain.chars().count());
     }
