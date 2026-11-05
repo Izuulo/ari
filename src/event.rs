@@ -78,7 +78,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         ev.id = owned("tool_use_id");
         ev.act = Some(truncate(&action(tool, input, cwd), 80));
         ev.sig = Some(truncate(&signature(tool, input), 200));
-        ev.h = Some(fnv1a(&serde_json::to_vec(input).unwrap_or_default()));
+        ev.h = Some(fnv1a(&canonical(input)));
     }
     let line = |k: &str| s(k).map(|v| truncate(first_line(v), 160));
     match ev.e.as_str() {
@@ -264,6 +264,22 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
         Some((i, _)) if s[i..].chars().nth(1).is_some() => format!("{}…", &s[..i]),
         _ => s.to_string(),
     }
+}
+
+/// JSON bytes with object keys sorted recursively, so the hash ignores key order.
+fn canonical(v: &Value) -> Vec<u8> {
+    fn sort(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => {
+                let mut keys: Vec<_> = m.keys().collect();
+                keys.sort();
+                Value::Object(keys.into_iter().map(|k| (k.clone(), sort(&m[k]))).collect())
+            }
+            Value::Array(a) => Value::Array(a.iter().map(sort).collect()),
+            other => other.clone(),
+        }
+    }
+    serde_json::to_vec(&sort(v)).unwrap_or_default()
 }
 
 pub fn fnv1a(bytes: &[u8]) -> u64 {
