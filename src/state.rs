@@ -443,7 +443,7 @@ impl State {
             "TaskCreated" | "TaskCompleted" => self.update_tasks(ev),
             "SessionStart" => {
                 self.ended = false;
-                self.resume = (ev.kind.as_deref() == Some("resume")).then(|| Resume {
+                self.resume = (ev.kind.as_deref() == Some("resume")).then_some(Resume {
                     away_ms: ev.dur,
                     cold: ev.cold,
                     rebuild_usd: ev.usd,
