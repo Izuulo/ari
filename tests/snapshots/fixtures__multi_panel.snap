@@ -6,7 +6,7 @@ expression: "out.join(\"\\n\")"
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
 │ ↻ RETRYING · Do these steps in order, using the too… │
 │ don't-ask mode                                       │
-│ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
+│ ▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 1/4 tasks                       │
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠏ main   thinking…                                   │
@@ -20,7 +20,7 @@ expression: "out.join(\"\\n\")"
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
 │ ● ON TRACK · Do these steps in order, using the too… │
 │ don't-ask mode                                       │
-│ ██████████░░░░░░░░░░ 2/4 tasks                       │
+│ ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠦ main      agent Explore: Describe test_calc.py · … │
@@ -35,7 +35,7 @@ expression: "out.join(\"\\n\")"
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
 │ ✓ DONE · Do these steps in order, using the tool…    │
 │ don't-ask mode                                       │
-│ ████████████████████ 4/4 tasks                       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
 │ ├─✓ Explore done 2s · `calc.py` defines an `add(a, … │

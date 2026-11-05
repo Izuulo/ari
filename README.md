@@ -25,7 +25,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 **A row in your statusline**, always visible:
 
 ```
-● ON TRACK │ ██████░░░░ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ✓ 70 tests │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
+● ON TRACK │ ▰▰▰▰▰▰▱▱▱▱ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ✓ 70 tests │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
 ```
 
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
@@ -33,7 +33,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 ```
 ╭─ ARI (•_•) ────────────────────────────────── 13:03 ─╮
 │ ● ON TRACK                 milestone: calculator fix │
-│ ██████████░░░░░░░░░░ 2/4 tasks                       │
+│ ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠦ main      agent Explore: Describe test_calc.py     │

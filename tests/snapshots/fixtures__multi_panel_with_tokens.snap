@@ -5,7 +5,7 @@ expression: out
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
 │ ✓ DONE · Do these steps in order, using the tool…    │
 │ don't-ask mode                                       │
-│ ████████████████████ 4/4 tasks                       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      haiku-5-5 · idle · 417k tok              │
 │ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · `calc.p… │

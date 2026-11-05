@@ -4,12 +4,12 @@ expression: out
 ---
 ╭─ ARI ──────────────────────── 12:41 ─╮
 │ ● ON TRACK · auth refactor           │
-│ ███████████░░░░░░░░░ 4/7 tasks       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 4/7 tasks       │
 │ ▸ now: hook up token refresh         │
 ├─ recap (r to close) ─────────────────┤
 │ since start                          │
 ├─ tasks ──────────────────────────────┤
-│ █████████████░░░░░░░ 2/3 tasks       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱ 2/3 tasks       │
 │ ✓ scaffold                           │
 │ ✓ build                              │
 │ ◻ write docs                         │

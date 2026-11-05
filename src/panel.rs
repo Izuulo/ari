@@ -504,7 +504,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
     if total > 0 {
         let mut rows = vec![vec![
             c.span(
-                cells(r.done.len() as f64 / total as f64, 20, '█', '░'),
+                cells(r.done.len() as f64 / total as f64, 20, '▰', '▱'),
                 Style::new().fg(Color::Green),
             ),
             Span::raw(format!(" {}/{total} tasks", r.done.len())),
@@ -781,7 +781,7 @@ fn header(
             let n = c.inner.saturating_sub(tail.width()).min(20);
             rows.push(vec![
                 c.span(
-                    cells(p.done as f64 / p.total as f64, n, '█', '░'),
+                    cells(p.done as f64 / p.total as f64, n, '▰', '▱'),
                     Style::new().fg(Color::Cyan),
                 ),
                 Span::raw(tail),
@@ -792,7 +792,7 @@ fn header(
         let n = c.inner.saturating_sub(tail.width()).min(20);
         rows.push(vec![
             c.span(
-                cells(done as f64 / total as f64, n, '█', '░'),
+                cells(done as f64 / total as f64, n, '▰', '▱'),
                 Style::new().fg(Color::Cyan),
             ),
             Span::raw(tail),

@@ -481,7 +481,7 @@ mod tests {
         assert_eq!(r.dir, "/home/user/proj");
         let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 60, false, false));
         assert!(text.starts_with("╭─ ARI recap · since start "), "{text}");
-        assert!(text.contains("│ ████████████████████ 4/4 tasks"), "{text}");
+        assert!(text.contains("│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks"), "{text}");
         assert!(text.contains("│ ✓ scaffold"), "{text}");
         assert!(text.contains("├─ errors "), "{text}");
         assert!(text.contains("│ 1 hit · 1 fixed · 0 open"), "{text}");

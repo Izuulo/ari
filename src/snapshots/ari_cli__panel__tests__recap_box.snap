@@ -6,7 +6,7 @@ expression: text
 │ ✓ DONE                                                   │
 │ auth refactor                                            │
 ├─ tasks ──────────────────────────────────────────────────┤
-│ █████████████░░░░░░░ 2/3 tasks                           │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱ 2/3 tasks                           │
 │ ✓ scaffold                                               │
 │ ✓ build                                                  │
 │ ◻ write docs                                             │

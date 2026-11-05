@@ -243,7 +243,7 @@ pub fn render(
     if from_hooks("tasks") && total > 0 {
         segs.push(format!(
             "{} {done}/{total}",
-            cells(done as f64 / total as f64, 10, '█', '░')
+            cells(done as f64 / total as f64, 10, '▰', '▱')
         ));
     } else if from_hooks("tasks")
         && let Some(p) = &x.plan
@@ -251,7 +251,7 @@ pub fn render(
         segs.push(format!(
             "{} {} {}/{}",
             crate::event::truncate(undated(p.name.trim_end_matches(".md")), 24),
-            cells(p.done as f64 / p.total as f64, 10, '█', '░'),
+            cells(p.done as f64 / p.total as f64, 10, '▰', '▱'),
             p.done,
             p.total
         ));
@@ -419,7 +419,7 @@ mod tests {
                 200,
                 false
             ),
-            "● ON TRACK │ ⠋ thinking │ ██████░░░░ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
+            "● ON TRACK │ ⠋ thinking │ ▰▰▰▰▰▰▱▱▱▱ 4/7 │ ⠋ 2 agents │ ✗ 1 │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69"
         );
     }
 
@@ -454,7 +454,7 @@ mod tests {
         }
         assert_eq!(
             render(&st, &u, &Extras::default(), &cfg, NOW, 31, false),
-            "● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ▰▰▰▰▰▰▱▱▱▱ 4/7"
         );
         let capped = Config {
             max_width: 31,
@@ -463,7 +463,7 @@ mod tests {
         };
         assert_eq!(
             render(&st, &u, &Extras::default(), &capped, NOW, 500, false),
-            "● ON TRACK │ ██████░░░░ 4/7"
+            "● ON TRACK │ ▰▰▰▰▰▰▱▱▱▱ 4/7"
         );
     }
 
@@ -644,7 +644,7 @@ mod tests {
             200,
             false,
         );
-        assert!(!row.contains("plan") && !row.contains('░'), "{row}");
+        assert!(!row.contains("plan") && !row.contains("thinking │ ▰"), "{row}");
         let x = Extras {
             plan: Some(crate::state::PlanFile {
                 name: "2026-11-05-m6-richness.md".into(),
@@ -654,7 +654,7 @@ mod tests {
             ..Default::default()
         };
         let row = render(&st, &u, &x, &Config::default(), NOW, 200, false);
-        assert!(row.contains("m6-richness ██░░░░░░░░ 3/15"), "{row}");
+        assert!(row.contains("m6-richness ▰▰▱▱▱▱▱▱▱▱ 3/15"), "{row}");
     }
 
     #[test]
