@@ -383,9 +383,10 @@ fn agents(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             AgentStatus::Running => (
                 spin.clone(),
                 format!(
-                    "{} · {} calls · {}",
+                    "{} · {} call{} · {}",
                     a.act.as_deref().unwrap_or("starting"),
                     a.calls,
+                    if a.calls == 1 { "" } else { "s" },
                     dur(now.saturating_sub(a.started))
                 ),
             ),
