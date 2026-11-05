@@ -24,6 +24,8 @@ pub struct Extras {
     pub recap: Option<crate::recap::Recap>,
     /// A Markdown plan's checkboxes, when there's no task list.
     pub plan: Option<crate::state::PlanFile>,
+    /// The session's recent limit/context/cost samples, oldest first (panel only).
+    pub samples: Vec<crate::burn::Sample>,
 }
 
 /// Forecasts are only worth showing this close.

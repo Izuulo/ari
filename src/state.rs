@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 8;
+const CACHE_VERSION: u32 = 9;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -74,6 +74,10 @@ pub struct State {
     pub edits: BTreeMap<String, u64>,
     /// Start times of the last real prompts (turns).
     pub prompts: VecDeque<u64>,
+    /// The last real turns, oldest first.
+    pub turn_log: VecDeque<TurnRec>,
+    /// Compactions: (time, trigger), oldest first.
+    pub compactions: VecDeque<(u64, String)>,
     /// Last permission mode a hook reported.
     pub permission_mode: Option<String>,
     /// Set by a resumed session's start, cleared at the main agent's Stop.
@@ -164,6 +168,19 @@ pub struct Split {
     pub idle: u64,
     /// Wall time none of the above accounts for.
     pub other: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TurnRec {
+    pub start: u64,
+    /// None while the turn runs.
+    pub end: Option<u64>,
+    pub calls: u32,
+    pub failed: u32,
+    /// False when the turn ended in a StopFailure.
+    pub ok: bool,
+    pub prompt: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
@@ -315,6 +332,15 @@ impl State {
                     }
                     self.turns += 1;
                     self.turn_failed = false;
+                    self.turn_log.push_back(TurnRec {
+                        start: ev.t,
+                        ok: true,
+                        prompt: msg.into(),
+                        ..Default::default()
+                    });
+                    if self.turn_log.len() > 50 {
+                        self.turn_log.pop_front();
+                    }
                     if self.label.is_none() && !msg.is_empty() {
                         self.label = Some(crate::event::truncate(msg, 40));
                     }
@@ -340,6 +366,10 @@ impl State {
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
                 if ev.a.is_none() {
+                    if let Some(r) = self.turn_log.back_mut().filter(|r| r.end.is_none()) {
+                        r.calls += 1;
+                        r.failed += (ev.e == "PostToolUseFailure") as u32;
+                    }
                     let t = &mut self.time;
                     let start = ev.t.saturating_sub(ev.dur.unwrap_or(0)).max(t.tools_until);
                     t.tools_ms += ev.t.saturating_sub(start);
@@ -392,7 +422,14 @@ impl State {
                     );
                 }
             }
-            "PreCompact" => self.compacted_at = Some(ev.t),
+            "PreCompact" => {
+                self.compacted_at = Some(ev.t);
+                self.compactions
+                    .push_back((ev.t, ev.kind.clone().unwrap_or_else(|| "auto".into())));
+                if self.compactions.len() > 20 {
+                    self.compactions.pop_front();
+                }
+            }
             "Stop" => {
                 self.needs_you = None;
                 for e in self
@@ -405,6 +442,7 @@ impl State {
                 }
                 self.background = ev.bg.unwrap_or(0);
                 if ev.a.is_none() {
+                    self.end_turn(ev.t, true);
                     self.resume = None;
                     if let Some(b) = &ev.bgs {
                         self.background_names = b.clone();
@@ -422,6 +460,7 @@ impl State {
                 }
             }
             "StopFailure" => {
+                self.end_turn(ev.t, false);
                 self.time.idle_since.get_or_insert(ev.t);
                 self.turn_active = false;
                 self.turn_failed = true;
@@ -458,6 +497,13 @@ impl State {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn end_turn(&mut self, t: u64, ok: bool) {
+        if let Some(r) = self.turn_log.back_mut().filter(|r| r.end.is_none()) {
+            r.end = Some(t);
+            r.ok = ok;
         }
     }
 
@@ -1380,6 +1426,41 @@ mod tests {
         );
         std::fs::write(dir.join("state.json"), stale).unwrap();
         assert_eq!(load_session(&dir).turns, 1);
+    }
+
+    #[test]
+    fn turn_log_and_compactions() {
+        let mut s = State::default();
+        let at = |t, e: &str, msg: Option<&str>| Event {
+            t,
+            e: e.into(),
+            msg: msg.map(Into::into),
+            ..Default::default()
+        };
+        s.apply(&at(10, "UserPromptSubmit", Some("fix it")));
+        s.apply(&at(11, "UserPromptSubmit", Some("<task-notification>x")));
+        s.apply(&tool("PostToolUse", "Bash:a", Some(true)));
+        s.apply(&tool("PostToolUseFailure", "Bash:b", Some(false)));
+        s.apply(&at(20, "Stop", None));
+        s.apply(&tool("PostToolUse", "Bash:c", Some(true)));
+        s.apply(&at(30, "UserPromptSubmit", Some("again")));
+        s.apply(&at(40, "StopFailure", None));
+        let r: Vec<_> = s
+            .turn_log
+            .iter()
+            .map(|r| (r.start, r.end, r.calls, r.failed, r.ok))
+            .collect();
+        assert_eq!(r, [(10, Some(20), 2, 1, true), (30, Some(40), 0, 0, false)]);
+        assert_eq!(s.turn_log[0].prompt, "fix it");
+        for i in 0..60 {
+            s.apply(&at(100 + i, "UserPromptSubmit", Some("p")));
+            s.apply(&Event {
+                kind: Some("auto".into()),
+                ..at(100 + i, "PreCompact", None)
+            });
+        }
+        assert_eq!((s.turn_log.len(), s.compactions.len()), (50, 20));
+        assert_eq!(s.compactions[0].1, "auto");
     }
 
     #[test]

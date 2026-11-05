@@ -249,7 +249,12 @@ pub fn lines(
             title: Some("session"),
             rows: session(st, u, x, cfg, &c, now),
         },
+        Section {
+            title: Some("turns"),
+            rows: turns(st, x, &c, now),
+        },
     ];
+    sections.retain(|s| s.title != Some("turns") || !s.rows.is_empty());
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -516,6 +521,15 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
             .map(|x| x.rows.len() + x.title.is_some() as usize)
             .sum::<usize>()
     };
+    while total(secs) > height {
+        let Some(s) = secs.iter_mut().find(|s| s.title == Some("turns")) else {
+            break;
+        };
+        s.rows.pop();
+        if s.rows.is_empty() {
+            secs.retain(|s| s.title != Some("turns"));
+        }
+    }
     for title in ["session", "usage"] {
         if total(secs) > height {
             secs.retain(|s| s.title != Some(title));
@@ -532,6 +546,64 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
             s.rows.pop();
         }
     }
+}
+
+/// Cost between two times from the sampled cumulative cost; never negative.
+fn cost_between(samples: &[crate::burn::Sample], a: u64, b: u64) -> Option<f64> {
+    let at = |t: u64| samples.iter().rev().find(|s| s.t <= t)?.cost;
+    Some((at(b)? - at(a)?).max(0.0))
+}
+
+/// Turns and compactions, newest first.
+fn turns(st: &State, x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
+    if st.turn_log.len() < 2 {
+        return Vec::new();
+    }
+    let mut items: Vec<(u64, Row)> = Vec::new();
+    for r in &st.turn_log {
+        let end = r.end.unwrap_or(now);
+        let mut t = format!(
+            "{}  {}  {} call{}",
+            local_hhmm(r.start),
+            dur(end.saturating_sub(r.start)),
+            r.calls,
+            if r.calls == 1 { "" } else { "s" }
+        );
+        let style = match (r.end, r.ok) {
+            (None, _) => Style::new().fg(Color::Cyan),
+            (_, false) => Style::new().fg(Color::Red),
+            _ => Style::new(),
+        };
+        let mut row = Vec::new();
+        if r.failed > 0 {
+            row.push(c.span(format!("{t}  "), style));
+            row.push(c.span(format!("✗ {}", r.failed), Style::new().fg(Color::Red)));
+            t = String::new();
+        }
+        if let Some(usd) = r.end.and_then(|e| cost_between(&x.samples, r.start, e)) {
+            t.push_str(&format!("  ${usd:.2}"));
+        }
+        t.push_str(&format!("  {}", r.prompt));
+        row.push(c.span(t, if row.is_empty() { style } else { Style::new() }));
+        items.push((r.start, row));
+    }
+    for (t, kind) in &st.compactions {
+        let before = x
+            .samples
+            .iter()
+            .rev()
+            .find(|s| s.t <= *t)
+            .and_then(|s| s.ctx);
+        let after = x.samples.iter().find(|s| s.t > *t).and_then(|s| s.ctx);
+        let ctx = match (before, after) {
+            (Some(b), Some(a)) => format!(" · ctx {b:.0}% → {a:.0}%"),
+            _ => String::new(),
+        };
+        let text = format!("⟲ {} compacted ({kind}){ctx}", local_hhmm(*t));
+        items.push((*t, vec![c.dim(text)]));
+    }
+    items.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
+    items.into_iter().map(|(_, r)| r).collect()
 }
 
 fn header(
@@ -1391,6 +1463,117 @@ mod tests {
         assert!(!render(&st, &u, View::default(), 50, 14).contains("├─ session"));
         render(&st, &u, View::default(), 30, 6);
         render(&st, &u, View::default(), 8, 3);
+    }
+
+    fn turn_state() -> (State, Extras) {
+        use crate::state::TurnRec;
+        let m = 60_000;
+        let t0 = NOW - 60 * m;
+        let rec = |start, end: Option<u64>, calls, failed, ok, p: &str| TurnRec {
+            start,
+            end,
+            calls,
+            failed,
+            ok,
+            prompt: p.into(),
+        };
+        let st = State {
+            first_t: t0,
+            last_t: NOW,
+            turn_log: [
+                rec(t0, Some(t0 + 252_000), 23, 2, true, "fix the panel"),
+                rec(t0 + 20 * m, Some(t0 + 21 * m), 1, 0, false, "second"),
+                rec(NOW - 5_000, None, 4, 0, true, "third"),
+            ]
+            .into(),
+            compactions: [
+                (t0 + 10 * m, "auto".to_string()),
+                (t0 + 15 * m, "manual".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let s = |t, ctx, cost| crate::burn::Sample {
+            t,
+            ctx,
+            cost,
+            ..Default::default()
+        };
+        let x = Extras {
+            samples: vec![
+                s(t0 - 1, Some(10.0), Some(1.0)),
+                s(t0 + 252_000, Some(91.0), Some(1.41)),
+                s(t0 + 11 * m, Some(18.0), Some(2.0)),
+            ],
+            ..Default::default()
+        };
+        (st, x)
+    }
+
+    fn render_x(st: &State, x: &Extras, w: u16, h: u16) -> String {
+        to_plain(&lines(
+            st,
+            &Usage::default(),
+            x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            w,
+            h,
+            false,
+        ))
+    }
+
+    #[test]
+    fn turn_timeline() {
+        let (mut st, x) = turn_state();
+        let out = render_x(&st, &x, 80, 40);
+        let l = |k: &str| out.lines().position(|l| l.contains(k)).unwrap_or(999);
+        assert!(
+            l("third") < l("second") && l("second") < l("fix the panel"),
+            "{out}"
+        );
+        assert!(
+            out.contains("4m12s  23 calls  ✗ 2  $0.41  fix the panel"),
+            "{out}"
+        );
+        assert!(
+            out.contains("1 call  ") && out.contains("5s  4 calls  third"),
+            "{out}"
+        );
+        assert!(
+            out.contains("⟲ ") && out.contains("compacted (auto) · ctx 91% → 18%"),
+            "{out}"
+        );
+        assert!(
+            out.contains("compacted (manual)") && !out.contains("(manual) · ctx"),
+            "{out}"
+        );
+        assert!(
+            l("second") < l("compacted (manual)")
+                && l("compacted (manual)") < l("compacted (auto)"),
+            "{out}"
+        );
+        st.turn_log.pop_front();
+        assert!(!render_x(&st, &x, 80, 40).contains("├─ turns"));
+    }
+
+    #[test]
+    fn turns_collapse_first() {
+        let (mut st, x) = turn_state();
+        for i in 0..30 {
+            st.turn_log.push_back(crate::state::TurnRec {
+                start: NOW - 1000 + i,
+                prompt: format!("p{i}"),
+                ..Default::default()
+            });
+        }
+        let big = render_x(&st, &x, 80, 100);
+        assert!(big.contains("├─ turns"));
+        let out = render_x(&st, &x, 80, 14);
+        assert!(!out.contains("├─ turns"), "{out}");
+        assert!(out.lines().count() <= 14);
     }
 
     #[test]

@@ -105,6 +105,7 @@ impl App {
             ));
             let now = hook::now_ms();
             self.x.burn_eta = burn::projection(&burn::load(dir, now), now);
+            self.x.samples = burn::recent(dir);
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
             self.x.plan = state::plan_file(&self.st);
         }
