@@ -2433,7 +2433,7 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains("✓ 2× general-purpose · opus-5-5 · 2k tok"),
+            out.contains("✓ 2× general-purpose · opus-5-5 · 2.0k tok"),
             "{out}"
         );
         assert!(out.contains("✓ 3× helpers"), "{out}");
