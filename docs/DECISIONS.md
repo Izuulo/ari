@@ -1,0 +1,27 @@
+# Decisions
+
+Where the PRD and the Claude Code docs disagree, the docs win. Checked against Claude Code v2.1.318 docs (hooks, statusline, plugins, tools-reference) on 2026-11-05.
+
+## Doc discrepancies
+
+| # | PRD says | Docs say | What ARI does |
+|---|---|---|---|
+| D1 | Open question: do subagent tool events carry `agent_id`? | Yes. Tool events inside a subagent carry `agent_id` and `agent_type`. | Attribute directly from the hook payload. No transcript tailing for attribution. Transcripts are read only for token totals (M3). |
+| D2 | `PostToolUseFailure` "verify it exists" | Exists. `error` string; Bash/PowerShell failures start with `Exit code N`. `is_interrupt` optional. `PostToolUse` fires only on success. | Failures come only from `PostToolUseFailure` and `StopFailure`. No exit-code sniffing in `PostToolUse`. |
+| D3 | Tasks from TaskCreate/TaskUpdate/TodoWrite in `PostToolUse` | The task tools are **off by default** on newer models (Opus 5.x etc.), opt-in via `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`. `TaskCreated` / `TaskCompleted` hook events also exist. | Capture all three tools in `PostToolUse` plus `TaskCreated`/`TaskCompleted`. Many sessions will legitimately show `no plan yet`. |
+| D4 | `SubagentStart`/`SubagentStop` give transcript path | Only `SubagentStop` has `agent_transcript_path` and `last_assistant_message`. | Store transcript path from `SubagentStop`; derive it lazily otherwise. |
+| D5 | Notification → `NEEDS YOU` | `notification_type` values include `permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`, `elicitation_url_dialog`, plus non-blocking ones (`auth_success`, `agent_completed`, …). | Only `permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog`, `elicitation_url_dialog` set `NEEDS YOU`. |
+| D6 | `rate_limits.*.resets_at` format unspecified | Unix epoch **seconds**. | Parse as epoch seconds. |
+| D7 | Cache hit % computed from token fields | Statusline also sends `prompt_cache.hit_ratio` (session-level, main conversation only) since v2.1.251. | Per-turn and per-session hit % from transcripts (matches subagents too); `prompt_cache` used as fallback. |
+| D8 | Hook timeout "short" | `timeout` is in **seconds**. `async: true` exists. | Synchronous hooks, `timeout: 1`. Sync keeps event order intact for loop detection; the binary runs in ~1–2 ms. |
+| D9 | Statusline runs "frequently" | Event-driven, debounced 300 ms; goes quiet while main session is idle. Optional `refreshInterval` (seconds, min 1). | `ari setup` adds `refreshInterval: 2` only if the user has none, so stale agents and spinners still update. |
+| D10 | `ari hook <event>` | Every payload carries `hook_event_name`. | `ari hook` reads the event name from the payload; a trailing arg is accepted and ignored. |
+| D11 | Repo `finneritter/ari` | — | GitHub user is now `Izuulo`: repo is `Izuulo/ari`, plugin install is `/plugin marketplace add Izuulo/ari`. |
+
+## Project decisions
+
+- **State dir on macOS:** macOS has no XDG state equivalent and `~/Library/Application Support` has a space that is awkward in shell commands. ARI uses `$XDG_STATE_HOME/ari` if set, else `~/.local/state/ari`, on both macOS and Linux. Config likewise uses `$XDG_CONFIG_HOME` or `~/.config/ari/config.toml`.
+- **Crate name:** `ari-cli` (available on crates.io; `ari` is taken). Binary is `ari`.
+- **No arg-parsing crate:** eight subcommands and a handful of flags are parsed by hand to keep startup and binary size minimal.
+- **Error resolution moves to M1:** the verdict needs "open errors" to tell `RETRYING` from `ON TRACK`, so signatures and resolution ship with the reducer in M1. M3 keeps stuck detection, burn rate, cache stats and tokens.
+- **Events are normalized in the hook:** each hook writes a compact ARI event (not the raw payload) so lines stay under 4 KB and secrets in tool inputs (file contents) never land on disk.
