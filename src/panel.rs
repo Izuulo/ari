@@ -592,19 +592,16 @@ fn header(
     }
     let (done, total) = st.tasks_done();
     if total == 0 {
-        match plan {
-            Some(p) => {
-                let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
-                let n = c.inner.saturating_sub(tail.width()).min(20);
-                rows.push(vec![
-                    c.span(
-                        cells(p.done as f64 / p.total as f64, n, '█', '░'),
-                        Style::new().fg(Color::Cyan),
-                    ),
-                    Span::raw(tail),
-                ]);
-            }
-            None => rows.push(vec![c.dim("no plan yet")]),
+        if let Some(p) = plan {
+            let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
+            let n = c.inner.saturating_sub(tail.width()).min(20);
+            rows.push(vec![
+                c.span(
+                    cells(p.done as f64 / p.total as f64, n, '█', '░'),
+                    Style::new().fg(Color::Cyan),
+                ),
+                Span::raw(tail),
+            ]);
         }
     } else {
         let tail = format!(" {done}/{total} tasks");
@@ -747,7 +744,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             c.dim(branch),
             glyph,
             Span::raw(" "),
-            Span::raw(pad(&a.kind)),
+            Span::raw(pad(&crate::event::truncate(&a.kind, name_w))),
             Span::raw(" "),
             model(&a.id).unwrap_or_default(),
             Span::raw(text),
@@ -766,7 +763,10 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     if time > 0 || st.reread > 0 {
         let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
         let s = if failed == 1 { "" } else { "s" };
-        let mut parts = vec![format!("{failed} failed call{s}"), dur(time)];
+        let mut parts = vec![format!("{failed} failed call{s}")];
+        if time >= 1000 {
+            parts.push(dur(time));
+        }
         if st.reread > 0 {
             let s = if st.reread == 1 { "" } else { "s" };
             parts.push(format!("{} re-read{s}", st.reread));
@@ -1313,6 +1313,74 @@ mod tests {
             )),
             "{out}"
         );
+    }
+
+    #[test]
+    fn no_plan_row_without_tasks() {
+        let (mut st, u) = multi();
+        st.tasks.clear();
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(!out.contains("no plan yet"), "{out}");
+    }
+
+    #[test]
+    fn cheap_mistakes_drop_the_time() {
+        let (mut st, u) = multi();
+        st.errors[0].retries = 1;
+        st.errors.iter_mut().for_each(|e| e.time_ms = 0);
+        st.errors[0].time_ms = 400;
+        st.reread = 1;
+        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(
+            out.contains("cost of mistakes: 3 failed calls · 1 re-read"),
+            "{out}"
+        );
+        assert!(!out.contains("· 0s"), "{out}");
+    }
+
+    #[test]
+    fn long_kind_is_cut_and_columns_align() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        st.agents[1].kind = "general-purpose".into();
+        let led = |m: &str| Ledger {
+            output: 1,
+            last_model: Some(m.into()),
+            ..Default::default()
+        };
+        let mut agents = std::collections::BTreeMap::new();
+        agents.insert(st.agents[1].id.clone(), led("claude-haiku-5-5"));
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: led("claude-opus-5-5-20261001"),
+                agents,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            90,
+            60,
+            false,
+        ));
+        assert!(out.contains("general-pur… "), "{out}");
+        let col = |l: &str, m: &str| {
+            l.chars()
+                .take_while(|_| true)
+                .collect::<Vec<_>>()
+                .windows(m.chars().count())
+                .position(|w| w.iter().collect::<String>() == m)
+        };
+        let main = out.lines().find(|l| l.contains(" main ")).unwrap();
+        let sub = out.lines().find(|l| l.contains("general-pur")).unwrap();
+        assert_eq!(col(main, "opus-5-5"), col(sub, "haiku-5-5"), "{out}");
     }
 
     #[test]
