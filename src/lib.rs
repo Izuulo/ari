@@ -5,6 +5,7 @@ pub mod event;
 pub mod hook;
 pub mod paths;
 pub mod replay;
+pub mod sessions;
 pub mod setup;
 pub mod state;
 pub mod statusline;
