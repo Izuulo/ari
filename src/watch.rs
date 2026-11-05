@@ -251,6 +251,16 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         } else {
             (Verdict::Idle as u8 + 1, dim)
         };
+        let mut detail = match (&st.needs_you, rank == Verdict::NeedsYou as u8) {
+            (Some(ask), true) => ask.clone(),
+            _ => detail.replace(" │ ", " · "),
+        };
+        if detail.is_empty()
+            && rank >= Verdict::Done as u8
+            && let Some(a) = tokens::cached(&s.dir).main.away
+        {
+            detail = format!("“{a}”");
+        }
         entries.push(Entry {
             rank,
             verdict: verdict.to_string(),
@@ -262,10 +272,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
                 .unwrap_or_else(|| s.id.chars().take(8).collect()),
             title: u.session_name.clone(),
             // What it's asking beats what it was doing.
-            detail: match (&st.needs_you, rank == Verdict::NeedsYou as u8) {
-                (Some(ask), true) => ask.clone(),
-                _ => detail.replace(" │ ", " · "),
-            },
+            detail,
             ctx: u.ctx_pct,
             cost: u.cost_usd,
             age_ms: now.saturating_sub(s.last_ms),
@@ -583,6 +590,35 @@ mod key_tests {
             1,
             "limits once, not per row: {out}"
         );
+    }
+
+    #[test]
+    fn quiet_all_row_shows_the_away_summary() {
+        let root = std::env::temp_dir().join(format!("ari-away-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let now = hook::now_ms();
+        let d = root.join("sessions").join("cccc");
+        std::fs::create_dir_all(&d).unwrap();
+        let ev = |dt: u64, rest: &str| format!(r#"{{"t":{},{rest}}}"#, now - dt);
+        let evs = [
+            ev(60_000, r#""e":"SessionStart""#),
+            ev(50_000, r#""e":"UserPromptSubmit","msg":"go""#),
+            ev(40_000, r#""e":"Stop""#),
+        ];
+        std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
+        std::fs::write(d.join("usage.json"), r#"{"session_id":"cccc"}"#).unwrap();
+        let c = tokens::TokenCache {
+            v: 3,
+            main: tokens::Ledger {
+                away: Some("Next, wire the desktop".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        std::fs::write(d.join("tokens.json"), serde_json::to_vec(&c).unwrap()).unwrap();
+        let out = panel::to_plain(&all_lines(&root, &config::Config::default(), now, 110));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(out.contains("“Next, wire the desktop”"), "{out}");
     }
 
     #[test]

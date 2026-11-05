@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 /// Requests with fewer input-side tokens than this don't move the hit-rate needle.
 const MIN_HIT_TOKENS: u64 = 1000;
 const RECENT_IDS: usize = 16;
@@ -38,6 +38,8 @@ pub struct Ledger {
     pub by_model: BTreeMap<String, ModelTokens>,
     /// Model of the latest counted response.
     pub last_model: Option<String>,
+    /// Latest `away_summary` system record: first line, capped.
+    pub away: Option<String>,
 }
 
 impl Ledger {
@@ -66,6 +68,14 @@ impl Ledger {
     }
 
     fn apply(&mut self, entry: &Value) {
+        if entry.get("subtype").and_then(Value::as_str) == Some("away_summary")
+            && let Some(l) = entry
+                .get("content")
+                .and_then(Value::as_str)
+                .and_then(|c| c.lines().map(str::trim).find(|l| !l.is_empty()))
+        {
+            self.away = Some(crate::event::truncate(l, 200));
+        }
         if entry.get("type").and_then(Value::as_str) != Some("assistant") {
             return;
         }
@@ -300,6 +310,15 @@ pub fn savings(l: &Ledger, cost_usd: Option<f64>, prices: &BTreeMap<String, Pric
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn away_summary_keeps_the_last_first_line() {
+        let l = ledger_from(
+            "{\"type\":\"system\",\"subtype\":\"away_summary\",\"content\":\"old\"}\n\
+             {\"type\":\"system\",\"subtype\":\"away_summary\",\"content\":\"\\nnew one\\nsecond\"}\n",
+        );
+        assert_eq!(l.away.as_deref(), Some("new one"));
+    }
+
     use super::*;
     use crate::state::Agent;
 

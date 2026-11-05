@@ -230,6 +230,12 @@ pub fn lines(
                 if let Some(b) = badges(st, u, &c) {
                     rows.insert(1.min(rows.len()), b);
                 }
+                if st.first_t > 0
+                    && matches!(v, Verdict::Idle | Verdict::Done)
+                    && let Some(a) = x.tokens.as_ref().and_then(|t| t.main.away.as_ref())
+                {
+                    rows.push(vec![c.dim(format!("“{a}”"))]);
+                }
                 rows
             },
         },
@@ -1778,6 +1784,47 @@ mod tests {
         assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn away_summary_row_only_when_quiet() {
+        use crate::tokens::{Ledger, TokenCache};
+        let (mut st, u) = multi();
+        let x = Extras {
+            tokens: Some(TokenCache {
+                main: Ledger {
+                    away: Some("Next, wire the desktop".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let show = |st: &State| {
+            to_plain(&lines(
+                st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                60,
+                60,
+                false,
+            ))
+        };
+        assert!(!show(&st).contains("“Next, wire"), "on track");
+        st.turn_active = false;
+        st.background = 0;
+        st.agents.iter_mut().for_each(|a| a.done = true);
+        st.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        st.errors.clear();
+        st.recent.clear();
+        st.last_main_result = None;
+        assert!(show(&st).contains("“Next, wire the desktop”"), "done");
     }
 
     #[test]
