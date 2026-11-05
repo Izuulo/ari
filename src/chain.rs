@@ -83,7 +83,8 @@ fn finish(mut r: Running, deadline: Instant) -> Option<Vec<u8>> {
     if out.last() == Some(&b'\n') {
         out.pop();
     }
-    Some(out)
+    // A statusline that prints nothing (e.g. Orca's outside Orca) must not add a blank row.
+    (!out.is_empty()).then_some(out)
 }
 
 #[cfg(test)]
@@ -141,6 +142,11 @@ mod tests {
             "{:?}",
             t.elapsed()
         );
+    }
+
+    #[test]
+    fn empty_output_adds_no_row() {
+        assert_eq!(run(&["cat >/dev/null", "true", "echo x"], "{}"), vec!["x"]);
     }
 
     #[test]
