@@ -43,6 +43,8 @@ struct App {
     color: bool,
     /// A live terminal: the `--all` list is selectable (not `--once`).
     interactive: bool,
+    /// The session opened from the `--all` list: it stays put while the urgency order shifts.
+    pinned: Option<PathBuf>,
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -135,28 +137,35 @@ impl App {
         self.picked_at = None;
     }
 
-    fn lines(&self, width: u16, height: u16) -> Vec<Line<'static>> {
+    fn lines(&mut self, width: u16, height: u16) -> Vec<Line<'static>> {
         self.frame_lines(width, height).0
     }
 
     /// The frame's lines, and the entry count while the `--all` list is what's drawn.
-    fn frame_lines(&self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
+    fn frame_lines(&mut self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
         let now = hook::now_ms();
         if self.mode == Mode::All {
-            let entries = all_entries(&self.root, &self.cfg, now);
-            if self.view.open
-                && let Some(e) = entries.get(self.view.sel)
-            {
-                let st = state::load_session(&e.dir);
-                let usage = load_usage(&e.dir);
-                let x = bar::Extras {
-                    tokens: Some(tokens::cached(&e.dir)),
-                    samples: burn::recent(&e.dir),
-                    plan: state::plan_file(&st),
-                    ..Default::default()
-                };
-                return (self.panel(&e.dir, &st, &usage, x, width, height, now), None);
+            if !self.view.open {
+                self.pinned = None;
+            } else if self.pinned.is_none() {
+                let entries = all_entries(&self.root, &self.cfg, now);
+                self.pinned = entries.get(self.view.sel).map(|e| e.dir.clone());
             }
+            if let Some(dir) = self.pinned.clone() {
+                if dir.is_dir() {
+                    let st = state::load_session(&dir);
+                    let usage = load_usage(&dir);
+                    let x = bar::Extras {
+                        tokens: Some(tokens::cached(&dir)),
+                        samples: burn::recent(&dir),
+                        plan: state::plan_file(&st),
+                        ..Default::default()
+                    };
+                    return (self.panel(&dir, &st, &usage, x, width, height, now), None);
+                }
+                self.pinned = None; // gone: back to the list, tui_loop clears `open`
+            }
+            let entries = all_entries(&self.root, &self.cfg, now);
             let sel = self.interactive.then_some(self.view.sel);
             let lines = list_lines(&entries, sel, &self.cfg, now, width);
             return (lines, self.interactive.then_some(entries.len()));
@@ -331,7 +340,11 @@ fn list_lines(
     let dim = Style::new().add_modifier(Modifier::DIM);
     let bold = Style::new().add_modifier(Modifier::BOLD);
     // Rate limits are per account: show one session's once, not one per row.
-    let limits = entries.iter().find_map(|e| e.limits);
+    let limits = entries
+        .iter()
+        .filter(|e| e.limits.is_some())
+        .min_by_key(|e| e.age_ms)
+        .and_then(|e| e.limits);
     let total: f64 = entries.iter().filter_map(|e| e.cost).sum();
 
     let w = width as usize;
@@ -502,6 +515,7 @@ pub fn run(args: &[String]) -> ! {
         last_verdict: None,
         color: std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()),
         interactive: false,
+        pinned: None,
     };
     app.refresh();
 
@@ -589,6 +603,7 @@ fn tui_loop(
         list_len = n;
         if let Some(n) = n {
             view.sel = view.sel.min(n.saturating_sub(1));
+            view.open = false; // a list frame means nothing is open (or it vanished)
         }
         term.draw(|f| f.render_widget(Paragraph::new(lines).alignment(align), f.area()))?;
         if !event::poll(if animating { FAST } else { SLOW })? {
@@ -766,6 +781,80 @@ mod key_tests {
     }
 
     #[test]
+    fn opened_session_stays_pinned_when_urgency_reorders() {
+        let root = std::env::temp_dir().join(format!("ari-pin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let now = hook::now_ms();
+        let ev = |dt: u64, rest: &str| format!(r#"{{"t":{},{rest}}}"#, now - dt);
+        let write = |id: &str, extra: Option<String>| {
+            let d = root.join("sessions").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            let mut evs = vec![
+                ev(60_000, r#""e":"SessionStart""#),
+                ev(50_000, r#""e":"UserPromptSubmit","msg":"go""#),
+            ];
+            evs.extend(extra);
+            std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
+            let u = serde_json::json!({"session_id": id, "session_name": format!("name-{id}")});
+            std::fs::write(d.join("usage.json"), u.to_string()).unwrap();
+        };
+        write("aaaa", None);
+        write("bbbb", None);
+        let mut app = App {
+            root: root.clone(),
+            mode: Mode::All,
+            cfg: config::Config::default(),
+            view: View::default(),
+            dir: None,
+            st: State::default(),
+            usage: Usage::default(),
+            x: bar::Extras::default(),
+            mtimes: (None, None),
+            picked_at: None,
+            recap_built: None,
+            recap_dirty: false,
+            last_verdict: None,
+            color: false,
+            interactive: true,
+            pinned: None,
+        };
+        let (_, n) = app.frame_lines(100, 40);
+        assert_eq!(n, Some(2));
+        app.view.open = true;
+        let title = |app: &mut App| panel::to_plain(&app.frame_lines(100, 40).0);
+        let first = title(&mut app);
+        let open_id = app.pinned.clone().unwrap();
+        let other = if open_id.ends_with("aaaa") {
+            "bbbb"
+        } else {
+            "aaaa"
+        };
+        // The other session now needs you, so it sorts above the opened one.
+        write(
+            other,
+            Some(ev(
+                1_000,
+                r#""e":"Notification","kind":"permission_prompt","msg":"ok?""#,
+            )),
+        );
+        let second = title(&mut app);
+        assert_eq!(app.pinned, Some(open_id.clone()));
+        assert!(first.contains(&format!(
+            "name-{}",
+            open_id.file_name().unwrap().to_string_lossy()
+        )));
+        assert!(second.contains(&format!(
+            "name-{}",
+            open_id.file_name().unwrap().to_string_lossy()
+        )));
+        // Gone: back to the list.
+        std::fs::remove_dir_all(&open_id).unwrap();
+        let (_, n) = app.frame_lines(100, 40);
+        assert_eq!((n, app.pinned.is_none()), (Some(1), true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn list_marks_the_selected_row_and_ends_with_a_hint() {
         let e = |p: &str| Entry {
             rank: 0,
@@ -791,6 +880,27 @@ mod key_tests {
             "↑↓ select · enter open · esc back · q quit"
         );
         assert!(last.spans[0].style.add_modifier.contains(Modifier::DIM));
+        let mut old = e("old");
+        old.rank = 0;
+        old.age_ms = 9_000_000;
+        old.limits = Some((
+            Some(usage::Limit {
+                pct: 11.0,
+                resets_at: 0,
+            }),
+            None,
+        ));
+        let mut fresh = e("fresh");
+        fresh.rank = 3;
+        fresh.limits = Some((
+            Some(usage::Limit {
+                pct: 77.0,
+                resets_at: 0,
+            }),
+            None,
+        ));
+        let head = panel::to_plain(&list_lines(&[old, fresh], None, &cfg, 0, 100)[..1]);
+        assert!(head.contains("5h 77%") && !head.contains("11%"), "{head}");
         let once = list_lines(&es, None, &cfg, 0, 100);
         assert_eq!(once.len(), 4, "no hint without a selection");
     }
