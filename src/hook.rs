@@ -43,8 +43,9 @@ fn handle() {
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
+    // Create-only, on any event: sessions that began before ARI was installed still get a cwd.
+    write_meta(&dir, &raw, t);
     if ev.e == "SessionStart" {
-        write_meta(&dir, &raw, t);
         let days = config::load().retention_days;
         prune(&root, Duration::from_secs(days * 86_400), &dir);
     }
