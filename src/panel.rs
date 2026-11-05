@@ -947,7 +947,7 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )]);
         }
     }
-    if let Some(last) = st.test_runs.back() {
+    if let Some(last) = st.headline_run() {
         let mut row = vec![
             c.dim("tests   "),
             if last.fail > 0 {
@@ -959,18 +959,12 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
                 c.span(format!("✓ {}", last.pass), Style::new().fg(Color::Green))
             },
         ];
-        let runs: Vec<_> = st.test_runs.iter().rev().take(10).rev().collect();
+        let full: Vec<_> = st.test_runs.iter().filter(|r| !r.partial).collect();
+        let runs: Vec<_> = full.iter().rev().take(10).rev().collect();
         if runs.len() > 1 {
-            let lo = runs.iter().map(|r| r.pass).min().unwrap_or(0);
-            let hi = runs.iter().map(|r| r.pass).max().unwrap_or(0);
+            let vals: Vec<f64> = runs.iter().map(|r| f64::from(r.pass)).collect();
             row.push(Span::raw(" · "));
-            for r in &runs {
-                let i = if hi > lo {
-                    (r.pass - lo) * 7 / (hi - lo)
-                } else {
-                    7
-                };
-                let bar = "▁▂▃▄▅▆▇█".chars().nth(i as usize).unwrap_or('█');
+            for (r, bar) in runs.iter().zip(crate::bar::spark(&vals).chars()) {
                 let style = if r.fail > 0 {
                     Style::new().fg(Color::Red)
                 } else {
@@ -1238,10 +1232,27 @@ mod tests {
         use crate::state::TestRun;
         let (mut st, u) = multi();
         for (pass, fail) in [(10, 0), (40, 0), (69, 0), (67, 2)] {
-            st.test_runs.push_back(TestRun { t: NOW, pass, fail });
+            st.test_runs.push_back(TestRun {
+                t: NOW,
+                pass,
+                fail,
+                ..Default::default()
+            });
         }
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("tests   ✗ 2/69 · ▁▄█▇ last 4 runs"), "{out}");
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 1,
+            partial: true,
+            ..Default::default()
+        });
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(
+            out.contains("▁▄█▇ last 4 runs"),
+            "partial runs stay off the trend: {out}"
+        );
+        st.test_runs.pop_back();
         st.turn_active = false;
         st.background = 0;
         st.agents.iter_mut().for_each(|a| a.done = true);
@@ -1499,11 +1510,13 @@ mod tests {
                     t: 1,
                     pass: 58,
                     fail: 0,
+                    ..Default::default()
                 }),
                 crate::state::TestRun {
                     t: 2,
                     pass: 71,
                     fail: 0,
+                    ..Default::default()
                 },
             )),
             files: vec![("src/a.rs".into(), 2), ("src/b.rs".into(), 1)],

@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -155,6 +155,7 @@ pub struct TestRun {
     pub t: u64,
     pub pass: u32,
     pub fail: u32,
+    pub partial: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -330,6 +331,7 @@ impl State {
                         t: ev.t,
                         pass,
                         fail,
+                        partial: ev.partial,
                     });
                     if self.test_runs.len() > 20 {
                         self.test_runs.pop_front();
@@ -687,6 +689,15 @@ impl State {
     /// The latest test run had failures.
     pub fn tests_failing(&self) -> bool {
         self.test_runs.back().is_some_and(|r| r.fail > 0)
+    }
+
+    /// The run to headline: the latest if it failed, else the latest full run.
+    pub fn headline_run(&self) -> Option<&TestRun> {
+        self.test_runs
+            .back()
+            .filter(|r| r.fail > 0)
+            .or_else(|| self.test_runs.iter().rev().find(|r| !r.partial))
+            .or(self.test_runs.back())
     }
 
     pub fn tasks_done(&self) -> (usize, usize) {

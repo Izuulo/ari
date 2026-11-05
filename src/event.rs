@@ -43,6 +43,9 @@ pub struct Event {
     /// (passed, failed), when this was a test run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<(u32, u32)>,
+    /// The test run was filtered (`N filtered out` / `N deselected`), not the full suite.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub partial: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -90,7 +93,10 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
             let resp = raw.get("tool_response").unwrap_or(&null);
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
-            ev.tests = test_run(input, &format!("{}\n{}", out("stdout"), out("stderr")));
+            (ev.tests, ev.partial) = split_run(test_run(
+                input,
+                &format!("{}\n{}", out("stdout"), out("stderr")),
+            ));
         }
         "PostToolUseFailure" => {
             ev.ok = Some(false);
@@ -104,7 +110,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                     .map(|n| format!("exit {}", n.trim()))
             };
             ev.msg = Some(truncate(failure_line(err), 160));
-            ev.tests = test_run(input, err);
+            (ev.tests, ev.partial) = split_run(test_run(input, err));
         }
         "UserPromptSubmit" => {
             ev.msg = s("prompt")
@@ -156,7 +162,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
 /// `N passed` and `N failed`.
 // shortcut: sums every count (cargo prints one line per test binary) and skips jest/vitest
 // suite and file totals; teach it other runners' summaries when they show up.
-fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
+fn test_run(input: &Value, out: &str) -> Option<(u32, u32, bool)> {
     let cmd = input.get("command").and_then(Value::as_str)?;
     // A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
     let runs_tests = cmd.split_whitespace().any(|w| {
@@ -169,6 +175,7 @@ fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
         return None;
     }
     let mut sum = None;
+    let mut partial = false;
     for line in out
         .lines()
         .filter(|l| !l.contains("Suites") && !l.contains("Files"))
@@ -179,11 +186,16 @@ fn test_run(input: &Value, out: &str) -> Option<(u32, u32)> {
             match p[1].trim_end_matches([';', ',']) {
                 "passed" => sum.get_or_insert((0, 0)).0 += n,
                 "failed" => sum.get_or_insert((0, 0)).1 += n,
+                "filtered" | "deselected" => partial |= n > 0,
                 _ => {}
             }
         }
     }
-    sum
+    sum.map(|(p, f)| (p, f, partial))
+}
+
+fn split_run(r: Option<(u32, u32, bool)>) -> (Option<(u32, u32)>, bool) {
+    (r.map(|(p, f, _)| (p, f)), r.is_some_and(|r| r.2))
 }
 
 fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
@@ -364,18 +376,37 @@ mod tests {
     }
 
     #[test]
+    fn test_runs_flag_partial() {
+        let cmd = |c: &str| json!({ "command": c });
+        let t = |c: &str, o: &str| test_run(&cmd(c), o);
+        let part = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 104 filtered out";
+        assert_eq!(t("cargo test foo", part), Some((1, 0, true)));
+        assert_eq!(
+            t("cargo test", &part.replace("104", "0")),
+            Some((1, 0, false))
+        );
+        assert_eq!(
+            t("pytest -k x", "== 2 passed, 3 deselected in 0.1s =="),
+            Some((2, 0, true))
+        );
+    }
+
+    #[test]
     fn test_runs_count_passes() {
         let cmd = |c: &str| json!({ "command": c });
         let cargo = "test result: ok. 67 passed; 0 failed\ntest result: ok. 3 passed; 0 failed";
-        assert_eq!(test_run(&cmd("cargo test"), cargo), Some((70, 0)));
+        assert_eq!(test_run(&cmd("cargo test"), cargo), Some((70, 0, false)));
         let cargo_red = "test result: FAILED. 67 passed; 2 failed; 0 ignored";
-        assert_eq!(test_run(&cmd("cargo test"), cargo_red), Some((67, 2)));
+        assert_eq!(
+            test_run(&cmd("cargo test"), cargo_red),
+            Some((67, 2, false))
+        );
         let jest =
             "Test Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 12 passed, 13 total";
-        assert_eq!(test_run(&cmd("npx jest"), jest), Some((12, 1)));
+        assert_eq!(test_run(&cmd("npx jest"), jest), Some((12, 1, false)));
         assert_eq!(
             test_run(&cmd("pytest -q"), "== 1 failed, 5 passed in 0.3s =="),
-            Some((5, 1))
+            Some((5, 1, false))
         );
         assert_eq!(
             test_run(&cmd("cat notes"), "5 passed"),
@@ -395,7 +426,7 @@ mod tests {
             "cargo nextest run",
             "uv run pytest",
         ] {
-            assert_eq!(test_run(&cmd(c), one), Some((3, 0)), "{c}");
+            assert_eq!(test_run(&cmd(c), one), Some((3, 0, false)), "{c}");
         }
         assert_eq!(
             test_run(&cmd("cargo test"), "error[E0425]"),
@@ -407,6 +438,7 @@ mod tests {
             "tool_input": {"command": "cargo test"}, "tool_response": {"stdout": cargo, "stderr": ""}}),
         );
         assert_eq!(ev.tests, Some((70, 0)));
+        assert!(!ev.partial);
     }
 
     #[test]

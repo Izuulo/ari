@@ -123,6 +123,23 @@ pub fn visible_width(s: &str) -> usize {
     n
 }
 
+/// Sparkline of `values`, min..max mapped onto `▁`..`█`; flat series are all `▇`.
+pub fn spark(values: &[f64]) -> String {
+    let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    values
+        .iter()
+        .map(|v| {
+            if hi > lo {
+                let i = ((v - lo) / (hi - lo) * 7.0) as usize;
+                "▁▂▃▄▅▆▇█".chars().nth(i.min(7)).unwrap_or('█')
+            } else {
+                '▇'
+            }
+        })
+        .collect()
+}
+
 fn limit(name: &str, l: Option<Limit>, now_ms: u64, cfg: &Config, color: bool) -> String {
     match l {
         Some(l) => {
@@ -251,7 +268,7 @@ pub fn render(
         ));
     }
     if from_hooks("tests")
-        && let Some(r) = st.test_runs.back()
+        && let Some(r) = st.headline_run()
     {
         segs.push(if r.fail > 0 {
             paint(
@@ -481,6 +498,7 @@ mod tests {
             t: NOW,
             pass: 70,
             fail: 0,
+            ..Default::default()
         });
         let row = row_now(&st);
         assert!(row.contains("│ ✗ 1 │ ✓ 70 tests │ ctx"), "{row}");
@@ -488,9 +506,32 @@ mod tests {
             t: NOW,
             pass: 67,
             fail: 2,
+            ..Default::default()
         });
         let row = row_now(&st);
         assert!(row.contains("│ ✗ 1 │ ✗ 2/69 tests │ ctx"), "{row}");
+        st.test_runs.pop_back();
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 1,
+            partial: true,
+            ..Default::default()
+        });
+        let row = row_now(&st);
+        assert!(
+            row.contains("✓ 70 tests"),
+            "partial run keeps the full headline: {row}"
+        );
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 2,
+            fail: 1,
+            partial: true,
+        });
+        let row = row_now(&st);
+        assert!(row.contains("✗ 1/3 tests"), "{row}");
+        assert_eq!(spark(&[1., 2., 3.]), "▁▄█");
+        assert_eq!(spark(&[5., 5.]), "▇▇");
         let soon = Extras {
             compacts_in: Some(4),
             ..Default::default()
