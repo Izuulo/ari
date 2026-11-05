@@ -3,6 +3,7 @@ pub mod bar;
 pub mod burn;
 pub mod chain;
 pub mod config;
+pub mod demo;
 pub mod event;
 pub mod hook;
 pub mod panel;
