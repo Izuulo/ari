@@ -51,6 +51,8 @@ pub struct State {
     pub first_t: u64,
     pub last_t: u64,
     pub ended: bool,
+    /// Background tasks (shells, agents) still running at the last Stop.
+    pub background: u32,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -74,6 +76,8 @@ pub struct Agent {
     pub result: Option<String>,
     pub transcript: Option<String>,
     pub ended_t: Option<u64>,
+    /// When the tool it's running now started; `None` between tools.
+    pub running_since: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -181,6 +185,7 @@ impl State {
                 self.start_turn();
                 let a = self.agent_mut(aid, ev);
                 a.calls += 1;
+                a.running_since = Some(ev.t);
                 a.act = ev.act.clone();
                 self.calls.push_back(Call {
                     agent: aid.into(),
@@ -194,6 +199,7 @@ impl State {
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
+                self.agent_mut(aid, ev).running_since = None;
                 self.tool_result(ev, aid);
                 self.update_tasks(ev);
             }
@@ -209,6 +215,7 @@ impl State {
                 a.result = ev.msg.clone();
                 a.transcript = ev.path.clone();
                 a.act = None;
+                a.running_since = None;
             }
             "Notification" => {
                 if ev.kind.as_deref().is_some_and(|k| NEEDS_YOU.contains(&k)) {
@@ -231,7 +238,9 @@ impl State {
                     e.resolved_t = Some(ev.t);
                     e.resolved_by = Some("main".into());
                 }
-                if ev.bg.unwrap_or(0) == 0 {
+                self.background = ev.bg.unwrap_or(0);
+                self.agents[0].running_since = None;
+                if self.background == 0 {
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
@@ -240,6 +249,7 @@ impl State {
                 self.turn_active = false;
                 self.turn_failed = true;
                 self.agents[0].act = None;
+                self.agents[0].running_since = None;
                 let kind = ev.kind.clone().unwrap_or_else(|| "unknown".into());
                 self.add_error(ErrorRec {
                     sig: format!("StopFailure:{kind}"),
@@ -258,6 +268,10 @@ impl State {
             "SessionEnd" => {
                 self.ended = true;
                 self.turn_active = false;
+                self.background = 0;
+                for a in &mut self.agents {
+                    a.running_since = None;
+                }
             }
             _ => {}
         }
@@ -514,6 +528,13 @@ impl State {
         }
     }
 
+    /// How long the agent's current tool has been running, if one is.
+    pub fn tool_running(&self, a: &Agent, now: u64) -> Option<u64> {
+        a.running_since
+            .filter(|_| self.agent_status(a, now) == AgentStatus::Running)
+            .map(|t| now.saturating_sub(t))
+    }
+
     pub fn running_agents(&self, now: u64) -> usize {
         self.agents
             .iter()
@@ -698,6 +719,27 @@ mod tests {
         );
         s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
         assert_eq!(s.verdict(0), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn tracks_the_running_tool() {
+        let pre = Event {
+            t: 1_000,
+            ..call("main", "Bash", 1, "$ cargo test")
+        };
+        let mut s = run(&[prompt("go"), pre]);
+        assert_eq!(s.tool_running(&s.agents[0], 13_000), Some(12_000));
+        let post = Event {
+            t: 14_000,
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        };
+        s.apply(&post);
+        assert_eq!(s.tool_running(&s.agents[0], 15_000), None);
+        s.apply(&Event {
+            bg: Some(2),
+            ..stop(0)
+        });
+        assert_eq!((s.background, s.turn_active), (2, true));
     }
 
     #[test]
