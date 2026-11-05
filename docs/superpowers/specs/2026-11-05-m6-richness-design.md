@@ -38,7 +38,7 @@ Not taken: subagent stats from the Agent tool's `tool_response` (ARI already get
 - **Trends:** ctx row ends with a sparkline of the last 12 samples; cost row `$3.48 · $2.10/h ▁▂▃▅▆`. One sparkline helper, shared with the tests trend.
 - **Two columns** at ≥ 120 columns: the header spans the width; agents and errors on the left; usage, session and turns on the right.
 - **Interactive `--all`:** `↑`/`↓` (or `k`/`j`) select, `enter` opens that session's panel, `esc` goes back to the list. The selected row is reversed. A dim key hint is the last line.
-- **Long agent lists** (added at the user's request): running agents always show; finished helpers with no calls and no tokens are hidden; only the 3 most recent finished agents show and the rest fold into one row `✓ 27 done · 24 general-purpose · 3 Explore · 9.1M tok (a)`; `a` expands everything.
+- **Long agent lists** (added at the user's request): the default view's `… N more done` row names what's hidden (`✓ 27 more done · 24 general-purpose · 3 Explore · 9.1M tok (a)`); the expanded view (`a`) groups done agents into one row per kind and model (`✓ 20× general-purpose · sonnet-5-5 · 5.9M tok · 18m`) and folds no-call helpers into one row, so it stays a few rows instead of dozens.
 - **Plan files (optional):** with no task list, a Markdown file the session edited that has `- [ ]` checkboxes counts as the plan (`plan m6-richness.md 3/14`). Sessions without the task tools then still show progress.
 - **Glyphs** are single-width and have `--ascii` equivalents: `⎇`, `↳` (background), `◷` (cron), sparkline blocks `▁`–`▇`.
 
