@@ -30,6 +30,15 @@ pub fn session_dir(root: &Path, id: &str) -> Option<PathBuf> {
     valid_session_id(id).then(|| root.join("sessions").join(id))
 }
 
+/// Write via a temp file in the same dir + rename, so readers never see a partial file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
