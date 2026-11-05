@@ -122,6 +122,9 @@ impl App {
             return waiting(&self.mode);
         }
         let mut x = self.x.clone();
+        if let Some(d) = &self.dir {
+            x.conflicts = crate::conflicts::cached(&self.root, d, now);
+        }
         x.transcript_age_ms = self
             .dir
             .as_deref()
@@ -200,6 +203,7 @@ fn all_lines(root: &Path, cfg: &config::Config, now: u64, width: u16) -> Vec<Lin
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
                 .and_then(|t| tokens::transcript_age(&t, now)),
+            conflicts: crate::conflicts::cached(root, &s.dir, now),
             ..Default::default()
         };
         let row = bar::render(

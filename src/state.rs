@@ -60,6 +60,8 @@ pub struct State {
     pub reads: BTreeMap<String, Vec<u64>>,
     /// Reads repeating an identical earlier read of an unchanged file.
     pub reread: u32,
+    /// Absolute path → last successful edit time, for conflicts across sessions.
+    pub edits: BTreeMap<String, u64>,
     /// Start times of the last real prompts (turns).
     pub prompts: VecDeque<u64>,
 }
@@ -587,7 +589,8 @@ impl State {
                     seen.push(h);
                 }
             }
-            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" if ev.ok == Some(true) => {
+                self.edits.insert(path.to_string(), ev.t);
                 self.reads.retain(|k, _| !k.ends_with(&format!("\t{path}")));
             }
             _ => {}

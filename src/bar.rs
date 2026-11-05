@@ -18,6 +18,8 @@ pub struct Extras {
     pub transcript_age_ms: Option<u64>,
     /// Turns until context auto-compacts at the current growth.
     pub compacts_in: Option<u32>,
+    /// Files another live session is editing too.
+    pub conflicts: Vec<crate::conflicts::Conflict>,
 }
 
 /// Forecasts are only worth showing this close.
@@ -191,6 +193,11 @@ pub fn render(
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
+    if shown("conflicts")
+        && let Some(c) = crate::conflicts::summary(&x.conflicts)
+    {
+        segs.push(paint(color, "1;33", &c));
+    }
     if from_hooks("now")
         && let Some(now) = now_doing(st, now_ms)
     {
@@ -474,6 +481,18 @@ mod tests {
         };
         let row = render(&st, &u, &later, &Config::default(), NOW, 200, false);
         assert!(!row.contains("~11t"), "{row}");
+        let clash = Extras {
+            conflicts: vec![crate::conflicts::Conflict {
+                path: "/x/a.rs".into(),
+                other: "tankobon #bbbb".into(),
+            }],
+            ..Default::default()
+        };
+        let row = render(&st, &u, &clash, &Config::default(), NOW, 200, false);
+        assert!(
+            row.starts_with("● ON TRACK │ ⚠ a.rs also in tankobon #bbbb │"),
+            "{row}"
+        );
         let mut done = st.clone();
         done.turn_active = false;
         done.background = 0;

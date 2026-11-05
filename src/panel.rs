@@ -205,14 +205,26 @@ pub fn lines(
     let mut sections = vec![
         Section {
             title: None,
-            rows: header(
-                st,
-                u.session_name.as_deref(),
-                x.looks_active(),
-                &c,
-                v,
-                cfg.thresholds.stuck_repeats,
-            ),
+            rows: {
+                let mut rows = header(
+                    st,
+                    u.session_name.as_deref(),
+                    x.looks_active(),
+                    &c,
+                    v,
+                    cfg.thresholds.stuck_repeats,
+                );
+                if let Some(s) = crate::conflicts::summary(&x.conflicts) {
+                    rows.insert(
+                        1.min(rows.len()),
+                        vec![c.span(
+                            s,
+                            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )],
+                    );
+                }
+                rows
+            },
         },
         Section {
             title: Some("agents"),
@@ -1133,8 +1145,10 @@ mod tests {
         };
         st.agents.retain(|a| a.id == "main");
         st.agents.push(done("instant", 0, NOW - 5_000, NOW - 5_000));
-        st.agents.push(done("oldone", 9, NOW - 30 * 60_000, NOW - 20 * 60_000));
-        st.agents.push(done("recent", 4, NOW - 90_000, NOW - 60_000));
+        st.agents
+            .push(done("oldone", 9, NOW - 30 * 60_000, NOW - 20 * 60_000));
+        st.agents
+            .push(done("recent", 4, NOW - 90_000, NOW - 60_000));
         let out = render(&st, &u, View::default(), 70, 60);
         assert!(out.contains("recent result"), "{out}");
         assert!(!out.contains("instant result"), "{out}");
@@ -1145,7 +1159,39 @@ mod tests {
             ..View::default()
         };
         let out = render(&st, &u, all, 70, 60);
-        assert!(out.contains("instant result") && out.contains("oldone result"), "{out}");
+        assert!(
+            out.contains("instant result") && out.contains("oldone result"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn conflict_under_header() {
+        let (st, u) = multi();
+        let x = Extras {
+            conflicts: vec![crate::conflicts::Conflict {
+                path: "/x/a.rs".into(),
+                other: "tankobon #bbbb".into(),
+            }],
+            ..Default::default()
+        };
+        let out = to_plain(&lines(
+            &st,
+            &u,
+            &x,
+            &Config::default(),
+            View::default(),
+            NOW,
+            "12:41",
+            70,
+            60,
+            false,
+        ));
+        assert_eq!(
+            out.lines().nth(2).unwrap_or(""),
+            format!("│ {:<66} │", "⚠ a.rs also in tankobon #bbbb"),
+            "{out}"
+        );
     }
 
     #[test]
