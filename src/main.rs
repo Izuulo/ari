@@ -2,15 +2,23 @@ const USAGE: &str = "ari — a zero-token status panel for Claude Code
 
 usage:
   ari hook              hook entry point (called by Claude Code)
+  ari statusline        statusline entry point (called by Claude Code)
+  ari setup [--yes] [--dry-run]
+                        wire ARI into your statusline (chains the existing one)
+  ari uninstall [--yes] [--purge]
+                        restore your original statusline
   ari replay <dir>      print a recorded session as a timeline
   ari --version";
 
-use ari_cli::{hook, replay};
+use ari_cli::{hook, replay, setup, statusline};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("hook") => hook::run(),
+        Some("statusline") => statusline::run(),
+        Some("setup") => setup::run_setup(&args[1..]),
+        Some("uninstall") => setup::run_uninstall(&args[1..]),
         Some("replay") => replay::run(&args[1..]),
         Some("--version" | "-V") => println!("ari {}", env!("CARGO_PKG_VERSION")),
         _ => {

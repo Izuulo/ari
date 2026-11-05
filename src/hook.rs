@@ -1,14 +1,12 @@
 //! `ari hook`: called synchronously by Claude Code on every hook event.
 //! Rules: always exit 0, never print, append one line, do nothing heavy.
 
-use crate::{event, paths};
+use crate::{config, event, paths};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-pub const RETENTION: Duration = Duration::from_secs(7 * 86_400);
 
 pub fn run() -> ! {
     std::panic::set_hook(Box::new(|_| {}));
@@ -47,7 +45,8 @@ fn handle() {
     }
     if ev.e == "SessionStart" {
         write_meta(&dir, &raw, t);
-        prune(&root, RETENTION, &dir);
+        let days = config::load().retention_days;
+        prune(&root, Duration::from_secs(days * 86_400), &dir);
     }
     let _ = append(&dir.join("events.jsonl"), event::to_line(&ev).as_bytes());
 }

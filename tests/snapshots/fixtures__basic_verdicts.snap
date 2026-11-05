@@ -1,0 +1,9 @@
+---
+source: tests/fixtures.rs
+expression: "out.join(\"\\n\")"
+---
++  0.0s IDLE      after SessionStart       tasks 0/0 agents 0 errors 0
++  0.7s ON TRACK  after UserPromptSubmit   tasks 0/0 agents 0 errors 0
++ 13.3s RETRYING  after PostToolUseFailure tasks 1/3 agents 0 errors 1
++ 16.1s ON TRACK  after PostToolUse        tasks 1/3 agents 0 errors 0
++ 26.8s DONE      after Stop               tasks 3/3 agents 0 errors 0
