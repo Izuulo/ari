@@ -15,6 +15,7 @@
 - Running commands show with a live timer (`$ cargo test 1m15s`) in the row and on each agent's panel line; background tasks are counted.
 - Release builds can publish a Homebrew formula (needs the tap repo and token).
 - `docs/ROADMAP.md` lists what to build next.
+- Plan files: with no task list (the task tools are off by default), the newest Markdown file the session wrote with `- [ ]` checkboxes shows as its plan: `m6-richness ███░░ 3/15` in the statusline and the panel.
 - The statusline row leaves out `no plan yet` when there's no task list, so the row is shorter; the panel still says it.
 - Fix: with several sessions in one folder, `ari watch` could follow an idle one. Activity now comes from the hook log and transcript, not the statusline's constant `usage.json` writes.
 - The panel's session section shows the branch's open pull request and its review state (`pr #14 · changes requested`), or a GitLab merge request (`mr !3`).
