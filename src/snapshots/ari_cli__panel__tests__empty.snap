@@ -2,9 +2,9 @@
 source: src/panel.rs
 expression: "render(&State::default(), &Usage::default(), View::default(), 46, 40)"
 ---
-╭─ ARI (-_-)zz ────────────────────── 12:41 ─╮
-│ ◌ no hooks yet                             │
-│ start a new Claude Code session, or /relo… │
+╭─ ARI ────────────────────────────── 12:41 ─╮
+│ – not tracked                              │
+│ started before ARI's hooks loaded: start … │
 ├─ agents ───────────────────────────────────┤
 │ no activity yet                            │
 ├─ errors ───────────────────────────────────┤

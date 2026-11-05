@@ -112,7 +112,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
 hide = ["cost"]             # compact segments to drop: conflicts tasks agents errors tests ctx 5h 7d cost tokens
-face = true                 # the little (•_•) in the panel header
+face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere
 max_width = 0               # compact row width; 0 = terminal width

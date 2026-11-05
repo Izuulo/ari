@@ -319,7 +319,7 @@ pub fn lines(
             tail.push(Span::raw(" "));
             tail.extend(fit(
                 vec![c.span(
-                    format!("cd {}", tilde(d)),
+                    tilde(d),
                     Style::new().add_modifier(Modifier::BOLD),
                 )],
                 room,
@@ -443,7 +443,7 @@ fn frame_two(
     }
 }
 
-/// `ari recap` as a box: `╭─ ARI recap · since start ── cd ~/proj ─╮`, then the sections.
+/// `ari recap` as a box: `╭─ ARI recap · since start ── ~/proj ─╮`, then the sections.
 pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<'static>> {
     let w = (width as usize).max(12);
     let c = Ctx {
@@ -462,7 +462,7 @@ pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<
     if !r.dir.is_empty() && room >= 4 {
         tail = fit(
             vec![c.span(
-                format!(" cd {}", tilde(&r.dir)),
+                format!(" {}", tilde(&r.dir)),
                 Style::new().add_modifier(Modifier::BOLD),
             )],
             room,
@@ -485,7 +485,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
                 Style::new().add_modifier(Modifier::BOLD),
             )]];
         if let Some(t) = &r.title {
-            rows.push(vec![c.dim(format!("milestone: {t}"))]);
+            rows.push(vec![c.dim(t.clone())]);
         }
         out.push(Section { title: None, rows });
     }
@@ -721,15 +721,15 @@ fn header(
     if st.first_t == 0 {
         rows.push(vec![if active {
             c.span(
-                "● WORKING · no hooks yet, so no details",
+                "● WORKING · not tracked, so no details",
                 Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )
         } else {
-            c.dim("◌ no hooks yet")
+            c.dim("– not tracked")
         }]);
-        rows.push(vec![
-            c.dim("start a new Claude Code session, or /reload-plugins"),
-        ]);
+        rows.push(vec![c.dim(
+            "started before ARI's hooks loaded: start a new session, or /reload-plugins",
+        )]);
         return rows;
     }
     let left = if v == Verdict::Done && st.tests_failing() {
@@ -742,19 +742,10 @@ fn header(
     };
     let mut row = vec![left];
     // Claude Code's own session title beats a truncated first prompt.
-    if let Some(label) = title.map(String::from).or_else(|| st.label.clone()) {
-        let used = row_width(&row);
-        let room = c.inner.saturating_sub(used + 2);
-        if room >= 14 {
-            let text = format!("milestone: {label}");
-            let text = if text.width() > room {
-                fit(vec![Span::raw(text)], room)[0].content.to_string()
-            } else {
-                text
-            };
-            row.push(Span::raw(" ".repeat(c.inner - used - text.width())));
-            row.push(c.dim(text));
-        }
+    if let Some(label) = title.map(String::from).or_else(|| st.label.clone())
+        && c.inner.saturating_sub(row_width(&row)) >= 8
+    {
+        row.push(c.dim(format!(" · {label}")));
     }
     rows.push(row);
     if v == Verdict::Stuck
@@ -934,7 +925,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
                 },
             ),
             AgentStatus::Stale => (
-                c.span("◌", Style::new().fg(Color::Yellow)),
+                c.span("?", Style::new().fg(Color::Yellow)),
                 format!(
                     "stale {} · {}",
                     age(now.saturating_sub(a.last_t)),
@@ -1242,14 +1233,14 @@ fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
     match st.permission_mode.as_deref() {
         None | Some("default") => {}
         Some("bypassPermissions") => parts.push(c.span(
-            "BYPASS",
+            "bypass permissions",
             Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
         )),
-        Some(m) => parts.push(Span::raw(match m {
-            "plan" => "PLAN".into(),
-            "acceptEdits" => "EDITS".into(),
-            "auto" => "AUTO".into(),
-            "dontAsk" => "DON'T ASK".into(),
+        Some(m) => parts.push(c.dim(match m {
+            "plan" => "plan mode".into(),
+            "acceptEdits" => "accept edits".into(),
+            "auto" => "auto mode".into(),
+            "dontAsk" => "don't-ask mode".into(),
             other => other.to_string(),
         })),
     }
@@ -1643,7 +1634,7 @@ mod tests {
         };
         assert_eq!(
             badge_text(&st, &badge_usage()).as_deref(),
-            Some("Opus · high · fast · AUTO · ⎇ wt · PR #14 approved · +156 −23")
+            Some("Opus · high · fast · auto mode · ⎇ wt · PR #14 approved · +156 −23")
         );
         let (st, mut u) = multi();
         u.pr = Some(crate::usage::Pr {
@@ -1670,9 +1661,9 @@ mod tests {
         };
         let out = render(&State::default(), &u, View::default(), 70, 40);
         let l: Vec<_> = out.lines().collect();
-        assert!(l[1].contains("no hooks yet"), "{out}");
+        assert!(l[1].contains("– not tracked"), "{out}");
         assert!(l[2].contains("Opus · PR #14 approved"), "{out}");
-        assert!(l[3].contains("start a new Claude Code session"), "{out}");
+        assert!(l[3].contains("start a new session"), "{out}");
     }
 
     #[test]
@@ -1685,8 +1676,8 @@ mod tests {
             badge_text(&st, &Usage::default())
         };
         assert_eq!(mode("default"), None);
-        assert_eq!(mode("plan").as_deref(), Some("PLAN"));
-        assert_eq!(mode("dontAsk").as_deref(), Some("DON'T ASK"));
+        assert_eq!(mode("plan").as_deref(), Some("plan mode"));
+        assert_eq!(mode("dontAsk").as_deref(), Some("don't-ask mode"));
         assert_eq!(mode("weird").as_deref(), Some("weird"));
         let st = State {
             permission_mode: Some("bypassPermissions".into()),
@@ -1697,7 +1688,7 @@ mod tests {
             inner: 60,
         };
         let row = badges(&st, &Usage::default(), &c).unwrap();
-        assert_eq!(row[0].content, "BYPASS");
+        assert_eq!(row[0].content, "bypass permissions");
         assert_eq!(row[0].style.fg, Some(Color::Red));
         let both_zero = Usage {
             lines_added: Some(0),
@@ -1959,8 +1950,7 @@ mod tests {
         st.needs_you = Some("Claude needs your permission to use Bash".into());
         let out = render(&st, &u, View::default(), 50, 40);
         assert!(
-            out.contains("(◉_◉)")
-                && out.contains("◉ NEEDS YOU")
+            out.contains("◉ NEEDS YOU")
                 && out.contains("◉ Claude needs your permission"),
             "{out}"
         );
@@ -2672,7 +2662,7 @@ mod tests {
             assert_eq!(a.width(), b.width());
         }
         let text = to_plain(&asc);
-        assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
+        assert!(text.starts_with("+- ARI -"), "{text}");
         insta::assert_snapshot!("ascii", text);
     }
 
@@ -2737,9 +2727,9 @@ mod tests {
         u.session_name = Some("next milestone".into());
         let out = render(&st, &u, View::default(), 50, 40);
         let first: Vec<&str> = out.lines().take(2).collect();
-        assert!(first[0].starts_with("╭─ ARI (•_•) ─"), "{out}");
-        assert!(first[0].contains("─ cd /x/tankobon · "), "{out}");
-        assert!(first[1].ends_with("milestone: next milestone │"), "{out}");
+        assert!(first[0].starts_with("╭─ ARI ─"), "{out}");
+        assert!(first[0].contains("─ /x/tankobon · "), "{out}");
+        assert!(first[1].contains("● ON TRACK · next milestone"), "{out}");
         render(&st, &u, View::default(), 20, 10);
     }
 

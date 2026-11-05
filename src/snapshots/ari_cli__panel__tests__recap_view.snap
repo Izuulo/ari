@@ -2,8 +2,8 @@
 source: src/panel.rs
 expression: out
 ---
-╭─ ARI (•_•) ────────────────── 12:41 ─╮
-│ ● ON TRACK  milestone: auth refactor │
+╭─ ARI ──────────────────────── 12:41 ─╮
+│ ● ON TRACK · auth refactor           │
 │ ███████████░░░░░░░░░ 4/7 tasks       │
 │ ▸ now: hook up token refresh         │
 ├─ recap (r to close) ─────────────────┤

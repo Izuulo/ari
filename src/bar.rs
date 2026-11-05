@@ -222,7 +222,7 @@ pub fn render(
         if x.looks_active() {
             paint(color, "1;36", &format!("{} WORKING", spinner(now_ms)))
         } else {
-            paint(color, "2", "◌ no hooks yet")
+            paint(color, "2", "– not tracked")
         }
     }];
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
@@ -434,7 +434,7 @@ mod tests {
             200,
             false,
         );
-        assert_eq!(row, "◌ no hooks yet │ ctx — │ 5h — │ 7d —");
+        assert_eq!(row, "– not tracked │ ctx — │ 5h — │ 7d —");
     }
 
     #[test]
@@ -603,7 +603,7 @@ mod tests {
         );
         assert!(
             render(&empty, &u, &stale, &Config::default(), NOW, 200, false)
-                .starts_with("◌ no hooks yet")
+                .starts_with("– not tracked")
         );
     }
 

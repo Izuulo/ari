@@ -2,9 +2,9 @@
 source: src/panel.rs
 expression: text
 ---
-╭─ ARI recap · since start ─────────────────── cd /x/proj ─╮
+╭─ ARI recap · since start ────────────────────── /x/proj ─╮
 │ ✓ DONE                                                   │
-│ milestone: auth refactor                                 │
+│ auth refactor                                            │
 ├─ tasks ──────────────────────────────────────────────────┤
 │ █████████████░░░░░░░ 2/3 tasks                           │
 │ ✓ scaffold                                               │

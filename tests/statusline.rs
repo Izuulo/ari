@@ -63,7 +63,7 @@ fn chains_untouched_and_isolated() {
     let (out, took) = statusline(&d, &chain_config(&d, "top"), PAYLOAD.as_bytes());
     let (row, rest) = out.split_once('\n').unwrap();
     assert!(
-        row.starts_with("◌ no hooks yet │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺"),
+        row.starts_with("– not tracked │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺"),
         "{row}"
     );
     assert!(row.ends_with("│ 7d — │ $2.69"), "{row}");
@@ -79,7 +79,7 @@ fn bottom_position() {
     let (out, _) = statusline(&d, &chain_config(&d, "bottom"), PAYLOAD.as_bytes());
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "\x1b[38;5;108m[PONYTAIL]\x1b[0m");
-    assert!(lines[3].starts_with("◌ no hooks yet"));
+    assert!(lines[3].starts_with("– not tracked"));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn garbage_stdin_still_renders() {
         script(&d, "p.sh", "printf '[P]'")
     );
     let (out, _) = statusline(&d, &cfg, b"not json at all");
-    assert_eq!(out, "◌ no hooks yet │ ctx — │ 5h — │ 7d —\n[P]");
+    assert_eq!(out, "– not tracked │ ctx — │ 5h — │ 7d —\n[P]");
     assert!(!d.join("state/ari/sessions").exists());
 }
 

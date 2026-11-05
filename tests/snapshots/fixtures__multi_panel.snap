@@ -3,9 +3,9 @@ source: tests/fixtures.rs
 expression: "out.join(\"\\n\")"
 ---
 --- after failure ---
-╭─ ARI (>_<) ────────────────────────────────── 12:00 ─╮
-│ ↻ RETRYING  milestone: Do these steps in order, usi… │
-│ DON'T ASK                                            │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ↻ RETRYING · Do these steps in order, using the too… │
+│ don't-ask mode                                       │
 │ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
@@ -22,9 +22,9 @@ expression: "out.join(\"\\n\")"
 │ cost    —                                            │
 ╰──────────────────────────────────────────────────────╯
 --- two agents ---
-╭─ ARI (•_•) ────────────────────────────────── 12:00 ─╮
-│ ● ON TRACK  milestone: Do these steps in order, usi… │
-│ DON'T ASK                                            │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ● ON TRACK · Do these steps in order, using the too… │
+│ don't-ask mode                                       │
 │ ██████████░░░░░░░░░░ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
@@ -42,9 +42,9 @@ expression: "out.join(\"\\n\")"
 │ cost    —                                            │
 ╰──────────────────────────────────────────────────────╯
 --- end ---
-╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
-│ ✓ DONE  milestone: Do these steps in order, using t… │
-│ DON'T ASK                                            │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ✓ DONE · Do these steps in order, using the tool…    │
+│ don't-ask mode                                       │
 │ ████████████████████ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │

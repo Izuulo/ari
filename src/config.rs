@@ -59,7 +59,7 @@ impl Default for Config {
         Config {
             position: Position::Top,
             hide: Vec::new(),
-            face: true,
+            face: false,
             bell: false,
             ascii: false,
             max_width: 0,
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(c.position, Position::Top);
         assert_eq!((c.retention_days, c.chain.timeout_ms), (7, 300));
         assert_eq!((c.thresholds.ctx_warn, c.thresholds.ctx_crit), (60, 80));
-        assert!(c.face && !c.bell);
+        assert!(!c.face && !c.bell);
     }
 
     #[test]
