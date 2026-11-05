@@ -71,7 +71,7 @@ fn level(pct: f64, cfg: &Config) -> Style {
 }
 
 /// `/Users/me/ari/` → `~/ari`.
-fn tilde(dir: &str) -> String {
+pub fn tilde(dir: &str) -> String {
     let dir = dir.trim_end_matches('/');
     let home = std::env::var("HOME").unwrap_or_default();
     match dir.strip_prefix(home.trim_end_matches('/')) {

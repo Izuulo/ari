@@ -56,6 +56,28 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 Keys: `q` quit, `e` more errors, `a` all agents, `tab` next session. `ari watch --all` lists every live session; `--ascii` for terminals without Unicode.
 
+### What a session got done: `ari recap`
+
+```
+recap     ~/proj · auth refactor · since start
+verdict   ✓ DONE
+done      4 tasks
+            ✓ scaffold
+            ✓ build
+errors    1 hit · 1 fixed · 0 open
+tests     58 passed → 71 passed
+files     2 edited
+            calc.py ×2
+            test_calc.py
+commits   1
+            e885f9c feat: retry the token refresh
+time      21m · claude 64% · tools 22% · idle 14%
+cost      $2.69 · +156 −23 lines
+models    opus-5-5 (main), haiku-5-5 (2 agents)
+```
+
+`--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
+
 ### The verdict
 
 | Verdict | Means |

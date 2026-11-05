@@ -10,6 +10,7 @@ pub mod event;
 pub mod hook;
 pub mod panel;
 pub mod paths;
+pub mod recap;
 pub mod replay;
 pub mod sessions;
 pub mod setup;
