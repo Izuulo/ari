@@ -5,6 +5,7 @@ edition = "2024"
 description = "A zero-token status panel for Claude Code"
 license = "MIT"
 repository = "https://github.com/Izuulo/ari"
+homepage = "https://github.com/Izuulo/ari"
 
 [[bin]]
 name = "ari"
