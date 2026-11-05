@@ -226,10 +226,14 @@ pub fn update_debounced(dir: &Path, st: &State, u: &crate::usage::Usage) -> Toke
                 .is_ok_and(|e| e < std::time::Duration::from_secs(2))
         });
     if fresh {
-        cached(dir)
-    } else {
-        update(dir, st, transcript_for(dir, u).as_deref())
+        return cached(dir);
     }
+    let c = update(dir, st, transcript_for(dir, u).as_deref());
+    // Rewrite even when nothing changed: the file's age is the debounce clock.
+    if let Ok(bytes) = serde_json::to_vec(&c) {
+        let _ = crate::paths::write_atomic(&dir.join("tokens.json"), &bytes);
+    }
+    c
 }
 
 /// Dollars saved by cache reads versus paying full input price (≈, see DECISIONS D18).
