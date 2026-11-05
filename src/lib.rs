@@ -11,3 +11,4 @@ pub mod setup;
 pub mod state;
 pub mod statusline;
 pub mod usage;
+pub mod watch;
