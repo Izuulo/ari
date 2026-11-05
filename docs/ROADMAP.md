@@ -24,7 +24,7 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 
 | Idea | Why | Data |
 |---|---|---|
-| Cost per hour and projected cost to finish the task list | Is this run worth it | Have it |
+| Projected cost to finish the task list | Is this run worth it | Have it |
 | Slow-command alerts: a command running far longer than its previous runs | Catch hung builds early | Have it (per-signature durations) |
 | Repeated permission prompts for the same tool | Suggest an allow rule | Have it |
 | Subagent tree with nesting and per-branch cost | Deep agent fan-outs | Partly (spawn depth is in transcripts) |
