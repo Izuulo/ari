@@ -13,6 +13,5 @@ expression: text
 │ └─◌ Plan    stale 6m · reading big.log                             ├─ session ───────────────────────────────────────────────────────────┤
 ├─ errors ───────────────────────────────────────────────────────────┤ time    14m00s · claude 71% · other 29%                             │
 │ ✗ 5s   edit lib.rs · String to replace not found in file.          │ cost    $2.69 · $0.67/task done                                     │
-│ ✓ 2m   cargo build · error[E0382]: use of moved value              │                                                                     │
-│        ↻ retried 2× · fixed by main                                │                                                                     │
+│ 1 fixed (e)                                                        │                                                                     │
 ╰────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────╯

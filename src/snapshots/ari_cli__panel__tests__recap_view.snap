@@ -15,7 +15,7 @@ expression: out
 │ ◻ write docs                         │
 ├─ errors ─────────────────────────────┤
 │ 1 hit · 1 fixed · 0 open             │
-│ ✓ cargo test · fixed by main         │
+│ ✓ cargo test · passed on retry       │
 ├─ files ──────────────────────────────┤
 │ src/a.rs ×2                          │
 │ src/b.rs                             │

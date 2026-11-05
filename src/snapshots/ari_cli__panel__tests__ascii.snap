@@ -13,8 +13,7 @@ expression: text
 | +-o Plan    stale 6m - reading big.log         |
 +- errors ---------------------------------------+
 | x 5s   edit lib.rs - String to replace not fo. |
-| v 2m   cargo build - error[E0382]: use of mov. |
-|        ~ retried 2x - fixed by main            |
+| 1 fixed (e)                                    |
 +- usage ----------------------------------------+
 | ctx ##############------ 71%  142k/200k        |
 | 5h  ############-------- 62%  @ 1h40m          |

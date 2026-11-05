@@ -12,7 +12,7 @@ expression: "out.join(\"\\n\")"
 │ ⠏ main   thinking…                                   │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✗ 0s   python3 test_calc.py · AssertionError         │
-│ cost of mistakes: 1 failed call · 1s                 │
+│ 1s on failed calls                                   │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
@@ -32,9 +32,7 @@ expression: "out.join(\"\\n\")"
 │ ├─⠦ Explore thinking… · 1 call · 1s                  │
 │ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 6s   python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
@@ -53,9 +51,7 @@ expression: "out.join(\"\\n\")"
 │ ├─✓ Explore done 2s · `calc.py` defines an `add(a, … │
 │ └─✓ Explore done 1s · The file imports `add` from a… │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 10s  python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │

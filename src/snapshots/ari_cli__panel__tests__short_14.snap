@@ -13,6 +13,5 @@ expression: "render(&st, &u, View::default(), 50, 14)"
 │ └─◌ Plan    stale 6m · reading big.log         │
 ├─ errors ───────────────────────────────────────┤
 │ ✗ 5s   edit lib.rs · String to replace not fo… │
-│ ✓ 2m   cargo build · error[E0382]: use of mov… │
-│        ↻ retried 2× · fixed by main            │
+│ 1 fixed (e)                                    │
 ╰────────────────────────────────────────────────╯

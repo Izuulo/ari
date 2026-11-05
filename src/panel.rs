@@ -529,7 +529,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
         rows.extend(
             r.fixed
                 .iter()
-                .map(|(what, by)| ok(format!("{what} · fixed by {by}"))),
+                .map(|(what, _)| ok(format!("{what} · passed on retry"))),
         );
         rows.extend(r.still_open.iter().map(|what| {
             vec![
@@ -1063,66 +1063,62 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     rows
 }
 
+/// Open errors one by one; fixed ones fold into a count (listed with `e`), with the time
+/// failed calls took and the files read twice.
 fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
-    let mut rows = errors_list(st, c, view, now);
-    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
-    if time > 0 || st.reread > 0 {
-        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
-        let s = if failed == 1 { "" } else { "s" };
-        let mut parts = vec![format!("{failed} failed call{s}")];
-        if time >= 1000 {
-            parts.push(dur(time));
-        }
-        if st.reread > 0 {
-            let s = if st.reread == 1 { "" } else { "s" };
-            parts.push(format!("{} re-read{s}", st.reread));
-        }
-        rows.push(vec![
-            c.dim(format!("cost of mistakes: {}", parts.join(" · "))),
-        ]);
-    }
-    rows
-}
-
-fn errors_list(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
-    if st.errors.is_empty() {
-        return vec![vec![c.dim("no errors")]];
-    }
     let mut errs: Vec<&ErrorRec> = st.errors.iter().collect();
     errs.sort_by_key(|e| std::cmp::Reverse(e.last_t));
+    let (open, fixed): (Vec<_>, Vec<_>) = errs.into_iter().partition(|e| e.resolved_t.is_none());
     let max = if view.expand_errors { 15 } else { 5 };
-    let mut rows = Vec::new();
-    for e in errs.iter().take(max) {
-        let open = e.resolved_t.is_none();
-        let glyph = if open {
-            c.span("✗", Style::new().fg(Color::Red))
+    let text = |e: &ErrorRec| {
+        let w = sig_words(e);
+        if e.msg.is_empty() || e.msg == w {
+            w
         } else {
-            c.span("✓", Style::new().fg(Color::Green))
-        };
-        let mut text = sig_words(e);
-        if !e.msg.is_empty() && e.msg != text {
-            text = format!("{text} · {}", e.msg);
+            format!("{w} · {}", e.msg)
         }
+    };
+    let when = |e: &ErrorRec| format!(" {:<3}  ", age(now.saturating_sub(e.last_t)));
+    let mut rows = Vec::new();
+    for e in open.iter().take(max) {
         rows.push(vec![
-            glyph,
-            Span::raw(format!(" {:<3}  ", age(now.saturating_sub(e.last_t)))),
-            Span::raw(text),
+            c.span("✗", Style::new().fg(Color::Red)),
+            Span::raw(when(e)),
+            Span::raw(text(e)),
         ]);
-        let mut detail = Vec::new();
         if e.retries > 0 {
-            detail.push(format!("↻ retried {}×", e.retries));
-        }
-        match &e.resolved_by {
-            Some(by) if !open => detail.push(format!("fixed by {by}")),
-            _ if e.retries > 0 => detail.push("still failing".into()),
-            _ => {}
-        }
-        if !detail.is_empty() {
-            rows.push(vec![c.dim(format!("       {}", detail.join(" · ")))]);
+            rows.push(vec![c.dim(format!(
+                "       ↻ retried {}× · still failing",
+                e.retries
+            ))]);
         }
     }
-    if errs.len() > max {
-        rows.push(vec![c.dim(format!("… {} older (e)", errs.len() - max))]);
+    if open.len() > max {
+        rows.push(vec![c.dim(format!("… {} older (e)", open.len() - max))]);
+    }
+    if view.expand_errors {
+        for e in fixed.iter().take(max) {
+            rows.push(vec![c.dim(format!(" {}{} · passed on retry", when(e), text(e)))]);
+        }
+    }
+    let mut parts = Vec::new();
+    if !fixed.is_empty() {
+        parts.push(format!("{} fixed", fixed.len()));
+    }
+    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
+    if time >= 1000 {
+        parts.push(format!("{} on failed calls", dur(time)));
+    }
+    if st.reread > 0 {
+        let s = if st.reread == 1 { "" } else { "s" };
+        parts.push(format!("{} file{s} read twice", st.reread));
+    }
+    if rows.is_empty() {
+        parts.insert(0, if fixed.is_empty() { "no errors" } else { "no open errors" }.into());
+    }
+    if !parts.is_empty() {
+        let hint = if !fixed.is_empty() && !view.expand_errors { " (e)" } else { "" };
+        rows.push(vec![c.dim(format!("{}{hint}", parts.join(" · ")))]);
     }
     rows
 }
@@ -2113,18 +2109,14 @@ mod tests {
     fn mistake_cost_footer() {
         let (mut st, u) = multi();
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(!out.contains("cost of mistakes"), "{out}");
+        assert!(!out.contains("on failed calls"), "{out}");
         st.errors[0].retries = 1;
         st.errors[0].time_ms = 5_000;
         st.reread = 1;
         let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(
-            out.contains(&format!(
-                "cost of mistakes: {failed} failed calls · 5s · 1 re-read"
-            )),
-            "{out}"
-        );
+        assert!(failed > 0);
+        assert!(out.contains("5s on failed calls · 1 file read twice"), "{out}");
     }
 
     #[test]
@@ -2143,11 +2135,8 @@ mod tests {
         st.errors[0].time_ms = 400;
         st.reread = 1;
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(
-            out.contains("cost of mistakes: 3 failed calls · 1 re-read"),
-            "{out}"
-        );
-        assert!(!out.contains("· 0s"), "{out}");
+        assert!(!out.contains("on failed calls"), "{out}");
+        assert!(out.contains("1 file read twice"), "{out}");
     }
 
     fn cache_row(c: Option<crate::usage::CacheState>) -> String {

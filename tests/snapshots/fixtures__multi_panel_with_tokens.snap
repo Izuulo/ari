@@ -11,9 +11,7 @@ expression: out
 │ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · `calc.p… │
 │ └─✓ Explore haiku-5-5 · done 1s · 32k tok · The fil… │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 10s  python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx —                                                │
 │ 5h  —                                                │
