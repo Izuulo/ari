@@ -227,6 +227,11 @@ pub fn lines(
                         )],
                     );
                 }
+                if st.first_t != 0
+                    && let Some(b) = badges(st, u, &c)
+                {
+                    rows.insert(1.min(rows.len()), b);
+                }
                 rows
             },
         },
@@ -883,27 +888,64 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
     rows
 }
 
-fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
-    let mut rows = Vec::new();
+/// Model, effort, mode, worktree, PR and line counts in one dim row; each part only when known.
+fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
+    let mut parts: Vec<Span<'static>> = Vec::new();
+    parts.extend(u.model.clone().map(|m| c.dim(m)));
+    parts.extend(u.effort.clone().map(|e| c.dim(e)));
+    if u.fast {
+        parts.push(c.dim("fast"));
+    }
+    match st.permission_mode.as_deref() {
+        None | Some("default") => {}
+        Some("bypassPermissions") => parts.push(c.span(
+            "BYPASS",
+            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+        Some(m) => parts.push(Span::raw(match m {
+            "plan" => "PLAN".into(),
+            "acceptEdits" => "EDITS".into(),
+            "auto" => "AUTO".into(),
+            "dontAsk" => "DON'T ASK".into(),
+            other => other.to_string(),
+        })),
+    }
+    parts.extend(u.worktree.as_ref().map(|w| c.dim(format!("⎇ {w}"))));
     if let Some(pr) = &u.pr {
         // GitLab writes merge requests as !N, GitHub PRs as #N.
-        let (label, sign) = if pr.mr {
-            ("mr      ", '!')
-        } else {
-            ("pr      ", '#')
-        };
-        let mut row = vec![c.dim(label), Span::raw(format!("{sign}{}", pr.number))];
+        let (label, sign) = if pr.mr { ("MR", '!') } else { ("PR", '#') };
+        let mut text = format!("{label} {sign}{}", pr.number);
+        let mut style = Style::new();
         if let Some(state) = &pr.review_state {
-            let style = match state.as_str() {
+            text += &format!(" {}", state.replace('_', " "));
+            style = match state.as_str() {
                 "approved" => Style::new().fg(Color::Green),
                 "changes_requested" => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
                 _ => Style::new().add_modifier(Modifier::DIM),
             };
-            row.push(Span::raw(" · "));
-            row.push(c.span(state.replace('_', " "), style));
         }
-        rows.push(row);
+        parts.push(c.span(text, style));
     }
+    if let (Some(a), Some(r)) = (u.lines_added, u.lines_removed)
+        && a + r > 0
+    {
+        parts.push(c.dim(format!("+{a} −{r}")));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let mut row = Vec::new();
+    for (i, p) in parts.into_iter().enumerate() {
+        if i > 0 {
+            row.push(c.dim(" · "));
+        }
+        row.push(p);
+    }
+    Some(row)
+}
+
+fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row> {
+    let mut rows = Vec::new();
     if let Some(t) = &x.tokens
         && t.total().total() > 0
     {
@@ -1158,22 +1200,83 @@ mod tests {
         insta::assert_snapshot!(render(&st, &u, View::default(), 50, 40));
     }
 
+    fn badge_usage() -> Usage {
+        Usage {
+            model: Some("Opus".into()),
+            effort: Some("high".into()),
+            fast: true,
+            worktree: Some("wt".into()),
+            pr: Some(crate::usage::Pr {
+                number: 14,
+                review_state: Some("approved".into()),
+                mr: false,
+            }),
+            lines_added: Some(156),
+            lines_removed: Some(23),
+            ..Default::default()
+        }
+    }
+
+    fn badge_text(st: &State, u: &Usage) -> Option<String> {
+        let c = Ctx {
+            color: true,
+            inner: 60,
+        };
+        badges(st, u, &c).map(|r| r.iter().map(|s| s.content.as_ref()).collect())
+    }
+
     #[test]
-    fn pull_request_row() {
+    fn badges_full_row() {
+        let st = State {
+            permission_mode: Some("auto".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            badge_text(&st, &badge_usage()).as_deref(),
+            Some("Opus · high · fast · AUTO · ⎇ wt · PR #14 approved · +156 −23")
+        );
         let (st, mut u) = multi();
         u.pr = Some(crate::usage::Pr {
-            number: 14,
-            review_state: Some("changes_requested".into()),
-            mr: false,
-        });
-        let out = render(&st, &u, View::default(), 50, 40);
-        assert!(out.contains("pr      #14 · changes requested"), "{out}");
-        u.pr = Some(crate::usage::Pr {
             number: 3,
-            review_state: None,
+            review_state: Some("changes_requested".into()),
             mr: true,
         });
-        assert!(render(&st, &u, View::default(), 50, 40).contains("mr      !3 "));
+        let out = render(&st, &u, View::default(), 70, 40);
+        let l: Vec<_> = out.lines().collect();
+        assert!(l[2].contains("MR !3 changes requested"), "{out}");
+        assert!(!out.contains("pr      "), "{out}");
+    }
+
+    #[test]
+    fn badges_modes() {
+        let mode = |m: &str| {
+            let st = State {
+                permission_mode: Some(m.into()),
+                ..Default::default()
+            };
+            badge_text(&st, &Usage::default())
+        };
+        assert_eq!(mode("default"), None);
+        assert_eq!(mode("plan").as_deref(), Some("PLAN"));
+        assert_eq!(mode("dontAsk").as_deref(), Some("DON'T ASK"));
+        assert_eq!(mode("weird").as_deref(), Some("weird"));
+        let st = State {
+            permission_mode: Some("bypassPermissions".into()),
+            ..Default::default()
+        };
+        let c = Ctx {
+            color: true,
+            inner: 60,
+        };
+        let row = badges(&st, &Usage::default(), &c).unwrap();
+        assert_eq!(row[0].content, "BYPASS");
+        assert_eq!(row[0].style.fg, Some(Color::Red));
+        let both_zero = Usage {
+            lines_added: Some(0),
+            lines_removed: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(badge_text(&State::default(), &both_zero), None);
     }
 
     #[test]

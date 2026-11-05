@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 5;
+const CACHE_VERSION: u32 = 6;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -71,6 +71,8 @@ pub struct State {
     pub edits: BTreeMap<String, u64>,
     /// Start times of the last real prompts (turns).
     pub prompts: VecDeque<u64>,
+    /// Last permission mode a hook reported.
+    pub permission_mode: Option<String>,
 }
 
 /// Wall time not spent by Claude itself, folded from events.
@@ -261,6 +263,9 @@ impl State {
             self.first_t = ev.t;
         }
         self.last_t = self.last_t.max(ev.t);
+        if ev.pm.is_some() {
+            self.permission_mode.clone_from(&ev.pm);
+        }
         if self.agents.is_empty() {
             self.agents.push(Agent {
                 id: "main".into(),
@@ -808,6 +813,22 @@ pub fn load_session(dir: &Path) -> State {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn permission_mode_is_last_seen() {
+        let mut st = State::default();
+        let ev = |t, pm: Option<&str>| Event {
+            t,
+            e: "Stop".into(),
+            pm: pm.map(String::from),
+            ..Default::default()
+        };
+        st.apply(&ev(1, Some("plan")));
+        st.apply(&ev(2, None));
+        assert_eq!(st.permission_mode.as_deref(), Some("plan"));
+        st.apply(&ev(3, Some("auto")));
+        assert_eq!(st.permission_mode.as_deref(), Some("auto"));
+    }
+
     #[test]
     fn checkboxes_count_task_list_items_only() {
         let md = "- [ ] a\n  - [x] b\n* [X] c\n- [?] no\n- [] no\n[ ] no\n- [ ]";

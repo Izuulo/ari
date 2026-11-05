@@ -29,6 +29,8 @@ fn glyph(c: char) -> Option<char> {
         '⚠' => '!',
         '…' => '.',
         '·' => '-',
+        '⎇' => 'Y',
+        '−' => '-',
         _ => return None,
     })
 }

@@ -5,6 +5,7 @@ expression: "out.join(\"\\n\")"
 --- after failure ---
 ╭─ ARI (>_<) ────────────────────────────────── 12:00 ─╮
 │ ↻ RETRYING  milestone: Do these steps in order, usi… │
+│ DON'T ASK                                            │
 │ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
@@ -23,6 +24,7 @@ expression: "out.join(\"\\n\")"
 --- two agents ---
 ╭─ ARI (•_•) ────────────────────────────────── 12:00 ─╮
 │ ● ON TRACK  milestone: Do these steps in order, usi… │
+│ DON'T ASK                                            │
 │ ██████████░░░░░░░░░░ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
@@ -44,6 +46,7 @@ expression: "out.join(\"\\n\")"
 --- end ---
 ╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
 │ ✓ DONE  milestone: Do these steps in order, using t… │
+│ DON'T ASK                                            │
 │ ████████████████████ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │

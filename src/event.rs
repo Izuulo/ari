@@ -46,6 +46,9 @@ pub struct Event {
     /// The test run was filtered (`N filtered out` / `N deselected`), not the full suite.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// Permission mode (`plan`, `auto`, ...) the hook payload carried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pm: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -73,6 +76,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         e: s("hook_event_name")?.to_string(),
         a: owned("agent_id"),
         at: owned("agent_type"),
+        pm: owned("permission_mode"),
         dur: raw.get("duration_ms").and_then(Value::as_u64),
         ..Default::default()
     };
@@ -373,6 +377,19 @@ mod tests {
 
     fn n(v: Value) -> Event {
         normalize(&v, 1).unwrap()
+    }
+
+    #[test]
+    fn permission_mode_rides_along() {
+        let ev = n(json!({"hook_event_name": "Stop", "permission_mode": "plan"}));
+        assert_eq!(ev.pm.as_deref(), Some("plan"));
+        assert!(
+            !serde_json::to_string(&n(json!({"hook_event_name": "Stop"})))
+                .unwrap()
+                .contains("pm")
+        );
+        let old: Event = serde_json::from_str(r#"{"t":1,"e":"Stop"}"#).unwrap();
+        assert_eq!(old.pm, None);
     }
 
     #[test]

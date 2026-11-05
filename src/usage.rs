@@ -27,6 +27,9 @@ pub struct Usage {
     pub lines_removed: Option<u64>,
     /// Open pull request (or GitLab merge request) for the current branch.
     pub pr: Option<Pr>,
+    pub effort: Option<String>,
+    pub fast: bool,
+    pub worktree: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -83,6 +86,9 @@ pub fn from_value(v: &Value) -> Usage {
         api_duration_ms: u("/cost/total_api_duration_ms"),
         lines_added: u("/cost/total_lines_added"),
         lines_removed: u("/cost/total_lines_removed"),
+        effort: s("/effort/level"),
+        fast: v.pointer("/fast_mode").and_then(Value::as_bool) == Some(true),
+        worktree: s("/workspace/git_worktree").or_else(|| s("/worktree/name")),
         pr: u("/pr/number").map(|number| Pr {
             number,
             review_state: s("/pr/review_state"),
@@ -108,6 +114,20 @@ mod tests {
             "rate_limits": {"five_hour": {"used_percentage": 62.0, "resets_at": 1738425600},
                             "seven_day": {"used_percentage": 34.5, "resets_at": 1738857600}}
         }));
+        assert_eq!(
+            (u.effort.clone(), u.fast, u.worktree.clone()),
+            (None, false, None)
+        );
+        let u2 = from_value(
+            &json!({"effort": {"level": "high"}, "fast_mode": true, "worktree": {"name": "w"}}),
+        );
+        assert_eq!(
+            (u2.effort.as_deref(), u2.fast, u2.worktree.as_deref()),
+            (Some("high"), true, Some("w"))
+        );
+        let u3 =
+            from_value(&json!({"workspace": {"git_worktree": "g"}, "worktree": {"name": "w"}}));
+        assert_eq!(u3.worktree.as_deref(), Some("g"));
         assert_eq!(u.model.as_deref(), Some("Opus"));
         assert_eq!(
             u.project.as_deref(),
