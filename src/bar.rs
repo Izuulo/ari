@@ -644,7 +644,10 @@ mod tests {
             200,
             false,
         );
-        assert!(!row.contains("plan") && !row.contains("thinking │ ▰"), "{row}");
+        assert!(
+            !row.contains("plan") && !row.contains("thinking │ ▰"),
+            "{row}"
+        );
         let x = Extras {
             plan: Some(crate::state::PlanFile {
                 name: "2026-11-05-m6-richness.md".into(),

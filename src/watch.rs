@@ -199,7 +199,27 @@ impl App {
         x.conflicts = crate::conflicts::cached(&self.root, dir, now);
         x.transcript_age_ms =
             tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
-        panel::lines(
+        // Live, the keys are listed under the panel; `--once` has no keys.
+        let hint = self.interactive.then(|| {
+            let back = if self.mode == Mode::All {
+                "esc list"
+            } else {
+                "tab next session"
+            };
+            let text = format!("e errors · a agents · r recap · {back} · q quit");
+            let text = crate::event::truncate(&text, width as usize);
+            let text = if self.cfg.ascii {
+                crate::ascii::map(&text)
+            } else {
+                text
+            };
+            let dim = Style::new().add_modifier(Modifier::DIM);
+            Line::from(Span::styled(
+                text,
+                if self.color { dim } else { Style::default() },
+            ))
+        });
+        let mut lines = panel::lines(
             st,
             usage,
             &x,
@@ -208,9 +228,11 @@ impl App {
             now,
             &panel::local_hhmm(now),
             width,
-            height,
+            height.saturating_sub(hint.is_some() as u16),
             self.color,
-        )
+        );
+        lines.extend(hint);
+        lines
     }
 }
 
@@ -403,16 +425,19 @@ fn list_lines(
         Some(t) => format!("{} · {t}", e.project),
         None => e.project.clone(),
     };
-    let lw = entries
-        .iter()
-        .map(|e| label(e).width())
-        .max()
-        .unwrap_or(0)
-        // Which session it is matters more than what it's doing: the label gets room first.
+    let full = entries.iter().map(|e| label(e).width()).max().unwrap_or(0);
+    // Which session it is matters more than what it's doing: the label gets room first.
+    let mut lw = full
         .min(36)
         .min(w.saturating_sub(vw + right + 4 + 12))
         .max(12);
-    let room = w.saturating_sub(vw + lw + right + 4);
+    let mut room = w.saturating_sub(vw + lw + right + 4);
+    // Too little room to read what it's doing: that goes on its own line under the session.
+    let below = room < 24;
+    if below {
+        lw = full.min(w.saturating_sub(vw + right + 4)).max(12);
+        room = w.saturating_sub(vw + 2);
+    }
     for (i, e) in entries.iter().enumerate() {
         let quiet = e.rank >= Verdict::Done as u8;
         let mut spans = vec![
@@ -426,30 +451,38 @@ fn list_lines(
             paint(if quiet { dim } else { bold }),
         ));
         spans.push(Span::styled(t.to_string(), paint(dim)));
-        let detail = crate::event::truncate(&e.detail, room);
+        let detail = Span::styled(
+            crate::event::truncate(&e.detail, room),
+            paint(if quiet { dim } else { Style::default() }),
+        );
         spans.push(Span::raw(" ".repeat(lw.saturating_sub(text.width()) + 2)));
+        let mut under = None;
+        if below {
+            if !e.detail.is_empty() {
+                under = Some(Line::from(vec![Span::raw(" ".repeat(vw + 2)), detail]));
+            }
+        } else if right > 0 {
+            let pad = room.saturating_sub(detail.content.width());
+            spans.push(detail);
+            spans.push(Span::raw(" ".repeat(pad)));
+        } else {
+            spans.push(detail);
+        }
         if right > 0 {
-            spans.push(Span::styled(
-                format!("{detail:<room$}", room = room),
-                paint(if quiet { dim } else { Style::default() }),
-            ));
             let ctx = e.ctx.map(|p| format!("ctx {p:.0}%")).unwrap_or_default();
             let cost = e.cost.map(|c| format!("${c:.2}")).unwrap_or_default();
             spans.push(Span::styled(
                 format!("  {ctx:>7} {cost:>8} {:>4} ago", panel::age(e.age_ms)),
                 paint(dim),
             ));
-        } else {
-            spans.push(Span::styled(
-                detail,
-                paint(if quiet { dim } else { Style::default() }),
-            ));
         }
-        let mut line = Line::from(spans);
-        if sel == Some(i) {
-            line = line.patch_style(Style::new().add_modifier(Modifier::REVERSED));
+        for line in std::iter::once(Line::from(spans)).chain(under) {
+            out.push(if sel == Some(i) {
+                line.patch_style(Style::new().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            });
         }
-        out.push(line);
     }
     if sel.is_some() {
         out.push(Line::from(Span::styled(
@@ -912,8 +945,49 @@ mod key_tests {
     }
 
     #[test]
+    fn narrow_list_puts_the_detail_under_the_session() {
+        let e = |w: &str| Entry {
+            rank: 0,
+            verdict: "ON TRACK".into(),
+            style: Style::default(),
+            project: "tankobon".into(),
+            title: Some("Phone unable to open the reader".into()),
+            detail: w.into(),
+            ctx: Some(5.0),
+            cost: Some(1.0),
+            age_ms: 0,
+            dir: PathBuf::new(),
+            limits: None,
+        };
+        let cfg = config::Config::default();
+        let out = panel::to_plain(&list_lines(
+            &[e("$ cargo test"), e("")],
+            Some(0),
+            &cfg,
+            0,
+            80,
+        ));
+        let rows: Vec<&str> = out.lines().skip(2).collect();
+        assert!(
+            rows[0].contains("tankobon · Phone unable to open the reader"),
+            "{out}"
+        );
+        assert_eq!(rows[1].trim(), "$ cargo test", "{out}");
+        assert!(
+            rows[2].contains("tankobon"),
+            "no empty line for no detail: {out}"
+        );
+        let wide = panel::to_plain(&list_lines(&[e("$ cargo test")], None, &cfg, 0, 140));
+        assert_eq!(
+            wide.lines().count(),
+            3,
+            "one line per session when wide: {wide}"
+        );
+    }
+
+    #[test]
     fn long_project_names_truncate_on_a_char_boundary() {
-        for (n, w) in [(35, 120), (36, 120), (37, 120), (12, 50), (13, 50)] {
+        for (n, w) in [(35, 120), (36, 120), (37, 120), (12, 40), (13, 40)] {
             let e = Entry {
                 rank: 0,
                 verdict: "ON TRACK".into(),

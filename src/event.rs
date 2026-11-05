@@ -334,10 +334,7 @@ fn signature(tool: &str, input: &Value) -> String {
                 .map(str::trim)
                 .find(|c| !c.is_empty() && *c != "cd" && !c.starts_with("cd "))
                 .unwrap_or(line);
-            let toks: Vec<&str> = cmd
-                .split_whitespace()
-                .take(2)
-                .collect();
+            let toks: Vec<&str> = cmd.split_whitespace().take(2).collect();
             format!("{tool}:{}", toks.join(" "))
         }
         "Edit" | "Write" | "MultiEdit" | "Read" => format!("{tool}:{}", f("file_path")),
@@ -585,9 +582,15 @@ mod tests {
         };
         assert_eq!(sig("cd /p; cargo test -q 2>&1 | tail"), "Bash:cargo test");
         assert_eq!(sig("cd /p && git status"), "Bash:git status");
-        let plain = n(json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
-            "tool_input":{"command":"ari watch --once | grep x"},"error":"Exit code 1\n];\nARI · 7 live"}));
-        assert_eq!(plain.msg.as_deref(), Some("exit 1"), "output that names no problem");
+        let plain = n(
+            json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"ari watch --once | grep x"},"error":"Exit code 1\n];\nARI · 7 live"}),
+        );
+        assert_eq!(
+            plain.msg.as_deref(),
+            Some("exit 1"),
+            "output that names no problem"
+        );
         assert_eq!(pre.id.as_deref(), Some("toolu_1"));
         assert!(pre.h.is_some() && pre.ok.is_none() && pre.a.is_none());
 
@@ -703,11 +706,19 @@ mod tests {
             ])
         );
         assert_eq!(stop.crons, Some(vec!["*/5 * * * * · check deploy".into()]));
-        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[],
-            "last_assistant_message":"## Summary\n`calc.py` defines **`add(a, b)`**. It returns a + b."}));
+        let sub = n(
+            json!({"hook_event_name":"SubagentStop","background_tasks":[],
+            "last_assistant_message":"## Summary\n`calc.py` defines **`add(a, b)`**. It returns a + b."}),
+        );
         assert_eq!(sub.msg.as_deref(), Some("calc.py defines add(a, b)."));
-        assert_eq!(summary("`calc.py` defines **`add(a, b)`**. It returns a + b."), "calc.py defines add(a, b).");
-        assert_eq!(summary("the `.` and `..` entries. Done"), "the . and .. entries.");
+        assert_eq!(
+            summary("`calc.py` defines **`add(a, b)`**. It returns a + b."),
+            "calc.py defines add(a, b)."
+        );
+        assert_eq!(
+            summary("the `.` and `..` entries. Done"),
+            "the . and .. entries."
+        );
         assert_eq!(sub.bgs, Some(vec![]));
         assert_eq!(sub.crons, None);
         assert_eq!(n(json!({"hook_event_name":"Stop"})).bgs, None);

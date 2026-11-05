@@ -319,10 +319,7 @@ pub fn lines(
         if room >= 4 {
             tail.push(Span::raw(" "));
             tail.extend(fit(
-                vec![c.span(
-                    tilde(d),
-                    Style::new().add_modifier(Modifier::BOLD),
-                )],
+                vec![c.span(tilde(d), Style::new().add_modifier(Modifier::BOLD))],
                 room,
             ));
             tail.push(Span::styled(" ·", bstyle));
@@ -726,9 +723,11 @@ fn header(
                 Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )
         } else {
-            c.dim("– not tracked: began before ARI")
+            c.dim("– not tracked")
         }]);
-        rows.push(vec![c.dim("start a new session, or /reload-plugins")]);
+        rows.push(vec![
+            c.dim("no hook events · new session or /reload-plugins"),
+        ]);
         return rows;
     }
     let left = if v == Verdict::Done && st.tests_failing() {
@@ -1077,10 +1076,9 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             Span::raw(text(e)),
         ]);
         if e.retries > 0 {
-            rows.push(vec![c.dim(format!(
-                "       ↻ retried {}× · still failing",
-                e.retries
-            ))]);
+            rows.push(vec![
+                c.dim(format!("       ↻ retried {}× · still failing", e.retries)),
+            ]);
         }
     }
     if open.len() > max {
@@ -1088,7 +1086,11 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     }
     if view.expand_errors {
         for e in fixed.iter().take(max) {
-            rows.push(vec![c.dim(format!(" {}{} · passed on retry", when(e), text(e)))]);
+            rows.push(vec![c.dim(format!(
+                " {}{} · passed on retry",
+                when(e),
+                text(e)
+            ))]);
         }
     }
     let mut parts = Vec::new();
@@ -1104,10 +1106,22 @@ fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         parts.push(format!("{} file{s} read twice", st.reread));
     }
     if rows.is_empty() {
-        parts.insert(0, if fixed.is_empty() { "no errors" } else { "no open errors" }.into());
+        parts.insert(
+            0,
+            if fixed.is_empty() {
+                "no errors"
+            } else {
+                "no open errors"
+            }
+            .into(),
+        );
     }
     if !parts.is_empty() {
-        let hint = if !fixed.is_empty() && !view.expand_errors { " (e)" } else { "" };
+        let hint = if !fixed.is_empty() && !view.expand_errors {
+            " (e)"
+        } else {
+            ""
+        };
         rows.push(vec![c.dim(format!("{}{hint}", parts.join(" · ")))]);
     }
     rows
@@ -1647,7 +1661,7 @@ mod tests {
         let l: Vec<_> = out.lines().collect();
         assert!(l[1].contains("– not tracked"), "{out}");
         assert!(l[2].contains("Opus · PR #14 approved"), "{out}");
-        assert!(l[3].contains("start a new session"), "{out}");
+        assert!(l[3].contains("new session or /reload-plugins"), "{out}");
     }
 
     #[test]
@@ -1934,8 +1948,7 @@ mod tests {
         st.needs_you = Some("Claude needs your permission to use Bash".into());
         let out = render(&st, &u, View::default(), 50, 40);
         assert!(
-            out.contains("◉ NEEDS YOU")
-                && out.contains("◉ Claude needs your permission"),
+            out.contains("◉ NEEDS YOU") && out.contains("◉ Claude needs your permission"),
             "{out}"
         );
         insta::assert_snapshot!(
@@ -2088,7 +2101,10 @@ mod tests {
         let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
         let out = render(&st, &u, View::default(), 70, 60);
         assert!(failed > 0);
-        assert!(out.contains("5s on failed calls · 1 file read twice"), "{out}");
+        assert!(
+            out.contains("5s on failed calls · 1 file read twice"),
+            "{out}"
+        );
     }
 
     #[test]
