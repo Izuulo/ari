@@ -1555,7 +1555,7 @@ mod tests {
                 && l("compacted (manual)") < l("compacted (auto)"),
             "{out}"
         );
-        st.turn_log.pop_front();
+        st.turn_log.truncate(1);
         assert!(!render_x(&st, &x, 80, 40).contains("├─ turns"));
     }
 
