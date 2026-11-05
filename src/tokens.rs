@@ -229,6 +229,13 @@ pub fn transcript_for(dir: &Path, u: &crate::usage::Usage) -> Option<String> {
     })
 }
 
+/// Milliseconds since the transcript last changed.
+pub fn transcript_age(path: &str, now_ms: u64) -> Option<u64> {
+    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+    let ms = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    Some(now_ms.saturating_sub(ms))
+}
+
 /// For the statusline: read transcripts at most once per 2 s, otherwise use the cache.
 pub fn update_debounced(dir: &Path, st: &State, u: &crate::usage::Usage) -> TokenCache {
     let fresh = std::fs::metadata(dir.join("tokens.json"))

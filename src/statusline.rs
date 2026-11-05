@@ -42,6 +42,8 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
             }
             let st = state::load_session(&dir);
             x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
+            x.transcript_age_ms =
+                tokens::transcript_for(&dir, &u).and_then(|t| tokens::transcript_age(&t, now));
             st
         })
         .unwrap_or_default();
