@@ -111,7 +111,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, ARI 
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-hide = ["cost"]             # compact segments to drop: tasks agents errors tests ctx 5h 7d cost tokens
+hide = ["cost"]             # compact segments to drop: conflicts tasks agents errors tests ctx 5h 7d cost tokens
 face = true                 # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere
@@ -126,6 +126,7 @@ timeout_ms = 300            # a chained command slower than this is skipped
 ctx_warn = 60               # context % turns yellow
 ctx_crit = 80               # and red
 stuck_repeats = 3           # repeats before STUCK
+compact_pct = 90            # context % where auto-compaction happens, for the forecast
 
 [prices.claude-opus-5-5]    # optional, $ per million tokens, for the cache-savings estimate
 input = 0.0
