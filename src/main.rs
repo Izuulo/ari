@@ -5,6 +5,7 @@ usage:
   ari replay <dir>      print a recorded session as a timeline
   ari --version";
 
+mod event;
 mod paths;
 
 fn main() {
