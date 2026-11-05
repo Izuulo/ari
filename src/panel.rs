@@ -351,7 +351,14 @@ fn header(
         ]);
         return rows;
     }
-    let left = c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v));
+    let left = if v == Verdict::Done && st.tests_failing() {
+        c.span(
+            format!("{} {} · tests failing", v.glyph(), v.label()),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))
+    };
     let mut row = vec![left];
     // Claude Code's own session title beats a truncated first prompt.
     if let Some(label) = title.map(String::from).or_else(|| st.label.clone()) {
@@ -661,6 +668,41 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx) -> Vec<Row>
             )]);
         }
     }
+    if let Some(last) = st.test_runs.back() {
+        let mut row = vec![
+            c.dim("tests   "),
+            if last.fail > 0 {
+                c.span(
+                    format!("✗ {}/{}", last.fail, last.pass + last.fail),
+                    Style::new().fg(Color::Red),
+                )
+            } else {
+                c.span(format!("✓ {}", last.pass), Style::new().fg(Color::Green))
+            },
+        ];
+        let runs: Vec<_> = st.test_runs.iter().rev().take(10).rev().collect();
+        if runs.len() > 1 {
+            let lo = runs.iter().map(|r| r.pass).min().unwrap_or(0);
+            let hi = runs.iter().map(|r| r.pass).max().unwrap_or(0);
+            row.push(Span::raw(" · "));
+            for r in &runs {
+                let i = if hi > lo {
+                    (r.pass - lo) * 7 / (hi - lo)
+                } else {
+                    7
+                };
+                let bar = "▁▂▃▄▅▆▇█".chars().nth(i as usize).unwrap_or('█');
+                let style = if r.fail > 0 {
+                    Style::new().fg(Color::Red)
+                } else {
+                    Style::new()
+                };
+                row.push(c.span(bar.to_string(), style));
+            }
+            row.push(c.dim(format!(" last {} runs", runs.len())));
+        }
+        rows.push(row);
+    }
     if let (Some(wall), Some(api)) = (u.duration_ms, u.api_duration_ms) {
         let pct = if wall > 0 {
             api as f64 * 100.0 / wall as f64
@@ -886,6 +928,29 @@ mod tests {
             out.contains("↻ STUCK") && out.contains("↻ edit lib.rs failed 4× in a row"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn test_history_row_and_done_failing() {
+        use crate::state::TestRun;
+        let (mut st, u) = multi();
+        for (pass, fail) in [(10, 0), (40, 0), (69, 0), (67, 2)] {
+            st.test_runs.push_back(TestRun { t: NOW, pass, fail });
+        }
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(out.contains("tests   ✗ 2/69 · ▁▄█▇ last 4 runs"), "{out}");
+        st.turn_active = false;
+        st.background = 0;
+        st.agents.iter_mut().for_each(|a| a.done = true);
+        st.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        st.errors.clear();
+        st.recent.clear();
+        st.last_main_result = None;
+        assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
+        let out = render(&st, &u, View::default(), 60, 60);
+        assert!(out.contains("DONE · tests failing"), "{out}");
     }
 
     #[test]

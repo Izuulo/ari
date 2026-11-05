@@ -9,7 +9,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -53,8 +53,16 @@ pub struct State {
     pub ended: bool,
     /// Background tasks (shells, agents) still running at the last Stop.
     pub background: u32,
-    /// Tests passed in the latest test run.
-    pub tests_passed: Option<u32>,
+    /// Recent test runs, oldest first.
+    pub test_runs: VecDeque<TestRun>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
+pub struct TestRun {
+    pub t: u64,
+    pub pass: u32,
+    pub fail: u32,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -201,8 +209,15 @@ impl State {
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.needs_you = None;
-                if ev.pass.is_some() {
-                    self.tests_passed = ev.pass;
+                if let Some((pass, fail)) = ev.tests {
+                    self.test_runs.push_back(TestRun {
+                        t: ev.t,
+                        pass,
+                        fail,
+                    });
+                    if self.test_runs.len() > 20 {
+                        self.test_runs.pop_front();
+                    }
                 }
                 self.agent_mut(aid, ev).running_since = None;
                 self.tool_result(ev, aid);
@@ -507,6 +522,11 @@ impl State {
             return Verdict::Retrying;
         }
         Verdict::OnTrack
+    }
+
+    /// The latest test run had failures.
+    pub fn tests_failing(&self) -> bool {
+        self.test_runs.back().is_some_and(|r| r.fail > 0)
     }
 
     pub fn tasks_done(&self) -> (usize, usize) {
@@ -850,6 +870,63 @@ mod tests {
         assert_eq!(s.verdict(0), Verdict::Idle);
         let s = run(&[prompt("go"), stop(0)]);
         assert_eq!(s.verdict(0), Verdict::Idle);
+    }
+
+    #[test]
+    fn test_runs_history() {
+        let t = |pass, fail| Event {
+            tests: Some((pass, fail)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        };
+        let mut s = run(&[prompt("go"), t(5, 0), t(6, 1)]);
+        assert_eq!(s.test_runs.len(), 2);
+        assert_eq!(s.test_runs.back().map(|r| (r.pass, r.fail)), Some((6, 1)));
+        for i in 0..30 {
+            s.apply(&t(i, 0));
+        }
+        assert_eq!(s.test_runs.len(), 20, "capped");
+    }
+
+    #[test]
+    fn done_with_failing_tests() {
+        let red = Event {
+            tests: Some((67, 2)),
+            ..tool("PostToolUseFailure", "Bash:cargo test", Some(false))
+        };
+        let s = run(&[
+            prompt("go"),
+            task("1", Some("a"), Some("completed")),
+            red,
+            stop(0),
+        ]);
+        assert!(s.tests_failing());
+        let green = Event {
+            tests: Some((69, 0)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        };
+        let s = run(&[
+            prompt("go"),
+            task("1", Some("a"), Some("completed")),
+            green,
+            stop(0),
+        ]);
+        assert!(!s.tests_failing());
+        assert_eq!(s.verdict(0), Verdict::Done);
+    }
+
+    #[test]
+    fn old_cache_version_rebuilds() {
+        let dir = std::env::temp_dir().join(format!("ari-state-v2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let line = crate::event::to_line(&prompt("go"));
+        std::fs::write(dir.join("events.jsonl"), &line).unwrap();
+        let stale = format!(
+            "{{\"v\":2,\"offset\":{},\"state\":{{\"turns\":99}}}}",
+            line.len()
+        );
+        std::fs::write(dir.join("state.json"), stale).unwrap();
+        assert_eq!(load_session(&dir).turns, 1);
     }
 
     #[test]

@@ -164,7 +164,13 @@ pub fn render(
     // No hook events at all (plugin missing, or installed after this session began):
     // ARI can't judge the session, so it says so instead of claiming IDLE.
     let hooked = st.first_t > 0;
-    let mut segs: Vec<String> = vec![if hooked {
+    let mut segs: Vec<String> = vec![if hooked && v == Verdict::Done && st.tests_failing() {
+        paint(
+            color,
+            "1;33",
+            &format!("{} {} · tests failing", v.glyph(), v.label()),
+        )
+    } else if hooked {
         paint(
             color,
             verdict_color(v),
@@ -211,9 +217,17 @@ pub fn render(
         ));
     }
     if from_hooks("tests")
-        && let Some(n) = st.tests_passed
+        && let Some(r) = st.test_runs.back()
     {
-        segs.push(paint(color, "32", &format!("✓ {n} tests")));
+        segs.push(if r.fail > 0 {
+            paint(
+                color,
+                "31",
+                &format!("✗ {}/{} tests", r.fail, r.pass + r.fail),
+            )
+        } else {
+            paint(color, "32", &format!("✓ {} tests", r.pass))
+        });
     }
     if shown("ctx") {
         segs.push(match u.ctx_pct {
@@ -271,7 +285,7 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Agent, ErrorRec, Task};
+    use crate::state::{Agent, ErrorRec, Task, TestRun};
 
     const NOW: u64 = 1_738_419_600_000; // 1h40m before the 5h reset below
 
@@ -414,17 +428,46 @@ mod tests {
             row.contains("│ ⠋ $ cargo test --workspace 1m15s │"),
             "{row}"
         );
-        st.tests_passed = Some(70);
-        let row = render(
-            &st,
-            &u,
-            &Extras::default(),
-            &Config::default(),
-            NOW,
-            200,
-            false,
-        );
+        let row_now = |st: &State| {
+            render(
+                st,
+                &u,
+                &Extras::default(),
+                &Config::default(),
+                NOW,
+                200,
+                false,
+            )
+        };
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 70,
+            fail: 0,
+        });
+        let row = row_now(&st);
         assert!(row.contains("│ ✗ 1 │ ✓ 70 tests │ ctx"), "{row}");
+        st.test_runs.push_back(TestRun {
+            t: NOW,
+            pass: 67,
+            fail: 2,
+        });
+        let row = row_now(&st);
+        assert!(row.contains("│ ✗ 1 │ ✗ 2/69 tests │ ctx"), "{row}");
+        let mut done = st.clone();
+        done.turn_active = false;
+        done.background = 0;
+        done.errors.clear();
+        done.recent.clear();
+        done.last_main_result = None;
+        done.tasks
+            .iter_mut()
+            .for_each(|t| t.status = "completed".into());
+        assert_eq!(done.verdict(NOW), Verdict::Done);
+        assert!(
+            row_now(&done).starts_with("✓ DONE · tests failing │"),
+            "{}",
+            row_now(&done)
+        );
         st.agents[0].running_since = None;
         st.turn_active = false;
         st.background = 0;
