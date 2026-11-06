@@ -14,7 +14,7 @@
 
 [Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
 
-<img src="docs/demo.gif" alt="ARI replaying a Claude Code session: a test fails, gets fixed, two subagents finish, and the verdict turns to DONE" width="760">
+<img src="docs/demo.gif" alt="ARI replaying a Claude Code session: the same test fails three times and the verdict turns to STUCK, Claude waits on a permission prompt (NEEDS YOU), the fix lands and it is back ON TRACK, two Explore subagents finish, and it ends on DONE" width="760">
 
 </div>
 
@@ -44,7 +44,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
 
-<p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: ON TRACK, 2 of 4 tasks, main spawning two Explore subagents, one fixed error, usage bars with a 5h pace warning, and session cost and tokens" width="620"></p>
+<p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: STUCK because python3 test_calc.py failed 3 times in a row, 1 of 4 tasks, the AssertionError under errors, usage bars, and session cost and tokens" width="620"></p>
 
 Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
 
@@ -52,11 +52,11 @@ Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agen
 
 Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. Here it is replaying `ari demo`:
 
-<p align="center"><img src="docs/hub.gif" alt="The ARI hub replaying the demo session: main spawns two Explore subagents, each gets a watch window, and the verdict turns to DONE" width="100%"></p>
+<p align="center"><img src="docs/hub.gif" alt="The ARI hub replaying the demo session: main gets STUCK on a failing test, waits on a permission prompt, fixes it, spawns two Explore subagents that each get a watch window, and the verdict turns to DONE" width="100%"></p>
 
 <table>
 <tr>
-<td width="50%"><img src="docs/hub-zoom.png" alt="Zoomed into the main agent: its timeline, context window, edited files and the error it fixed"></td>
+<td width="50%"><img src="docs/hub-zoom.png" alt="Zoomed into the main agent: its timeline with the three failed test runs, context window, edited files and the error it fixed"></td>
 <td width="50%"><img src="docs/hub-graph.png" alt="The graph screen: main and its two Explore subagents, with the task board below"></td>
 </tr>
 <tr>
