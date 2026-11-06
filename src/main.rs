@@ -7,8 +7,10 @@ usage:
                         wire ARI into your statusline (chains the existing one)
   ari uninstall [--yes] [--purge]
                         restore your original statusline
-  ari watch [--session <id> | --all] [--once] [--ascii]
+  ari watch [--session <id> | --all] [--once] [--ascii] [--hub]
                         full panel for this directory's session
+  ari hub [--session <id>] [--ascii]
+                        the hub: every agent, its messages and context
   ari doctor            check that binary, plugin, statusline and hooks are wired
   ari demo [--speed <x>] [--ascii] [--once]
                         replay a bundled session in the panel (no Claude needed)
@@ -27,6 +29,7 @@ fn main() {
         Some("setup") => setup::run_setup(&args[1..]),
         Some("uninstall") => setup::run_uninstall(&args[1..]),
         Some("watch") => watch::run(&args[1..]),
+        Some("hub") => watch::run(&[&["--hub".to_string()], &args[1..]].concat()),
         Some("doctor") => doctor::run(&args[1..]),
         Some("demo") => demo::run(&args[1..]),
         Some("recap") => recap::run(&args[1..]),
