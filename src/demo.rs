@@ -166,6 +166,8 @@ pub fn run(args: &[String]) -> ! {
     let start = Instant::now();
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let result = watch::run_tui(View::default(), |view, _tab, w, h| {
+        // The demo replays with defaults; it has no settings screen.
+        view.settings = None;
         let progress = (start.elapsed().as_millis() as f64 * speed) as u64;
         let (st, u, x, now) = frame_at(&events, progress);
         let clock = panel::local_hhmm(now);
@@ -193,7 +195,7 @@ pub fn run(args: &[String]) -> ! {
                 Some(st.agents.len().max(1)),
             );
         }
-        let lines = panel::lines(&st, &u, &x, &cfg, view, now, &clock, w, h, color);
+        let lines = panel::lines(&st, &u, &x, &cfg, *view, now, &clock, w, h, color);
         (lines, animating, Alignment::Left, None, None)
     });
     if let Err(e) = result {

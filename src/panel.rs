@@ -20,6 +20,10 @@ pub struct View {
     pub open: bool,
     /// The hub (`x`) instead of the panel.
     pub hub: Option<crate::hub::HubView>,
+    /// The settings screen (`s`) over everything, at this row of `settings::items()`.
+    pub settings: Option<usize>,
+    /// A settings change the key handler queued: 1 forward, -1 back, 0 reset.
+    pub edit: Option<i8>,
 }
 
 type Row = Vec<Span<'static>>;

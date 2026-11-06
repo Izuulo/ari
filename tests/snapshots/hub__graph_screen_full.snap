@@ -50,4 +50,4 @@ expression: "show(&s, &x, now, v, 168, 49)"
 │                                                       │                                                       │                                                      │
 │                                                       │                                                       │                                                      │
 ╰───────────────────────────────────────────────────────┴───────────────────────────────────────────────────────┴──────────────────────────────────────────────────────╯
-  ↑↓ select   ⏎ zoom   h hub   z show finished   esc back   q quit                                                                                               168×49
+  ↑↓ select   ⏎ zoom   h hub   z show finished   esc back   s settings   q quit                                                                                  168×49
