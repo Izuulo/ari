@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub const ARI_CMD: &str = "ari statusline";
 const ORIGINAL: &str = "original-statusline.json";
-const CHAINED_HIDE: [&str; 4] = ["cost", "tokens", "time", "cache"];
+const CHAINED_HIDE: [&str; 2] = ["cost", "tokens"];
 
 pub fn settings_path() -> Option<PathBuf> {
     match std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -71,6 +71,22 @@ pub fn plan(settings: &Value, cfg: &Config) -> Option<Plan> {
         original,
         diff,
     })
+}
+
+/// The config without what `plan` added: the original statusline in `chain.commands`, and a
+/// `hide` it wrote (also the older list with `time` and `cache`). `None` when nothing changes.
+pub fn unchain(cfg: &Config, original: &Value) -> Option<Config> {
+    let mut c = cfg.clone();
+    if let Some(cmd) = original.get("command").and_then(Value::as_str) {
+        c.chain.commands.retain(|x| x != cmd);
+    }
+    // `plan` writes `hide` only while chaining, so only a removed chain takes it along.
+    if c.chain.commands.len() < cfg.chain.commands.len()
+        && (c.hide == CHAINED_HIDE || c.hide == ["cost", "tokens", "time", "cache"])
+    {
+        c.hide.clear();
+    }
+    (c != *cfg).then_some(c)
 }
 
 /// The settings with the saved original statusLine put back (or removed if there was none).
@@ -200,11 +216,22 @@ pub fn run_uninstall(args: &[String]) -> ! {
         }
     };
     let changes = is_ari(&current);
+    // A config.toml that doesn't parse is left as it is.
+    let unchained = config::load_checked()
+        .ok()
+        .filter(|_| changes && !has("--purge"))
+        .and_then(|c| Some((unchain(&c, &original)?, c)));
     if changes {
         println!(
             "settings.json  statusLine\n- {}\n+ {}\n",
             compact(&current),
             compact(&original)
+        );
+    }
+    if let Some((new, old)) = &unchained {
+        println!(
+            "config.toml  chain.commands, hide\n- {:?}, {:?}\n+ {:?}, {:?}\n",
+            old.chain.commands, old.hide, new.chain.commands, new.hide
         );
     }
     if has("--purge") {
@@ -230,6 +257,11 @@ pub fn run_uninstall(args: &[String]) -> ! {
         }
         let _ = std::fs::remove_file(cfg_dir.join(ORIGINAL));
         println!("Restored your original statusLine.");
+        if let Some((new, _)) = &unchained
+            && let Err(e) = config::save(new)
+        {
+            eprintln!("ari: couldn't update config.toml: {e}");
+        }
     }
     if has("--purge") {
         for d in [paths::state_root(), Some(cfg_dir)].into_iter().flatten() {
@@ -257,9 +289,40 @@ mod tests {
         );
         assert_eq!(p.config.chain.commands, vec!["bash ~/.claude/p.sh"]);
         assert_eq!(p.config.hide, CHAINED_HIDE);
+        assert!(
+            config::problems(&p.config).is_empty(),
+            "{:?}",
+            config::problems(&p.config)
+        );
         assert!(plan(&p.settings, &p.config).is_none());
         assert_eq!(restore(&p.settings, &p.original), s);
         assert_eq!(restore(&p.settings, &p.original).to_string(), s.to_string());
+    }
+
+    #[test]
+    fn unchain_drops_only_what_setup_added() {
+        let s: Value =
+            serde_json::from_str(r#"{"statusLine":{"type":"command","command":"bash p.sh"}}"#)
+                .unwrap();
+        let p = plan(&s, &Config::default()).unwrap();
+        let c = unchain(&p.config, &p.original).unwrap();
+        assert!(c.chain.commands.is_empty() && c.hide.is_empty());
+        let mut mine = p.config.clone();
+        mine.hide = vec!["cost".into()];
+        assert_eq!(unchain(&mine, &p.original).unwrap().hide, ["cost"]);
+        let mut legacy = p.config.clone();
+        legacy.hide = ["cost", "tokens", "time", "cache"]
+            .map(String::from)
+            .to_vec();
+        assert!(unchain(&legacy, &p.original).unwrap().hide.is_empty());
+        assert_eq!(unchain(&Config::default(), &Value::Null), None);
+        // Setup only writes `hide` while chaining; a hide the user chose without a chain stays.
+        let own = Config {
+            hide: CHAINED_HIDE.map(String::from).to_vec(),
+            ..Config::default()
+        };
+        assert_eq!(unchain(&own, &Value::Null), None);
+        assert_eq!(unchain(&own, &p.original), None);
     }
 
     #[test]

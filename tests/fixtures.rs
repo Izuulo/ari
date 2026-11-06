@@ -37,7 +37,7 @@ fn basic_verdicts() {
     let mut out = Vec::new();
     for ev in &events {
         s.apply(ev);
-        let v = s.verdict(ev.t);
+        let v = s.verdict();
         if last != Some(v) {
             let (done, total) = s.tasks_done();
             out.push(format!(
@@ -113,7 +113,7 @@ fn multi_verdicts() {
     let mut seen = Vec::new();
     for ev in &fixture("multi") {
         s.apply(ev);
-        let v = s.verdict(ev.t).label();
+        let v = s.verdict().label();
         if seen.last() != Some(&v) {
             seen.push(v);
         }

@@ -46,7 +46,7 @@ fn handle() {
     // Create-only, on any event: sessions that began before ARI was installed still get a cwd.
     write_meta(&dir, &raw, t);
     if ev.e == "SessionStart" {
-        let days = config::load().retention_days;
+        let days = config::load().retention_days.max(1);
         prune(&root, Duration::from_secs(days * 86_400), &dir);
     }
     let _ = append(&dir.join("events.jsonl"), event::to_line(&ev).as_bytes());

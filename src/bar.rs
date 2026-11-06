@@ -201,7 +201,7 @@ pub fn render(
     width: usize,
     color: bool,
 ) -> String {
-    let v = st.verdict_with(now_ms, cfg.thresholds.stuck_repeats);
+    let v = st.verdict_with(cfg.thresholds.stuck_repeats);
     // No hook events at all (plugin missing, or installed after this session began):
     // ARI can't judge the session, so it says so instead of claiming IDLE.
     let hooked = st.first_t > 0;
@@ -568,7 +568,7 @@ mod tests {
         done.tasks
             .iter_mut()
             .for_each(|t| t.status = "completed".into());
-        assert_eq!(done.verdict(NOW), Verdict::Done);
+        assert_eq!(done.verdict(), Verdict::Done);
         assert!(
             row_now(&done).starts_with("✓ DONE · tests failing │"),
             "{}",

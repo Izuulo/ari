@@ -242,7 +242,7 @@ pub(crate) fn glyph(i: &Input, a: &Agent) -> (String, Style) {
         return if i.st.turn_active {
             (spin, lead())
         } else {
-            let v = i.st.verdict_with(i.now, i.cfg.thresholds.stuck_repeats);
+            let v = i.st.verdict_with(i.cfg.thresholds.stuck_repeats);
             (v.glyph().to_string(), crate::panel::verdict_style(v))
         };
     }
@@ -375,7 +375,7 @@ fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
     let (head, rest) = text
         .split_once('│')
         .map_or((text.as_str(), ""), |(h, r)| (h, r));
-    let v = i.st.verdict_with(i.now, i.cfg.thresholds.stuck_repeats);
+    let v = i.st.verdict_with(i.cfg.thresholds.stuck_repeats);
     let head = match i.st.waiting() {
         Some(a) => format!("{} {} ", head.trim_end(), a.label()),
         None => head.to_string(),

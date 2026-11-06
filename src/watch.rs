@@ -61,14 +61,6 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-fn load_usage(dir: &Path) -> Usage {
-    std::fs::read(dir.join("usage.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .map(|v| usage::from_value(&v))
-        .unwrap_or_default()
-}
-
 impl App {
     fn derive_cfg(&mut self) {
         self.cfg = self.file.clone();
@@ -165,7 +157,7 @@ impl App {
         if changed {
             self.mtimes = now;
             self.st = state::load_session(dir);
-            self.usage = load_usage(dir);
+            self.usage = usage::load(dir);
             self.x.tokens = Some(tokens::update(
                 dir,
                 &self.st,
@@ -302,7 +294,7 @@ impl App {
             if let Some(dir) = self.pinned.clone() {
                 if dir.is_dir() {
                     let st = state::load_session(&dir);
-                    let usage = load_usage(&dir);
+                    let usage = usage::load(&dir);
                     let x = bar::Extras {
                         tokens: Some(tokens::cached(&dir)),
                         samples: burn::recent(&dir),
@@ -478,7 +470,7 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
         .into_iter()
         .filter(|s| sessions::is_live(s, now))
     {
-        let u = load_usage(&s.dir);
+        let u = usage::load(&s.dir);
         let st = state::load_session(&s.dir);
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
@@ -499,7 +491,7 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
         }
         let row = bar::render(&st, &u, &x, &row_cfg, now, 10_000, false);
         let (verdict, detail) = row.split_once(" │ ").unwrap_or((row.as_str(), ""));
-        let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
+        let v = st.verdict_with(cfg.thresholds.stuck_repeats);
         let (rank, style) = if st.first_t > 0 {
             (v as u8, panel::verdict_style(v))
         } else if x.looks_active() {
@@ -790,7 +782,7 @@ pub fn run(args: &[String]) -> ! {
         app.view = *view;
         app.refresh();
         let now = hook::now_ms();
-        let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
+        let v = app.st.verdict_with(app.cfg.thresholds.stuck_repeats);
         if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
             let mut out = std::io::stdout();
             let _ = out.write_all(b"\x07").and_then(|_| out.flush());

@@ -3,7 +3,6 @@
 use crate::event::Event;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub const STALE_MS: u64 = 300_000;
@@ -870,8 +869,8 @@ impl State {
             .any(|e| e.sig == sig && e.resolved_t.is_none())
     }
 
-    pub fn verdict(&self, now: u64) -> Verdict {
-        self.verdict_with(now, 3)
+    pub fn verdict(&self) -> Verdict {
+        self.verdict_with(3)
     }
 
     /// Why Claude looks stuck, if it does (PRD 7.4). `repeats` = `thresholds.stuck_repeats`.
@@ -916,7 +915,7 @@ impl State {
         None
     }
 
-    pub fn verdict_with(&self, _now: u64, repeats: u8) -> Verdict {
+    pub fn verdict_with(&self, repeats: u8) -> Verdict {
         if self.needs_you.is_some() || self.waiting().is_some() {
             return Verdict::NeedsYou;
         }
@@ -1070,33 +1069,26 @@ pub fn load_session(dir: &Path) -> State {
             offset: 0,
             state: State::default(),
         });
-    let Ok(mut f) = std::fs::File::open(dir.join("events.jsonl")) else {
+    let Some((restart, bytes)) = crate::paths::new_lines(&dir.join("events.jsonl"), cache.offset)
+    else {
         return cache.state;
     };
-    let len = f.metadata().map_or(0, |m| m.len());
-    if len < cache.offset {
+    if restart {
         cache = Cache {
             v: CACHE_VERSION,
             offset: 0,
             state: State::default(),
         };
     }
-    if len == cache.offset {
+    if bytes.is_empty() {
         return cache.state;
     }
-    let mut buf = Vec::new();
-    if f.seek(SeekFrom::Start(cache.offset)).is_err() || f.read_to_end(&mut buf).is_err() {
-        return cache.state;
-    }
-    let Some(end) = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1) else {
-        return cache.state;
-    };
-    for line in buf[..end].split(|b| *b == b'\n') {
+    for line in bytes.split(|b| *b == b'\n') {
         if let Ok(ev) = serde_json::from_slice::<Event>(line) {
             cache.state.apply(&ev);
         }
     }
-    cache.offset += end as u64;
+    cache.offset += bytes.len() as u64;
     if let Ok(bytes) = serde_json::to_vec(&cache) {
         let _ = crate::paths::write_atomic(&cache_path, &bytes);
     }
@@ -1190,6 +1182,43 @@ mod tests {
 
     use super::*;
     use crate::event::{TaskRef, Todo};
+
+    #[test]
+    fn a_passing_script_does_not_fix_a_different_failing_one() {
+        use serde_json::json;
+        let ev = |t, v: serde_json::Value| crate::event::normalize(&v, t).unwrap();
+        let bash = |cmd: &str| json!({ "command": cmd });
+        let mut st = State::default();
+        st.apply(&ev(
+            1,
+            json!({"hook_event_name": "UserPromptSubmit", "prompt": "build"}),
+        ));
+        st.apply(&ev(
+            2,
+            json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": bash("npm run build"), "error": "Exit code 1\nerror TS2304"}),
+        ));
+        st.apply(&ev(
+            3,
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": bash("npm run lint")}),
+        ));
+        assert_eq!(
+            st.errors[0].resolved_t, None,
+            "lint passing doesn't fix the build"
+        );
+        // Different scripts failing once each is not "the same command failing again".
+        for (t, cmd) in [(5, "npm run test"), (6, "npm run lint")] {
+            st.apply(&ev(
+                t,
+                json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+                "tool_input": bash(cmd), "error": "Exit code 1\nfailed"}),
+            ));
+        }
+        assert_eq!(st.stuck_reason(3), None);
+        st.apply(&ev(7, json!({"hook_event_name": "Stop"})));
+        assert_eq!(st.open_errors(), 3);
+    }
 
     fn at(t: u64, e: &str, a: Option<&str>) -> Event {
         Event {
@@ -1321,20 +1350,20 @@ mod tests {
             start(2, "a2", "general-purpose"),
             wait,
         ]);
-        assert_eq!(s.verdict(4), Verdict::NeedsYou);
+        assert_eq!(s.verdict(), Verdict::NeedsYou);
         assert_eq!(s.waiting().map(|a| a.id.as_str()), Some("a1"));
         assert_eq!(agent(&s, "a1").waiting, Some((3, "$ curl -s x".into())));
         s.apply(&Event {
             tool: Some("Read".into()),
             ..at(5, "PreToolUse", Some("a2"))
         });
-        assert_eq!(s.verdict(6), Verdict::NeedsYou);
+        assert_eq!(s.verdict(), Verdict::NeedsYou);
         s.apply(&Event {
             tool: Some("Bash".into()),
             ok: Some(true),
             ..at(7, "PostToolUse", Some("a1"))
         });
-        assert_eq!(s.verdict(8), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
@@ -1500,22 +1529,22 @@ mod tests {
     fn stuck_on_identical_calls() {
         let r = call("main", "Read", 7, "reading a.rs");
         let s = run(&[prompt("go"), r.clone(), r.clone(), r.clone()]);
-        assert_eq!(s.verdict(0), Verdict::Stuck);
+        assert_eq!(s.verdict(), Verdict::Stuck);
         assert_eq!(
             s.stuck_reason(3).as_deref(),
             Some("same call 3× · reading a.rs")
         );
-        assert_eq!(s.verdict_with(0, 4), Verdict::OnTrack);
+        assert_eq!(s.verdict_with(4), Verdict::OnTrack);
         let edit = call("main", "Edit", 9, "editing a.rs");
         let s = run(&[prompt("go"), r.clone(), edit, r.clone(), r.clone()]);
         assert_eq!(
-            s.verdict(0),
+            s.verdict(),
             Verdict::OnTrack,
             "an edit between repeats is progress"
         );
         let t = call("main", "TaskUpdate", 1, "updating plan");
         assert_eq!(
-            run(&[prompt("go"), t.clone(), t.clone(), t]).verdict(0),
+            run(&[prompt("go"), t.clone(), t.clone(), t]).verdict(),
             Verdict::OnTrack
         );
         let par: Vec<Event> = ["a1", "a2", "a3"]
@@ -1525,13 +1554,13 @@ mod tests {
         let mut evs = vec![prompt("go")];
         evs.extend(par);
         assert_eq!(
-            run(&evs).verdict(0),
+            run(&evs).verdict(),
             Verdict::OnTrack,
             "parallel agents don't add up"
         );
         let mut s = run(&[prompt("go"), r.clone(), r.clone(), r]);
         s.apply(&stop(0));
-        assert_ne!(s.verdict(0), Verdict::Stuck);
+        assert_ne!(s.verdict(), Verdict::Stuck);
     }
 
     #[test]
@@ -1541,15 +1570,15 @@ mod tests {
             ..tool("PostToolUseFailure", "Bash:cargo build", Some(false))
         };
         let mut s = run(&[prompt("go"), fail.clone(), fail.clone()]);
-        assert_eq!(s.verdict(0), Verdict::Retrying);
+        assert_eq!(s.verdict(), Verdict::Retrying);
         s.apply(&fail);
-        assert_eq!(s.verdict(0), Verdict::Stuck);
+        assert_eq!(s.verdict(), Verdict::Stuck);
         assert_eq!(
             s.stuck_reason(3).as_deref(),
             Some("cargo build failed 3× in a row")
         );
         s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
@@ -1581,15 +1610,15 @@ mod tests {
             ..ev("Notification")
         };
         let mut s = run(&[prompt("go"), note]);
-        assert_eq!(s.verdict(0), Verdict::NeedsYou);
+        assert_eq!(s.verdict(), Verdict::NeedsYou);
         s.apply(&tool("PreToolUse", "Bash:ls", None));
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
         let other = Event {
             kind: Some("auth_success".into()),
             ..ev("Notification")
         };
         s.apply(&other);
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
@@ -1625,10 +1654,10 @@ mod tests {
             ..ev("StopFailure")
         };
         let mut s = run(&[prompt("go"), sf]);
-        assert_eq!(s.verdict(0), Verdict::Blocked);
+        assert_eq!(s.verdict(), Verdict::Blocked);
         assert_eq!(s.open_errors(), 1);
         s.apply(&prompt("again"));
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
         s.apply(&stop(0));
         assert!(s.errors[0].resolved_t.is_some());
     }
@@ -1637,10 +1666,10 @@ mod tests {
     fn retry_then_fix() {
         let fail = tool("PostToolUseFailure", "Bash:cargo build", Some(false));
         let mut s = run(&[prompt("go"), fail.clone(), fail]);
-        assert_eq!(s.verdict(0), Verdict::Retrying);
+        assert_eq!(s.verdict(), Verdict::Retrying);
         assert_eq!((s.errors.len(), s.errors[0].retries), (1, 1));
         s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
         assert_eq!(s.errors[0].resolved_by.as_deref(), Some("main"));
         assert_eq!(s.open_errors(), 0);
     }
@@ -1654,10 +1683,10 @@ mod tests {
         for i in 0..10 {
             s.apply(&tool("PostToolUse", &format!("Bash:ok {i}"), Some(true)));
         }
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
         assert_eq!(s.open_errors(), 1);
         s.apply(&stop(0));
-        assert_eq!(s.verdict(0), Verdict::Idle);
+        assert_eq!(s.verdict(), Verdict::Idle);
     }
 
     #[test]
@@ -1667,7 +1696,7 @@ mod tests {
             tool("PostToolUseFailure", "Bash:make", Some(false)),
             stop(0),
         ]);
-        assert_eq!(s.verdict(0), Verdict::Blocked);
+        assert_eq!(s.verdict(), Verdict::Blocked);
     }
 
     #[test]
@@ -1676,13 +1705,13 @@ mod tests {
         f.kind = Some("interrupt".into());
         let s = run(&[prompt("go"), f]);
         assert!(s.errors.is_empty());
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
     fn background_agents_keep_turn_active() {
         let s = run(&[prompt("go"), task("1", Some("a"), None), stop(1)]);
-        assert_eq!(s.verdict(0), Verdict::OnTrack);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
@@ -1692,16 +1721,16 @@ mod tests {
             task("1", Some("a"), Some("completed")),
             stop(0),
         ]);
-        assert_eq!(s.verdict(0), Verdict::Done);
+        assert_eq!(s.verdict(), Verdict::Done);
         let s = run(&[
             prompt("go"),
             task("1", Some("a"), Some("completed")),
             task("2", Some("b"), None),
             stop(0),
         ]);
-        assert_eq!(s.verdict(0), Verdict::Idle);
+        assert_eq!(s.verdict(), Verdict::Idle);
         let s = run(&[prompt("go"), stop(0)]);
-        assert_eq!(s.verdict(0), Verdict::Idle);
+        assert_eq!(s.verdict(), Verdict::Idle);
     }
 
     #[test]
@@ -1866,7 +1895,7 @@ mod tests {
             stop(0),
         ]);
         assert!(!s.tests_failing());
-        assert_eq!(s.verdict(0), Verdict::Done);
+        assert_eq!(s.verdict(), Verdict::Done);
     }
 
     #[test]

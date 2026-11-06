@@ -157,7 +157,7 @@ pub fn run(args: &[String]) -> ! {
         let (st, u, x, now) = frame_at(&events, progress as u64);
         progress += last.elapsed().as_secs_f64()
             * 1000.0
-            * pace(st.verdict_with(now, cfg.thresholds.stuck_repeats), speed);
+            * pace(st.verdict_with(cfg.thresholds.stuck_repeats), speed);
         last = Instant::now();
         let progress = progress as u64;
         let clock = panel::local_hhmm(now);
@@ -225,13 +225,13 @@ mod tests {
     fn replays_the_story() {
         let evs = events();
         let (st, ..) = frame_at(&evs, 0);
-        assert_eq!(st.verdict(evs[0].t), Verdict::Idle);
+        assert_eq!(st.verdict(), Verdict::Idle);
         let at = |p: fn(&Event) -> bool| evs.iter().filter(move |e| p(e)).map(|e| e.t - evs[0].t);
         let fails: Vec<u64> = at(|e| e.ok == Some(false)).collect();
         assert_eq!(fails.len(), 3, "the same test fails three times");
         let verdict = |ms| {
-            let (st, _, _, now) = frame_at(&evs, ms);
-            st.verdict(now)
+            let (st, ..) = frame_at(&evs, ms);
+            st.verdict()
         };
         assert_eq!(verdict(fails[0]), Verdict::Retrying);
         assert_eq!(verdict(fails[2]), Verdict::Stuck);
@@ -239,8 +239,8 @@ mod tests {
         assert_eq!(verdict(asked + 1000), Verdict::NeedsYou);
         let mut passed = at(|e| e.ok == Some(true) && e.tool.as_deref() == Some("Bash"));
         assert_eq!(verdict(passed.next_back().unwrap()), Verdict::OnTrack);
-        let (st, u, x, now) = frame_at(&evs, u64::MAX);
-        assert_eq!(st.verdict(now), Verdict::Done);
+        let (st, u, x, _) = frame_at(&evs, u64::MAX);
+        assert_eq!(st.verdict(), Verdict::Done);
         assert_eq!(st.tasks_done(), (4, 4));
         assert_eq!(st.agents.iter().filter(|a| a.done).count(), 2);
         assert!(u.cost_usd.unwrap() > 0.11 && x.tokens.unwrap().total().total() > 400_000);

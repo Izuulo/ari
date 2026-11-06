@@ -292,8 +292,7 @@ fn hook_failures(now_ms: u64) -> Check {
     let files: Vec<PathBuf> = dirs
         .iter()
         .filter_map(|s| {
-            let u = std::fs::read(s.dir.join("usage.json")).ok()?;
-            let u = crate::usage::from_value(&serde_json::from_slice(&u).ok()?);
+            let u = crate::usage::load(&s.dir);
             crate::tokens::transcript_for(&s.dir, &u).map(PathBuf::from)
         })
         .collect();

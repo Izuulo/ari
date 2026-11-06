@@ -67,7 +67,7 @@ pub(crate) fn state_text(i: &Input, a: &Agent) -> (String, Style) {
     } else if g == "↻" {
         "retrying".into()
     } else if a.id == "main" && !i.st.turn_active {
-        i.st.verdict_with(i.now, i.cfg.thresholds.stuck_repeats)
+        i.st.verdict_with(i.cfg.thresholds.stuck_repeats)
             .label()
             .to_lowercase()
     } else if a.running_since.is_some() {

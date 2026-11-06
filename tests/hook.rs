@@ -14,6 +14,7 @@ fn hook(state: &Path, stdin: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
         .arg("hook")
         .env("XDG_STATE_HOME", state)
+        .env("XDG_CONFIG_HOME", state.join("config"))
         .env_remove("ARI_RAW_LOG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -128,6 +129,20 @@ fn session_start_writes_meta_and_prunes() {
     assert_eq!(meta["transcript"], "/t.jsonl");
     assert!(!old.exists(), "old session should be pruned");
     assert!(fresh.exists(), "fresh session must survive");
+}
+
+#[test]
+fn zero_retention_keeps_live_sessions() {
+    let s = tmp("zero");
+    std::fs::create_dir_all(s.join("config/ari")).unwrap();
+    std::fs::write(s.join("config/ari/config.toml"), "retention_days = 0\n").unwrap();
+    let live = s.join("ari/sessions/live");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("events.jsonl"), "").unwrap();
+    std::thread::sleep(Duration::from_millis(20)); // age > 0
+    let start = serde_json::json!({"session_id": "s1", "hook_event_name": "SessionStart"});
+    assert_silent(&hook(&s, start.to_string().as_bytes()));
+    assert!(live.exists(), "a session active seconds ago must survive");
 }
 
 #[test]

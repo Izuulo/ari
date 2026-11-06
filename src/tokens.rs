@@ -5,7 +5,6 @@ use crate::state::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub(crate) const CACHE_VERSION: u32 = 4;
@@ -209,29 +208,18 @@ pub fn ledger_from(text: &str) -> Ledger {
 
 /// Read whatever `path` gained since `l.offset`; only complete lines. A shorter file starts over.
 pub fn read_ledger(path: &Path, l: &mut Ledger) {
-    let Ok(mut f) = std::fs::File::open(path) else {
+    let Some((restart, bytes)) = crate::paths::new_lines(path, l.offset) else {
         return;
     };
-    let len = f.metadata().map_or(0, |m| m.len());
-    if len < l.offset {
+    if restart {
         *l = Ledger::default();
     }
-    if len == l.offset || f.seek(SeekFrom::Start(l.offset)).is_err() {
-        return;
-    }
-    let mut buf = Vec::new();
-    if f.read_to_end(&mut buf).is_err() {
-        return;
-    }
-    let Some(end) = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1) else {
-        return;
-    };
-    for line in buf[..end].split(|b| *b == b'\n') {
+    for line in bytes.split(|b| *b == b'\n') {
         if let Ok(v) = serde_json::from_slice::<Value>(line) {
             l.apply(&v);
         }
     }
-    l.offset += end as u64;
+    l.offset += bytes.len() as u64;
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
