@@ -10,13 +10,15 @@ Set Theme "TokyoNight"
 Set TypingSpeed 45ms
 
 Hide
-Type "export PATH=$PWD/target/release:$PATH PS1='$ ' && clear"
+Type "export PATH=$PWD/target/release:$PATH HOME=$(mktemp -d) PS1='$ ' && clear"
 Enter
 Show
 
 Type "ari demo --speed 1.6"
 Sleep 400ms
 Enter
-Sleep 19s
+Sleep 10s
+Screenshot docs/panel.png
+Sleep 10s
 Type "q"
 Sleep 300ms
