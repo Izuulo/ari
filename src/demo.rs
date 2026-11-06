@@ -1,7 +1,6 @@
 //! `ari demo`: replay a bundled real session in the panel. No Claude, no state dir, no network.
 
 use crate::bar::Extras;
-use crate::burn::{self, Sample};
 use crate::event::Event;
 use crate::panel::{self, View};
 use crate::state::State;
@@ -11,16 +10,16 @@ use crate::{config, hub, replay, watch};
 use ratatui::layout::Alignment;
 use std::time::Instant;
 
-const RAW: &str = include_str!("../fixtures/multi/raw.jsonl");
-const MAIN: &str = include_str!("../fixtures/multi/transcript.jsonl");
+const RAW: &str = include_str!("../fixtures/stuck/raw.jsonl");
+const MAIN: &str = include_str!("../fixtures/stuck/transcript.jsonl");
 const AGENTS: [(&str, &str); 2] = [
     (
-        "a3a6a01361cc3173c",
-        include_str!("../fixtures/multi/subagents/agent-a3a6a01361cc3173c.jsonl"),
+        "ab57dcf04590c7026",
+        include_str!("../fixtures/stuck/subagents/agent-ab57dcf04590c7026.jsonl"),
     ),
     (
-        "a5114050eef69c100",
-        include_str!("../fixtures/multi/subagents/agent-a5114050eef69c100.jsonl"),
+        "abb5727de68e884cc",
+        include_str!("../fixtures/stuck/subagents/agent-abb5727de68e884cc.jsonl"),
     ),
 ];
 /// Shown instead of the fixture's long scripted prompt.
@@ -45,7 +44,8 @@ fn scaled(l: &Ledger, f: f64) -> Ledger {
 
 /// State, usage and extras `progress_ms` into the bundled session, and the virtual clock.
 /// Usage, tokens and rate limits are synthetic here: the fixture was recorded with `claude -p`,
-/// which runs no statusline.
+/// which runs no statusline. The 5h window barely moves for a 40-second Haiku session, so there
+/// is no pace warning to show.
 pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
     let t0 = events.first().map_or(0, |e| e.t);
     let span = events.last().map_or(1, |e| e.t - t0).max(1);
@@ -59,16 +59,13 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
     }
     st.label = Some(LABEL.into());
 
-    let resets_5h = (t0 + 2 * 3_600_000 + 10 * 60_000) / 1000;
-    // The 5h window has been filling at 1%/min since 10 minutes before the session.
-    let five = |t: u64| 41.0 + (t as f64 - t0 as f64) / 60_000.0;
     let u = Usage {
         ctx_pct: Some(8.0 + 26.0 * f),
         ctx_size: Some(200_000),
         ctx_used: Some(((8.0 + 26.0 * f) * 2000.0) as u64),
         five_h: Some(Limit {
-            pct: five(now),
-            resets_at: resets_5h,
+            pct: 22.0 + f,
+            resets_at: (t0 + 2 * 3_600_000 + 10 * 60_000) / 1000,
         }),
         seven_d: Some(Limit {
             pct: 18.0,
@@ -79,17 +76,6 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
         api_duration_ms: Some(progress * 3 / 4),
         ..Default::default()
     };
-    let history = t0 - 10 * 60_000;
-    let samples: Vec<Sample> = (0..=(now - history) / 30_000)
-        .map(|i| history + i * 30_000)
-        .chain(std::iter::once(now))
-        .map(|t| Sample {
-            t,
-            pct: five(t),
-            resets_at: resets_5h,
-            ..Default::default()
-        })
-        .collect();
     let mut cache = TokenCache {
         main: scaled(&tokens::ledger_from(MAIN), f),
         ..Default::default()
@@ -104,7 +90,6 @@ pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
     }
     let x = Extras {
         tokens: Some(cache),
-        burn_eta: burn::projection(&samples, now),
         ..Default::default()
     };
     (st, u, x, now)
@@ -219,16 +204,25 @@ mod tests {
         let evs = events();
         let (st, ..) = frame_at(&evs, 0);
         assert_eq!(st.verdict(evs[0].t), Verdict::Idle);
-        let fail_at = evs.iter().find(|e| e.ok == Some(false)).unwrap().t - evs[0].t;
-        let (st, _, _, now) = frame_at(&evs, fail_at);
-        assert_eq!(st.verdict(now), Verdict::Retrying);
+        let at = |p: fn(&Event) -> bool| evs.iter().filter(move |e| p(e)).map(|e| e.t - evs[0].t);
+        let fails: Vec<u64> = at(|e| e.ok == Some(false)).collect();
+        assert_eq!(fails.len(), 3, "the same test fails three times");
+        let verdict = |ms| {
+            let (st, _, _, now) = frame_at(&evs, ms);
+            st.verdict(now)
+        };
+        assert_eq!(verdict(fails[0]), Verdict::Retrying);
+        assert_eq!(verdict(fails[2]), Verdict::Stuck);
+        let asked = at(|e| e.e == "PermissionRequest").next().unwrap();
+        assert_eq!(verdict(asked + 1000), Verdict::NeedsYou);
+        let mut passed = at(|e| e.ok == Some(true) && e.tool.as_deref() == Some("Bash"));
+        assert_eq!(verdict(passed.next_back().unwrap()), Verdict::OnTrack);
         let (st, u, x, now) = frame_at(&evs, u64::MAX);
         assert_eq!(st.verdict(now), Verdict::Done);
         assert_eq!(st.tasks_done(), (4, 4));
         assert_eq!(st.agents.iter().filter(|a| a.done).count(), 2);
         assert!(u.cost_usd.unwrap() > 0.11 && x.tokens.unwrap().total().total() > 400_000);
-        let eta = x.burn_eta.expect("burn warning shows in the demo");
-        assert!((55 * 60_000..62 * 60_000).contains(&eta), "{eta}");
+        assert!(x.burn_eta.is_none(), "no pace warning for a short session");
     }
 
     #[test]
