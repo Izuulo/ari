@@ -44,57 +44,26 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
 
-```
-╭─ ARI ─────────────────────────────── ~/calc · 13:03 ─╮
-│ ● ON TRACK · calculator fix                          │
-│ ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱ 2/4 tasks                       │
-│ ▸ now: survey                                        │
-├─ agents ─────────────────────────────────────────────┤
-│ ⠦ main      agent Explore: Describe test_calc.py     │
-│ ├─⠦ Explore reading calc.py · 1 call · 1s · 16k tok  │
-│ └─⠦ Explore reading test_calc.py · 1 call · 0s       │
-├─ errors ─────────────────────────────────────────────┤
-│ no open errors · 1 fixed · 1s on failed calls (e)    │
-├─ usage ──────────────────────────────────────────────┤
-│ ▲ at this pace: 5h limit in ~55m                     │
-│ ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ 71%  142k/200k              │
-│ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m                │
-├─ session ────────────────────────────────────────────┤
-│ cost    $2.69 · $0.67/task done                      │
-│ tokens  6.2M · 26.8k out · cache 86% hit, saved $11… │
-╰──────────────────────────────────────────────────────╯
-```
+<p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: ON TRACK, 2 of 4 tasks, main spawning two Explore subagents, one fixed error, usage bars with a 5h pace warning, and session cost and tokens" width="620"></p>
 
 Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
 
 ### Every agent at once: the hub
 
-Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. This is the top of it, replaying the bundled `team` fixture (two named subagents passing a file):
+Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. Here it is replaying `ari demo`:
 
-```
- ARI hub · Do these steps in order, using the tool…                                                                                                               13:04
- ✓ DONE │ ▰▰▰▰▰▰▰▰▰▰ 2/2 │ ✗ 0 │ ctx — │ 5h — │ 7d — │ 326k tok
-╭─ graph ────────────────────────────────────────────────────────────────────── 3 agents · 1 link ─╮╭─ agents ─────────────────────────────────────────────────────────╮
-│                                       ┏━ ✓ main ━━━━━━━━━┓                                       ││ agent       model   state          context                   tok │
-│                                       ┃ haiku · ctx 17%  ┃                                       ││▸◆ main      haiku   ✓ done         ▰▰▱▱▱▱▱▱▱▱  17%          160k │
-│                                       ┃ —                ┃                                       ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
-│                                       ┗━━━━━━━━━┳━━━━━━━━┛                                       ││ └ writer    haiku   ✓ done 3s      ▰▱▱▱▱▱▱▱▱▱  11%           83k │
-│                                                 │                                                ││                                                                  │
-│                                           ╭─────┴─────────────────╮                              ││                                                                  │
-│                                 ↩ result  │             ↩ result  │                              ││                                                                  │
-│                           ╭─ ✓ checker ───┴──╮    ╭─ ✓ writer ────┴──╮                           ││                                                                  │
-│                           │ haiku · ctx 11%  │    │ haiku · ctx 11%  │                           ││                                                                  │
-│                           │ I read notes.md… │    │ The checker con… │                           ││                                                                  │
-│                           ╰─────────┰────────╯    ╰─────────┰────────╯                           ││                                                                  │
-│                                     ┃                       ┃                                    ││                                                                  │
-│                                     ┗━━━━━━━━━━━━━━━━━━━━━━━┛                                    ││                                                                  │
-│                                   ⇄ 2 · "notes.md has 3 lines."                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│ ── spawn   ━━ message   ● in flight   dim = finished                                             ││                                                                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
-```
+<p align="center"><img src="docs/hub.gif" alt="The ARI hub replaying the demo session: main spawns two Explore subagents, each gets a watch window, and the verdict turns to DONE" width="100%"></p>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/hub-zoom.png" alt="Zoomed into the main agent: its timeline, context window, edited files and the error it fixed"></td>
+<td width="50%"><img src="docs/hub-graph.png" alt="The graph screen: main and its two Explore subagents, with the task board below"></td>
+</tr>
+<tr>
+<td align="center"><sub><code>⏎</code> zoom: one agent's timeline, context, files and errors</sub></td>
+<td align="center"><sub><code>g</code> graph: who spawned whom, with the task board</sub></td>
+</tr>
+</table>
 
 `↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, `esc` goes back one level and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call.
 
