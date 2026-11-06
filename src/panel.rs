@@ -272,7 +272,8 @@ pub fn lines(
             rows: turns(st, x, &rc, now),
         },
     ];
-    sections.retain(|s| s.title != Some("turns") || !s.rows.is_empty());
+    // A section with nothing to say is left out rather than drawn with dashes.
+    sections.retain(|s| s.title.is_none() || !s.rows.is_empty());
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -318,10 +319,7 @@ pub fn lines(
         if room >= 4 {
             tail.push(Span::raw(" "));
             tail.extend(fit(
-                vec![c.span(
-                    format!("cd {}", tilde(d)),
-                    Style::new().add_modifier(Modifier::BOLD),
-                )],
+                vec![c.span(tilde(d), Style::new().add_modifier(Modifier::BOLD))],
                 room,
             ));
             tail.push(Span::styled(" ·", bstyle));
@@ -443,7 +441,7 @@ fn frame_two(
     }
 }
 
-/// `ari recap` as a box: `╭─ ARI recap · since start ── cd ~/proj ─╮`, then the sections.
+/// `ari recap` as a box: `╭─ ARI recap · since start ── ~/proj ─╮`, then the sections.
 pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<'static>> {
     let w = (width as usize).max(12);
     let c = Ctx {
@@ -462,7 +460,7 @@ pub fn recap_lines(r: &Recap, width: u16, color: bool, ascii: bool) -> Vec<Line<
     if !r.dir.is_empty() && room >= 4 {
         tail = fit(
             vec![c.span(
-                format!(" cd {}", tilde(&r.dir)),
+                format!(" {}", tilde(&r.dir)),
                 Style::new().add_modifier(Modifier::BOLD),
             )],
             room,
@@ -485,7 +483,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
                 Style::new().add_modifier(Modifier::BOLD),
             )]];
         if let Some(t) = &r.title {
-            rows.push(vec![c.dim(format!("milestone: {t}"))]);
+            rows.push(vec![c.dim(t.clone())]);
         }
         out.push(Section { title: None, rows });
     }
@@ -503,7 +501,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
     if total > 0 {
         let mut rows = vec![vec![
             c.span(
-                cells(r.done.len() as f64 / total as f64, 20, '█', '░'),
+                cells(r.done.len() as f64 / total as f64, 20, '▰', '▱'),
                 Style::new().fg(Color::Green),
             ),
             Span::raw(format!(" {}/{total} tasks", r.done.len())),
@@ -529,7 +527,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
         rows.extend(
             r.fixed
                 .iter()
-                .map(|(what, by)| ok(format!("{what} · fixed by {by}"))),
+                .map(|(what, _)| ok(format!("{what} · passed on retry"))),
         );
         rows.extend(r.still_open.iter().map(|what| {
             vec![
@@ -721,14 +719,14 @@ fn header(
     if st.first_t == 0 {
         rows.push(vec![if active {
             c.span(
-                "● WORKING · no hooks yet, so no details",
+                "● WORKING · not tracked, so no details",
                 Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )
         } else {
-            c.dim("◌ no hooks yet")
+            c.dim("– not tracked")
         }]);
         rows.push(vec![
-            c.dim("start a new Claude Code session, or /reload-plugins"),
+            c.dim("no hook events · new session or /reload-plugins"),
         ]);
         return rows;
     }
@@ -742,19 +740,10 @@ fn header(
     };
     let mut row = vec![left];
     // Claude Code's own session title beats a truncated first prompt.
-    if let Some(label) = title.map(String::from).or_else(|| st.label.clone()) {
-        let used = row_width(&row);
-        let room = c.inner.saturating_sub(used + 2);
-        if room >= 14 {
-            let text = format!("milestone: {label}");
-            let text = if text.width() > room {
-                fit(vec![Span::raw(text)], room)[0].content.to_string()
-            } else {
-                text
-            };
-            row.push(Span::raw(" ".repeat(c.inner - used - text.width())));
-            row.push(c.dim(text));
-        }
+    if let Some(label) = title.map(String::from).or_else(|| st.label.clone())
+        && c.inner.saturating_sub(row_width(&row)) >= 8
+    {
+        row.push(c.dim(format!(" · {label}")));
     }
     rows.push(row);
     if v == Verdict::Stuck
@@ -791,7 +780,7 @@ fn header(
             let n = c.inner.saturating_sub(tail.width()).min(20);
             rows.push(vec![
                 c.span(
-                    cells(p.done as f64 / p.total as f64, n, '█', '░'),
+                    cells(p.done as f64 / p.total as f64, n, '▰', '▱'),
                     Style::new().fg(Color::Cyan),
                 ),
                 Span::raw(tail),
@@ -802,7 +791,7 @@ fn header(
         let n = c.inner.saturating_sub(tail.width()).min(20);
         rows.push(vec![
             c.span(
-                cells(done as f64 / total as f64, n, '█', '░'),
+                cells(done as f64 / total as f64, n, '▰', '▱'),
                 Style::new().fg(Color::Cyan),
             ),
             Span::raw(tail),
@@ -934,7 +923,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
                 },
             ),
             AgentStatus::Stale => (
-                c.span("◌", Style::new().fg(Color::Yellow)),
+                c.span("?", Style::new().fg(Color::Yellow)),
                 format!(
                     "stale {} · {}",
                     age(now.saturating_sub(a.last_t)),
@@ -1063,81 +1052,90 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     rows
 }
 
+/// Open errors one by one; fixed ones fold into a count (listed with `e`), with the time
+/// failed calls took and the files read twice.
 fn errors(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
-    let mut rows = errors_list(st, c, view, now);
-    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
-    if time > 0 || st.reread > 0 {
-        let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
-        let s = if failed == 1 { "" } else { "s" };
-        let mut parts = vec![format!("{failed} failed call{s}")];
-        if time >= 1000 {
-            parts.push(dur(time));
-        }
-        if st.reread > 0 {
-            let s = if st.reread == 1 { "" } else { "s" };
-            parts.push(format!("{} re-read{s}", st.reread));
-        }
-        rows.push(vec![
-            c.dim(format!("cost of mistakes: {}", parts.join(" · "))),
-        ]);
-    }
-    rows
-}
-
-fn errors_list(st: &State, c: &Ctx, view: View, now: u64) -> Vec<Row> {
-    if st.errors.is_empty() {
-        return vec![vec![c.dim("no errors")]];
-    }
     let mut errs: Vec<&ErrorRec> = st.errors.iter().collect();
     errs.sort_by_key(|e| std::cmp::Reverse(e.last_t));
+    let (open, fixed): (Vec<_>, Vec<_>) = errs.into_iter().partition(|e| e.resolved_t.is_none());
     let max = if view.expand_errors { 15 } else { 5 };
-    let mut rows = Vec::new();
-    for e in errs.iter().take(max) {
-        let open = e.resolved_t.is_none();
-        let glyph = if open {
-            c.span("✗", Style::new().fg(Color::Red))
+    let text = |e: &ErrorRec| {
+        let w = sig_words(e);
+        if e.msg.is_empty() || e.msg == w {
+            w
         } else {
-            c.span("✓", Style::new().fg(Color::Green))
-        };
-        let mut text = sig_words(e);
-        if !e.msg.is_empty() && e.msg != text {
-            text = format!("{text} · {}", e.msg);
+            format!("{w} · {}", e.msg)
         }
+    };
+    let when = |e: &ErrorRec| format!(" {:<3}  ", age(now.saturating_sub(e.last_t)));
+    let mut rows = Vec::new();
+    for e in open.iter().take(max) {
         rows.push(vec![
-            glyph,
-            Span::raw(format!(" {:<3}  ", age(now.saturating_sub(e.last_t)))),
-            Span::raw(text),
+            c.span("✗", Style::new().fg(Color::Red)),
+            Span::raw(when(e)),
+            Span::raw(text(e)),
         ]);
-        let mut detail = Vec::new();
         if e.retries > 0 {
-            detail.push(format!("↻ retried {}×", e.retries));
-        }
-        match &e.resolved_by {
-            Some(by) if !open => detail.push(format!("fixed by {by}")),
-            _ if e.retries > 0 => detail.push("still failing".into()),
-            _ => {}
-        }
-        if !detail.is_empty() {
-            rows.push(vec![c.dim(format!("       {}", detail.join(" · ")))]);
+            rows.push(vec![
+                c.dim(format!("       ↻ retried {}× · still failing", e.retries)),
+            ]);
         }
     }
-    if errs.len() > max {
-        rows.push(vec![c.dim(format!("… {} older (e)", errs.len() - max))]);
+    if open.len() > max {
+        rows.push(vec![c.dim(format!("… {} older (e)", open.len() - max))]);
+    }
+    if view.expand_errors {
+        for e in fixed.iter().take(max) {
+            rows.push(vec![c.dim(format!(
+                " {}{} · passed on retry",
+                when(e),
+                text(e)
+            ))]);
+        }
+    }
+    let mut parts = Vec::new();
+    if !fixed.is_empty() {
+        parts.push(format!("{} fixed", fixed.len()));
+    }
+    let time: u64 = st.errors.iter().map(|e| e.time_ms).sum();
+    if time >= 1000 {
+        parts.push(format!("{} on failed calls", dur(time)));
+    }
+    if st.reread > 0 {
+        let s = if st.reread == 1 { "" } else { "s" };
+        parts.push(format!("{} file{s} read twice", st.reread));
+    }
+    if rows.is_empty() {
+        parts.insert(
+            0,
+            if fixed.is_empty() {
+                "no errors"
+            } else {
+                "no open errors"
+            }
+            .into(),
+        );
+    }
+    if !parts.is_empty() {
+        let hint = if !fixed.is_empty() && !view.expand_errors {
+            " (e)"
+        } else {
+            ""
+        };
+        rows.push(vec![c.dim(format!("{}{hint}", parts.join(" · ")))]);
     }
     rows
 }
 
-fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> Row {
-    let Some(p) = pct else {
-        return vec![Span::raw(format!("{name:<4}")), c.dim("—")];
-    };
+fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> Option<Row> {
+    let p = pct?;
     let label = format!(" {p:.0}%{tail}");
     let n = c.inner.saturating_sub(4 + label.width()).min(20);
-    vec![
+    Some(vec![
         Span::raw(format!("{name:<4}")),
         c.span(cells(p / 100.0, n, '▰', '▱'), level(p, cfg)),
         Span::raw(label),
-    ]
+    ])
 }
 
 const TREND_MS: u64 = 30 * 60_000;
@@ -1192,7 +1190,15 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
     if let Some(t) = trend(&recent(&x.samples, |s| s.ctx)) {
         ctx_tail += &format!(" {t}");
     }
-    let mut rows = vec![meter("ctx", u.ctx_pct, ctx_tail, cfg, c)];
+    let mut rows = Vec::new();
+    // The warning that matters most leads the section.
+    if let Some(eta) = x.burn_eta {
+        rows.push(vec![c.span(
+            format!("▲ at this pace: 5h limit in ~{}", age(eta)),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]);
+    }
+    rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
         rows.push(vec![c.span(
@@ -1212,20 +1218,14 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
             }
         })
     };
-    rows.push(meter(
+    rows.extend(meter(
         "5h",
         u.five_h.map(|l| l.pct),
         lim(u.five_h).unwrap_or_default(),
         cfg,
         c,
     ));
-    if let Some(eta) = x.burn_eta {
-        rows.push(vec![c.span(
-            format!("▲ at this pace: 5h limit in ~{}", age(eta)),
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )]);
-    }
-    rows.push(meter(
+    rows.extend(meter(
         "7d",
         u.seven_d.map(|l| l.pct),
         lim(u.seven_d).unwrap_or_default(),
@@ -1246,14 +1246,14 @@ fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
     match st.permission_mode.as_deref() {
         None | Some("default") => {}
         Some("bypassPermissions") => parts.push(c.span(
-            "BYPASS",
+            "bypass permissions",
             Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
         )),
-        Some(m) => parts.push(Span::raw(match m {
-            "plan" => "PLAN".into(),
-            "acceptEdits" => "EDITS".into(),
-            "auto" => "AUTO".into(),
-            "dontAsk" => "DON'T ASK".into(),
+        Some(m) => parts.push(c.dim(match m {
+            "plan" => "plan mode".into(),
+            "acceptEdits" => "accept edits".into(),
+            "auto" => "auto mode".into(),
+            "dontAsk" => "don't-ask mode".into(),
             other => other.to_string(),
         })),
     }
@@ -1314,40 +1314,41 @@ fn cache_suffix(u: &Usage, now: u64) -> String {
     out
 }
 
+/// Cost, tokens and cache, tests, time: a short ledger, cost first.
 fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> Vec<Row> {
     let mut rows = Vec::new();
+    if let Some(cost) = u.cost_usd {
+        let (done, _) = st.tasks_done();
+        let mut text = format!("${cost:.2}");
+        if done > 0 {
+            text += &format!(" · ${:.2}/task done", cost / done as f64);
+        }
+        let costs = recent(&x.samples, |s| s.cost);
+        if let Some(r) = rate(&costs) {
+            text += &format!(" · ${r:.2}/h");
+        }
+        if let Some(t) = trend(&costs) {
+            text += &format!(" {t}");
+        }
+        rows.push(vec![c.dim("cost    "), Span::raw(text)]);
+    }
     if let Some(t) = &x.tokens
         && t.total().total() > 0
     {
         let total = t.total();
-        let turns = if st.turns == 1 {
-            "1 turn".into()
-        } else {
-            format!("{} turns", st.turns)
-        };
-        rows.push(vec![
-            c.dim("tokens  "),
-            Span::raw(format!(
-                "{} · {} out · {turns}",
-                fmt_tokens(total.total()),
-                fmt_tokens(total.output)
-            )),
-        ]);
+        let mut text = format!(
+            "{} · {} out",
+            fmt_tokens(total.total()),
+            fmt_tokens(total.output)
+        );
         if let Some(hit) = total.hit() {
-            let label = format!(" {:.0}% hit{}", hit * 100.0, cache_suffix(u, now));
-            let n = c.inner.saturating_sub(8 + label.width()).min(20);
-            rows.push(vec![
-                c.dim("cache   "),
-                c.span(cells(hit, n, '▰', '▱'), Style::new().fg(Color::Cyan)),
-                Span::raw(label),
-            ]);
+            text += &format!(" · cache {:.0}% hit", hit * 100.0);
+            if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
+                text += &format!(", saved ${saved:.2}");
+            }
+            text += &cache_suffix(u, now);
         }
-        if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
-            rows.push(vec![
-                c.dim("        "),
-                Span::raw(format!("saved ≈ ${saved:.2} vs uncached")),
-            ]);
-        }
+        rows.push(vec![c.dim("tokens  "), Span::raw(text)]);
         if let Some((from, to)) = t.drop_alert() {
             rows.push(vec![c.span(
                 format!(
@@ -1402,30 +1403,14 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
             ("tools", sp.tools),
             ("you", sp.waiting),
             ("idle", sp.idle),
-            ("other", sp.other),
         ] {
-            // Unattributed time only shows once it is big enough to matter.
-            if pct(ms) > 0.0 && (name != "other" || pct(ms) >= 5.0) {
+            // Unattributed time is left out: it explains nothing.
+            if pct(ms) > 0.0 {
                 text += &format!(" · {name} {:.0}%", pct(ms));
             }
         }
         rows.push(vec![c.dim("time    "), Span::raw(text)]);
     }
-    let (done, _) = st.tasks_done();
-    let cost = match u.cost_usd {
-        Some(cost) if done > 0 => format!("${cost:.2} · ${:.2}/task done", cost / done as f64),
-        Some(cost) => format!("${cost:.2}"),
-        None => "—".into(),
-    };
-    let costs = recent(&x.samples, |s| s.cost);
-    let mut cost = cost;
-    if let Some(r) = rate(&costs) {
-        cost += &format!(" · ${r:.2}/h");
-    }
-    if let Some(t) = trend(&costs) {
-        cost += &format!(" {t}");
-    }
-    rows.push(vec![c.dim("cost    "), Span::raw(cost)]);
     rows
 }
 
@@ -1647,7 +1632,7 @@ mod tests {
         };
         assert_eq!(
             badge_text(&st, &badge_usage()).as_deref(),
-            Some("Opus · high · fast · AUTO · ⎇ wt · PR #14 approved · +156 −23")
+            Some("Opus · high · fast · auto mode · ⎇ wt · PR #14 approved · +156 −23")
         );
         let (st, mut u) = multi();
         u.pr = Some(crate::usage::Pr {
@@ -1674,9 +1659,9 @@ mod tests {
         };
         let out = render(&State::default(), &u, View::default(), 70, 40);
         let l: Vec<_> = out.lines().collect();
-        assert!(l[1].contains("no hooks yet"), "{out}");
+        assert!(l[1].contains("– not tracked"), "{out}");
         assert!(l[2].contains("Opus · PR #14 approved"), "{out}");
-        assert!(l[3].contains("start a new Claude Code session"), "{out}");
+        assert!(l[3].contains("new session or /reload-plugins"), "{out}");
     }
 
     #[test]
@@ -1689,8 +1674,8 @@ mod tests {
             badge_text(&st, &Usage::default())
         };
         assert_eq!(mode("default"), None);
-        assert_eq!(mode("plan").as_deref(), Some("PLAN"));
-        assert_eq!(mode("dontAsk").as_deref(), Some("DON'T ASK"));
+        assert_eq!(mode("plan").as_deref(), Some("plan mode"));
+        assert_eq!(mode("dontAsk").as_deref(), Some("don't-ask mode"));
         assert_eq!(mode("weird").as_deref(), Some("weird"));
         let st = State {
             permission_mode: Some("bypassPermissions".into()),
@@ -1701,7 +1686,7 @@ mod tests {
             inner: 60,
         };
         let row = badges(&st, &Usage::default(), &c).unwrap();
-        assert_eq!(row[0].content, "BYPASS");
+        assert_eq!(row[0].content, "bypass permissions");
         assert_eq!(row[0].style.fg, Some(Color::Red));
         let both_zero = Usage {
             lines_added: Some(0),
@@ -1963,9 +1948,7 @@ mod tests {
         st.needs_you = Some("Claude needs your permission to use Bash".into());
         let out = render(&st, &u, View::default(), 50, 40);
         assert!(
-            out.contains("(◉_◉)")
-                && out.contains("◉ NEEDS YOU")
-                && out.contains("◉ Claude needs your permission"),
+            out.contains("◉ NEEDS YOU") && out.contains("◉ Claude needs your permission"),
             "{out}"
         );
         insta::assert_snapshot!(
@@ -2082,15 +2065,13 @@ mod tests {
     }
 
     #[test]
-    fn time_split_other_only_from_5_percent() {
+    fn time_split_leaves_out_unattributed_time() {
         let (mut st, mut u) = multi();
         st.time.tools_ms = 22_000;
         u.duration_ms = Some(100_000);
         u.api_duration_ms = Some(61_000);
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(out.contains("tools 22% · other 17%"), "{out}");
-        u.api_duration_ms = Some(75_000);
-        let out = render(&st, &u, View::default(), 70, 60);
+        assert!(out.contains("claude 61% · tools 22%"), "{out}");
         assert!(!out.contains("other"), "{out}");
     }
 
@@ -2113,16 +2094,15 @@ mod tests {
     fn mistake_cost_footer() {
         let (mut st, u) = multi();
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(!out.contains("cost of mistakes"), "{out}");
+        assert!(!out.contains("on failed calls"), "{out}");
         st.errors[0].retries = 1;
         st.errors[0].time_ms = 5_000;
         st.reread = 1;
         let failed: u32 = st.errors.iter().map(|e| e.retries + 1).sum();
         let out = render(&st, &u, View::default(), 70, 60);
+        assert!(failed > 0);
         assert!(
-            out.contains(&format!(
-                "cost of mistakes: {failed} failed calls · 5s · 1 re-read"
-            )),
+            out.contains("5s on failed calls · 1 file read twice"),
             "{out}"
         );
     }
@@ -2143,11 +2123,8 @@ mod tests {
         st.errors[0].time_ms = 400;
         st.reread = 1;
         let out = render(&st, &u, View::default(), 70, 60);
-        assert!(
-            out.contains("cost of mistakes: 3 failed calls · 1 re-read"),
-            "{out}"
-        );
-        assert!(!out.contains("· 0s"), "{out}");
+        assert!(!out.contains("on failed calls"), "{out}");
+        assert!(out.contains("1 file read twice"), "{out}");
     }
 
     fn cache_row(c: Option<crate::usage::CacheState>) -> String {
@@ -2180,12 +2157,15 @@ mod tests {
         ));
         let r: String = out
             .lines()
-            .find(|l| l.contains("cache   "))
+            .find(|l| l.contains("tokens  "))
             .unwrap()
             .trim_end_matches('│')
             .trim_end()
             .to_string();
-        r
+        // What follows the hit rate, minus the savings: just the cache's own notes.
+        let tail = r.split_once("% hit").unwrap().1;
+        let notes = tail.find(" · ").map_or("", |i| &tail[i..]);
+        format!("% hit{notes}")
     }
 
     #[test]
@@ -2683,7 +2663,7 @@ mod tests {
             assert_eq!(a.width(), b.width());
         }
         let text = to_plain(&asc);
-        assert!(text.starts_with("+- ARI (o_o) -"), "{text}");
+        assert!(text.starts_with("+- ARI -"), "{text}");
         insta::assert_snapshot!("ascii", text);
     }
 
@@ -2748,9 +2728,9 @@ mod tests {
         u.session_name = Some("next milestone".into());
         let out = render(&st, &u, View::default(), 50, 40);
         let first: Vec<&str> = out.lines().take(2).collect();
-        assert!(first[0].starts_with("╭─ ARI (•_•) ─"), "{out}");
-        assert!(first[0].contains("─ cd /x/tankobon · "), "{out}");
-        assert!(first[1].ends_with("milestone: next milestone │"), "{out}");
+        assert!(first[0].starts_with("╭─ ARI ─"), "{out}");
+        assert!(first[0].contains("─ /x/tankobon · "), "{out}");
+        assert!(first[1].contains("● ON TRACK · next milestone"), "{out}");
         render(&st, &u, View::default(), 20, 10);
     }
 

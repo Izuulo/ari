@@ -2,17 +2,16 @@
 source: src/panel.rs
 expression: "render(&st, &u, View::default(), 50, 14)"
 ---
-╭─ ARI (•_•) ──────────────────────────── 12:41 ─╮
-│ ● ON TRACK            milestone: auth refactor │
-│ ███████████░░░░░░░░░ 4/7 tasks                 │
+╭─ ARI ────────────────────────────────── 12:41 ─╮
+│ ● ON TRACK · auth refactor                     │
+│ ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 4/7 tasks                 │
 │ ▸ now: hook up token refresh                   │
 ├─ agents ───────────────────────────────────────┤
 │ ⠋ main      $ cargo test · 8s                  │
 │ ├─⠋ Explore grep refresh_token 3s · 14 calls … │
 │ ├─✓ tests   done 38s · 12 passed               │
-│ └─◌ Plan    stale 6m · reading big.log         │
+│ └─? Plan    stale 6m · reading big.log         │
 ├─ errors ───────────────────────────────────────┤
 │ ✗ 5s   edit lib.rs · String to replace not fo… │
-│ ✓ 2m   cargo build · error[E0382]: use of mov… │
-│        ↻ retried 2× · fixed by main            │
+│ 1 fixed (e)                                    │
 ╰────────────────────────────────────────────────╯

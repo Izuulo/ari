@@ -2,24 +2,22 @@
 source: src/panel.rs
 expression: "render(&st, &u, View::default(), 40, 40)"
 ---
-╭─ ARI (•_•) ────────────────── 12:41 ─╮
-│ ● ON TRACK  milestone: auth refactor │
-│ ███████████░░░░░░░░░ 4/7 tasks       │
+╭─ ARI ──────────────────────── 12:41 ─╮
+│ ● ON TRACK · auth refactor           │
+│ ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 4/7 tasks       │
 │ ▸ now: hook up token refresh         │
 ├─ agents ─────────────────────────────┤
 │ ⠋ main      $ cargo test · 8s        │
 │ ├─⠋ Explore grep refresh_token 3s ·… │
 │ ├─✓ tests   done 38s · 12 passed     │
-│ └─◌ Plan    stale 6m · reading big.… │
+│ └─? Plan    stale 6m · reading big.… │
 ├─ errors ─────────────────────────────┤
 │ ✗ 5s   edit lib.rs · String to repl… │
-│ ✓ 2m   cargo build · error[E0382]: … │
-│        ↻ retried 2× · fixed by main  │
+│ 1 fixed (e)                          │
 ├─ usage ──────────────────────────────┤
 │ ctx ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱ 71%  142k/200k │
 │ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱ 62%  ↺ 1h40m │
-│ 7d  —                                │
 ├─ session ────────────────────────────┤
-│ time    14m00s · claude 71% · other… │
 │ cost    $2.69 · $0.67/task done      │
+│ time    14m00s · claude 71%          │
 ╰──────────────────────────────────────╯

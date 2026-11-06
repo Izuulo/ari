@@ -2,17 +2,17 @@
 source: src/panel.rs
 expression: text
 ---
-╭─ ARI recap · since start ─────────────────── cd /x/proj ─╮
+╭─ ARI recap · since start ────────────────────── /x/proj ─╮
 │ ✓ DONE                                                   │
-│ milestone: auth refactor                                 │
+│ auth refactor                                            │
 ├─ tasks ──────────────────────────────────────────────────┤
-│ █████████████░░░░░░░ 2/3 tasks                           │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱ 2/3 tasks                           │
 │ ✓ scaffold                                               │
 │ ✓ build                                                  │
 │ ◻ write docs                                             │
 ├─ errors ─────────────────────────────────────────────────┤
 │ 1 hit · 1 fixed · 0 open                                 │
-│ ✓ cargo test · fixed by main                             │
+│ ✓ cargo test · passed on retry                           │
 ├─ files ──────────────────────────────────────────────────┤
 │ src/a.rs ×2                                              │
 │ src/b.rs                                                 │

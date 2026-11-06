@@ -3,64 +3,45 @@ source: tests/fixtures.rs
 expression: "out.join(\"\\n\")"
 ---
 --- after failure ---
-╭─ ARI (>_<) ────────────────────────────────── 12:00 ─╮
-│ ↻ RETRYING  milestone: Do these steps in order, usi… │
-│ DON'T ASK                                            │
-│ █████░░░░░░░░░░░░░░░ 1/4 tasks                       │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ↻ RETRYING · Do these steps in order, using the too… │
+│ don't-ask mode                                       │
+│ ▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 1/4 tasks                       │
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠏ main   thinking…                                   │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✗ 0s   python3 test_calc.py · AssertionError         │
-│ cost of mistakes: 1 failed call · 1s                 │
-├─ usage ──────────────────────────────────────────────┤
-│ ctx —                                                │
-│ 5h  —                                                │
-│ 7d  —                                                │
+│ 1s on failed calls                                   │
 ├─ session ────────────────────────────────────────────┤
 │ time    10s · claude 87% · tools 13%                 │
-│ cost    —                                            │
 ╰──────────────────────────────────────────────────────╯
 --- two agents ---
-╭─ ARI (•_•) ────────────────────────────────── 12:00 ─╮
-│ ● ON TRACK  milestone: Do these steps in order, usi… │
-│ DON'T ASK                                            │
-│ ██████████░░░░░░░░░░ 2/4 tasks                       │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ● ON TRACK · Do these steps in order, using the too… │
+│ don't-ask mode                                       │
+│ ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱ 2/4 tasks                       │
 │ ▸ now: survey                                        │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠦ main      agent Explore: Describe test_calc.py · … │
 │ ├─⠦ Explore thinking… · 1 call · 1s                  │
 │ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 6s   python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
-├─ usage ──────────────────────────────────────────────┤
-│ ctx —                                                │
-│ 5h  —                                                │
-│ 7d  —                                                │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ session ────────────────────────────────────────────┤
 │ time    16s · claude 92% · tools 8%                  │
-│ cost    —                                            │
 ╰──────────────────────────────────────────────────────╯
 --- end ---
-╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
-│ ✓ DONE  milestone: Do these steps in order, using t… │
-│ DON'T ASK                                            │
-│ ████████████████████ 4/4 tasks                       │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ✓ DONE · Do these steps in order, using the tool…    │
+│ don't-ask mode                                       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
-│ ├─✓ Explore done 2s · `calc.py` defines an `add(a, … │
-│ └─✓ Explore done 1s · The file imports `add` from a… │
+│ ├─✓ Explore done 2s · calc.py defines an add(a, b) … │
+│ └─✓ Explore done 1s · The file imports add from a c… │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 10s  python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
-├─ usage ──────────────────────────────────────────────┤
-│ ctx —                                                │
-│ 5h  —                                                │
-│ 7d  —                                                │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ session ────────────────────────────────────────────┤
 │ time    20s · claude 81% · tools 19%                 │
-│ cost    —                                            │
 ╰──────────────────────────────────────────────────────╯

@@ -2,27 +2,20 @@
 source: tests/fixtures.rs
 expression: out
 ---
-╭─ ARI (^_^) ────────────────────────────────── 12:00 ─╮
-│ ✓ DONE  milestone: Do these steps in order, using t… │
-│ DON'T ASK                                            │
-│ ████████████████████ 4/4 tasks                       │
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ✓ DONE · Do these steps in order, using the tool…    │
+│ don't-ask mode                                       │
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 4/4 tasks                       │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      haiku-5-5 · idle · 417k tok              │
-│ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · `calc.p… │
+│ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · calc.py… │
 │ └─✓ Explore haiku-5-5 · done 1s · 32k tok · The fil… │
 ├─ errors ─────────────────────────────────────────────┤
-│ ✓ 10s  python3 test_calc.py · AssertionError         │
-│        fixed by main                                 │
-│ cost of mistakes: 1 failed call · 1s                 │
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ usage ──────────────────────────────────────────────┤
-│ ctx —                                                │
-│ 5h  —                                                │
 │ ▲ at this pace: 5h limit in ~55m                     │
-│ 7d  —                                                │
 ├─ session ────────────────────────────────────────────┤
-│ tokens  481k · 3.1k out · 1 turn                     │
-│ cache   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱ 90% hit                 │
-│         saved ≈ $0.39 vs uncached                    │
-│ time    40s · claude 75% · tools 10% · other 15%     │
 │ cost    $0.12 · $0.03/task done                      │
+│ tokens  481k · 3.1k out · cache 90% hit, saved $0.39 │
+│ time    40s · claude 75% · tools 10%                 │
 ╰──────────────────────────────────────────────────────╯

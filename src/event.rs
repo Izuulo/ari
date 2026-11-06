@@ -125,7 +125,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                     .and_then(|l| l.strip_prefix("Exit code "))
                     .map(|n| format!("exit {}", n.trim()))
             };
-            ev.msg = Some(truncate(failure_line(err), 160));
+            ev.msg = Some(truncate(failure_line(err, ev.kind.as_deref()), 160));
             (ev.tests, ev.partial) = split_run(test_run(input, err));
         }
         "UserPromptSubmit" => {
@@ -170,7 +170,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         }
         "SubagentStop" => {
             ev.path = owned("agent_transcript_path");
-            ev.msg = line("last_assistant_message");
+            ev.msg = s("last_assistant_message").map(|v| truncate(&summary(v), 160));
             lists(raw, &mut ev);
         }
         "TaskCreated" | "TaskCompleted" => {
@@ -322,15 +322,19 @@ fn action(tool: &str, input: &Value, cwd: &str) -> String {
     }
 }
 
-/// Error signature: Bash → first two command tokens; file tools → path; else the tool.
+/// Error signature: Bash → first two tokens of the first command that isn't a `cd`;
+/// file tools → path; else the tool.
 fn signature(tool: &str, input: &Value) -> String {
     let f = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
     match tool {
         "Bash" | "PowerShell" => {
-            let toks: Vec<&str> = first_line(f("command"))
-                .split_whitespace()
-                .take(2)
-                .collect();
+            let line = first_line(f("command"));
+            let cmd = line
+                .split(['&', ';', '|'])
+                .map(str::trim)
+                .find(|c| !c.is_empty() && *c != "cd" && !c.starts_with("cd "))
+                .unwrap_or(line);
+            let toks: Vec<&str> = cmd.split_whitespace().take(2).collect();
             format!("{tool}:{}", toks.join(" "))
         }
         "Edit" | "Write" | "MultiEdit" | "Read" => format!("{tool}:{}", f("file_path")),
@@ -356,8 +360,9 @@ fn first_line(s: &str) -> &str {
         .unwrap_or("")
 }
 
-/// The first line that names the problem, skipping the `Exit code N` header.
-fn failure_line(err: &str) -> &str {
+/// The first line that names the problem, skipping the `Exit code N` header. A shell
+/// exit with no such line is just `exit N`: its first line is ordinary output.
+fn failure_line<'a>(err: &'a str, kind: Option<&'a str>) -> &'a str {
     let lines: Vec<&str> = err
         .lines()
         .map(str::trim)
@@ -369,9 +374,33 @@ fn failure_line(err: &str) -> &str {
             let l = l.to_ascii_lowercase();
             l.contains("error") || l.contains("failed") || l.contains("panicked")
         })
-        .or(lines.first())
         .copied()
+        .or(match kind {
+            Some(k) if k.starts_with("exit ") => Some(k),
+            _ => lines.first().copied(),
+        })
         .unwrap_or("")
+}
+
+/// A Markdown reply as a short plain sentence: its first line that isn't a heading, without
+/// `code` ticks, **bold** or list marks, cut after the first sentence.
+fn summary(md: &str) -> String {
+    let line = md
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .unwrap_or_else(|| first_line(md));
+    let text = line.replace("**", "").replace('`', "");
+    let text = text.trim_start_matches(['#', '-', '*', ' ']);
+    // A sentence ends at ". " before a capital, not at "the `.` and" or "e.g. this".
+    let end = text
+        .match_indices(". ")
+        .map(|(i, _)| i)
+        .find(|&i| text[i + 2..].starts_with(char::is_uppercase));
+    match end {
+        Some(i) => text[..=i].to_string(),
+        None => text.to_string(),
+    }
 }
 
 /// Prompts the harness injects (task results, agent-team messages), not typed by you.
@@ -546,6 +575,22 @@ mod tests {
         );
         assert_eq!(pre.act.as_deref(), Some("$ python3 hello.py"));
         assert_eq!(pre.sig.as_deref(), Some("Bash:python3 hello.py"));
+        let sig = |cmd: &str| {
+            n(json!({"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":cmd}}))
+                .sig
+                .unwrap()
+        };
+        assert_eq!(sig("cd /p; cargo test -q 2>&1 | tail"), "Bash:cargo test");
+        assert_eq!(sig("cd /p && git status"), "Bash:git status");
+        let plain = n(
+            json!({"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+            "tool_input":{"command":"ari watch --once | grep x"},"error":"Exit code 1\n];\nARI · 7 live"}),
+        );
+        assert_eq!(
+            plain.msg.as_deref(),
+            Some("exit 1"),
+            "output that names no problem"
+        );
         assert_eq!(pre.id.as_deref(), Some("toolu_1"));
         assert!(pre.h.is_some() && pre.ok.is_none() && pre.a.is_none());
 
@@ -661,7 +706,19 @@ mod tests {
             ])
         );
         assert_eq!(stop.crons, Some(vec!["*/5 * * * * · check deploy".into()]));
-        let sub = n(json!({"hook_event_name":"SubagentStop","background_tasks":[]}));
+        let sub = n(
+            json!({"hook_event_name":"SubagentStop","background_tasks":[],
+            "last_assistant_message":"## Summary\n`calc.py` defines **`add(a, b)`**. It returns a + b."}),
+        );
+        assert_eq!(sub.msg.as_deref(), Some("calc.py defines add(a, b)."));
+        assert_eq!(
+            summary("`calc.py` defines **`add(a, b)`**. It returns a + b."),
+            "calc.py defines add(a, b)."
+        );
+        assert_eq!(
+            summary("the `.` and `..` entries. Done"),
+            "the . and .. entries."
+        );
         assert_eq!(sub.bgs, Some(vec![]));
         assert_eq!(sub.crons, None);
         assert_eq!(n(json!({"hook_event_name":"Stop"})).bgs, None);

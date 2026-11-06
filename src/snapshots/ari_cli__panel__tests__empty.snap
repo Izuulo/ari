@@ -2,17 +2,11 @@
 source: src/panel.rs
 expression: "render(&State::default(), &Usage::default(), View::default(), 46, 40)"
 ---
-╭─ ARI (-_-)zz ────────────────────── 12:41 ─╮
-│ ◌ no hooks yet                             │
-│ start a new Claude Code session, or /relo… │
+╭─ ARI ────────────────────────────── 12:41 ─╮
+│ – not tracked                              │
+│ no hook events · new session or /reload-p… │
 ├─ agents ───────────────────────────────────┤
 │ no activity yet                            │
 ├─ errors ───────────────────────────────────┤
 │ no errors                                  │
-├─ usage ────────────────────────────────────┤
-│ ctx —                                      │
-│ 5h  —                                      │
-│ 7d  —                                      │
-├─ session ──────────────────────────────────┤
-│ cost    —                                  │
 ╰────────────────────────────────────────────╯
