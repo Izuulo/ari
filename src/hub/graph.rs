@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(l.more, 12 - l.nodes.len());
         assert!(l.more > 0 && l.more_rect.is_some());
         assert!(l.nodes.iter().all(|(_, r)| r.width >= 16));
-        assert!(l.more_rect.unwrap().right() <= area.right() - 1);
+        assert!(l.more_rect.unwrap().right() < area.right());
     }
 
     #[test]
