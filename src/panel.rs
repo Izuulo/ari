@@ -230,7 +230,7 @@ pub fn lines(
                     x.looks_active(),
                     &c,
                     v,
-                    cfg.thresholds.stuck_repeats,
+                    cfg,
                 );
                 if let Some(s) = crate::conflicts::summary(&x.conflicts) {
                     rows.insert(
@@ -274,8 +274,11 @@ pub fn lines(
             rows: turns(st, x, &rc, now),
         },
     ];
-    // A section with nothing to say is left out rather than drawn with dashes.
-    sections.retain(|s| s.title.is_none() || !s.rows.is_empty());
+    // A section with nothing to say, or switched off in config, is left out.
+    sections.retain(|s| {
+        s.title
+            .is_none_or(|t| !s.rows.is_empty() && !hidden(cfg, t))
+    });
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -708,6 +711,11 @@ fn turns(st: &State, x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     items.into_iter().map(|(_, r)| r).collect()
 }
 
+/// Switched off with `hide = ["<id>"]`.
+fn hidden(cfg: &Config, id: &str) -> bool {
+    cfg.hide.iter().any(|h| h == id)
+}
+
 fn header(
     st: &State,
     plan: Option<&crate::state::PlanFile>,
@@ -715,8 +723,9 @@ fn header(
     active: bool,
     c: &Ctx,
     v: Verdict,
-    repeats: u8,
+    cfg: &Config,
 ) -> Vec<Row> {
+    let repeats = cfg.thresholds.stuck_repeats;
     let mut rows = Vec::new();
     if st.first_t == 0 {
         rows.push(vec![if active {
@@ -776,7 +785,9 @@ fn header(
         }]);
     }
     let (done, total) = st.tasks_done();
-    if total == 0 {
+    if hidden(cfg, "tasks") {
+        // switched off: no checklist bar
+    } else if total == 0 {
         if let Some(p) = plan {
             let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
             let n = c.inner.saturating_sub(tail.width()).min(20);
@@ -2089,6 +2100,68 @@ mod tests {
             out.contains("5s on failed calls · 1 file read twice"),
             "{out}"
         );
+    }
+
+    fn render_cfg(st: &State, u: &Usage, x: &Extras, cfg: &Config) -> String {
+        to_plain(&lines(
+            st,
+            u,
+            x,
+            cfg,
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            60,
+            false,
+        ))
+    }
+
+    fn hiding(ids: &[&str]) -> Config {
+        Config {
+            hide: ids.iter().map(|s| s.to_string()).collect(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn hide_drops_panel_sections() {
+        let (st, u) = multi();
+        let x = Extras::default();
+        let all = render_cfg(&st, &u, &x, &Config::default());
+        for t in ["├─ agents", "├─ errors", "├─ usage", "├─ session"] {
+            assert!(all.contains(t), "{t} in {all}");
+        }
+        let out = render_cfg(&st, &u, &x, &hiding(&["agents", "usage", "turns"]));
+        assert!(!out.contains("├─ agents"), "{out}");
+        assert!(!out.contains("├─ usage"), "{out}");
+        assert!(out.contains("├─ errors"), "{out}");
+        assert!(out.contains("├─ session"), "{out}");
+    }
+
+    #[test]
+    fn hide_tasks_drops_the_checklist_bar() {
+        let (mut st, u) = multi();
+        let x = Extras::default();
+        assert!(render_cfg(&st, &u, &x, &Config::default()).contains("4/7 tasks"));
+        let out = render_cfg(&st, &u, &x, &hiding(&["tasks"]));
+        assert!(!out.contains("tasks"), "{out}");
+        st.tasks.clear();
+        let x = Extras {
+            plan: Some(crate::state::PlanFile {
+                name: "plan.md".into(),
+                done: 2,
+                total: 5,
+            }),
+            ..Extras::default()
+        };
+        assert!(render_cfg(&st, &u, &x, &Config::default()).contains("2/5 · plan.md"));
+        assert!(!render_cfg(&st, &u, &x, &hiding(&["tasks"])).contains("plan.md"));
+    }
+
+    #[test]
+    fn features_on_by_default() {
+        assert!(Config::default().hide.is_empty());
     }
 
     #[test]
