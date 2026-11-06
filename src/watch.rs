@@ -217,6 +217,8 @@ impl App {
             );
         }
         x.conflicts = crate::conflicts::cached(&self.root, dir, now);
+        x.transcript_age_ms =
+            tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
         let clock = panel::local_hhmm(now);
         let i = hub::Input {
             st,
@@ -664,8 +666,18 @@ pub fn run(args: &[String]) -> ! {
 /// Apply a key to the view; true means quit. `list_len` is `Some` while the `--all` list shows,
 /// `agents` while the hub draws.
 fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<usize>) -> bool {
-    if let Some(h) = view.hub.as_mut() {
-        let n = agents.unwrap_or(1).max(1);
+    // The `--all` list keeps its keys; the hub's apply only while it draws (`agents` is Some).
+    if let Some(h) = view.hub.as_mut()
+        && list_len.is_none()
+    {
+        let Some(n) = agents.map(|n| n.max(1)) else {
+            match code {
+                KeyCode::Char('q') => return true,
+                KeyCode::Char('x') => view.hub = None,
+                _ => {}
+            }
+            return false;
+        };
         match code {
             KeyCode::Char('q') => return true,
             KeyCode::Char('x') => view.hub = None,
@@ -824,6 +836,33 @@ mod key_tests {
     }
 
     #[test]
+    fn list_keys_work_with_hub_flag() {
+        let mut v = hub_view(Screen::Hub, 0);
+        key(&mut v, KeyCode::Down, Some(3), None);
+        assert_eq!(v.sel, 1, "the --all list still navigates");
+        key(&mut v, KeyCode::Enter, Some(3), None);
+        assert!(v.open);
+    }
+
+    #[test]
+    fn hidden_hub_ignores_keys() {
+        // `agents` is None while the too-small notice shows the panel.
+        let mut v = hub_view(Screen::Zoom, 2);
+        for k in [
+            KeyCode::Down,
+            KeyCode::Up,
+            KeyCode::Enter,
+            KeyCode::Char('g'),
+            KeyCode::PageUp,
+        ] {
+            key(&mut v, k, None, None);
+        }
+        assert_eq!(v, hub_view(Screen::Zoom, 2));
+        key(&mut v, KeyCode::Char('x'), None, None);
+        assert_eq!(v.hub, None);
+    }
+
+    #[test]
     fn hub_selection_clamps() {
         let mut v = hub_view(Screen::Hub, 2);
         key(&mut v, KeyCode::Down, None, Some(3));
@@ -900,6 +939,29 @@ mod key_tests {
     }
 
     #[test]
+    fn hub_strip_matches_statusline_without_hooks() {
+        let root = std::env::temp_dir().join(format!("ari-hub-nohooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("eeee");
+        std::fs::create_dir_all(&d).unwrap();
+        let t = d.join("t.jsonl");
+        std::fs::write(&t, "{}\n").unwrap();
+        let mut app = app_on(&root, "eeee", &[]);
+        // After app_on, which writes a bare usage.json.
+        let u = format!(
+            r#"{{"session_id":"eeee","transcript_path":"{}"}}"#,
+            t.display()
+        );
+        std::fs::write(d.join("usage.json"), u).unwrap();
+        app.mtimes = (None, None);
+        app.refresh();
+        app.view = hub_view(Screen::Hub, 0);
+        let out = panel::to_plain(&app.frame_lines(168, 49).0);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(out.lines().nth(1).unwrap().contains("WORKING"), "{out}");
+    }
+
+    #[test]
     fn ascii_hub_is_ascii() {
         use crate::state::{Agent, Msg};
         let mut st = State::default();
@@ -908,7 +970,7 @@ mod key_tests {
             kind: "main".into(),
             ..Default::default()
         });
-        for (n, id) in ["a1", "a2", "a3"].iter().enumerate() {
+        for (n, id) in ["a1", "a2", "a3", "a4", "a5", "a6"].iter().enumerate() {
             st.agents.push(Agent {
                 id: (*id).into(),
                 kind: "Explore".into(),

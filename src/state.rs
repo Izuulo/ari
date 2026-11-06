@@ -255,6 +255,8 @@ impl Agent {
 #[serde(default)]
 pub struct CallRec {
     pub t: u64,
+    /// tool_use_id, to pair a result with its call when calls overlap.
+    pub id: Option<String>,
     pub tool: String,
     pub act: String,
     pub ok: Option<bool>,
@@ -447,6 +449,7 @@ impl State {
                 a.act = ev.act.clone();
                 a.recent.push_back(CallRec {
                     t: ev.t,
+                    id: ev.id.clone(),
                     tool: ev.tool.clone().unwrap_or_default(),
                     act: ev.act.clone().unwrap_or_default(),
                     ..Default::default()
@@ -530,12 +533,17 @@ impl State {
                 let a = self.agent_mut(aid, ev);
                 a.running_since = None;
                 let tool = ev.tool.as_deref().unwrap_or("");
-                if let Some(r) = a
+                // Parallel calls of one tool: match by tool_use_id, else the oldest still open.
+                let k = a
                     .recent
-                    .iter_mut()
-                    .rev()
-                    .find(|r| r.ok.is_none() && r.tool == tool)
-                {
+                    .iter()
+                    .position(|r| r.ok.is_none() && r.id.is_some() && r.id == ev.id)
+                    .or_else(|| {
+                        a.recent
+                            .iter()
+                            .position(|r| r.ok.is_none() && r.tool == tool)
+                    });
+                if let Some(r) = k.map(|k| &mut a.recent[k]) {
                     r.ok = ev.ok;
                     r.dur = ev.dur;
                     r.msg = ev.msg.clone().filter(|_| ev.ok == Some(false));
@@ -1327,6 +1335,38 @@ mod tests {
             ..at(7, "PostToolUse", Some("a1"))
         });
         assert_eq!(s.verdict(8), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn parallel_calls_match_by_tool_use_id() {
+        let call = |e: &str, id: &str, ok: Option<bool>| Event {
+            tool: Some("Read".into()),
+            id: Some(id.into()),
+            act: Some(format!("reading {id}")),
+            ok,
+            msg: (ok == Some(false)).then(|| format!("{id} failed")),
+            ..at(1, e, None)
+        };
+        let s = run(&[
+            call("PreToolUse", "a", None),
+            call("PreToolUse", "b", None),
+            call("PreToolUse", "c", None),
+            call("PostToolUseFailure", "a", Some(false)),
+            call("PostToolUse", "b", Some(true)),
+        ]);
+        let r: Vec<_> = s.agents[0]
+            .recent
+            .iter()
+            .map(|r| (r.act.as_str(), r.ok, r.msg.as_deref()))
+            .collect();
+        assert_eq!(
+            r,
+            [
+                ("reading a", Some(false), Some("a failed")),
+                ("reading b", Some(true), None),
+                ("reading c", None, None),
+            ]
+        );
     }
 
     #[test]

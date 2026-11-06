@@ -72,18 +72,34 @@ pub(crate) struct Layout {
     /// Agents that didn't fit, drawn as one `+N more` node at `more_rect`.
     pub more: usize,
     pub more_rect: Option<Rect>,
+    /// Big nodes (graph screen, when tall enough); tight 3-row nodes in short panes.
+    pub big: bool,
+    pub tight: bool,
+    /// The row the spawn bus runs along, and the kids' top row.
+    pub bus: u16,
+    pub ky: u16,
 }
 
-fn node_size(big: bool) -> (u16, u16) {
-    if big { (34, 7) } else { (20, 4) }
-}
-
-/// Lead centered one row below the top; kids in a row 3 rows under it.
+/// Lead centered one row below the top; kids in a row 3 rows under it (1 when tight).
+/// Big nodes need 21 rows; under 14, nodes shrink to 3 rows so they stay inside the pane.
 pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
-    let (pref, nh) = node_size(big);
+    let big = big && area.height >= 21;
+    let tight = !big && area.height < 14;
+    let (pref, nh) = if big {
+        (34, 7)
+    } else if tight {
+        (20, 3)
+    } else {
+        (20, 4)
+    };
     let inner_w = area.width.saturating_sub(2);
     let lw = pref.min(inner_w);
     let lead = Rect::new(area.x + (area.width - lw) / 2, area.y + 1, lw, nh);
+    let (bus, ky) = if tight {
+        (lead.bottom(), lead.bottom() + 1)
+    } else {
+        (lead.bottom() + 1, lead.bottom() + 3)
+    };
     let fit = ((inner_w + GAP) / (MIN_W + GAP)).max(1) as usize;
     let (shown, more) = if kids.len() <= fit {
         (kids.len(), 0)
@@ -97,12 +113,15 @@ pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
             nodes: vec![],
             more: 0,
             more_rect: None,
+            big,
+            tight,
+            bus,
+            ky,
         };
     }
     let nw = ((inner_w - GAP * (slots - 1)) / slots).min(pref);
     let total = slots * nw + (slots - 1) * GAP;
     let x0 = area.x + 1 + (inner_w - total) / 2;
-    let ky = lead.bottom() + 3;
     let rect = |k: u16| Rect::new(x0 + k * (nw + GAP), ky, nw, nh);
     Layout {
         lead,
@@ -113,6 +132,10 @@ pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
             .collect(),
         more,
         more_rect: (more > 0).then(|| rect(slots - 1)),
+        big,
+        tight,
+        bus,
+        ky,
     }
 }
 
@@ -255,6 +278,11 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
     } else {
         Style::default()
     };
+    if inner.height < 2 {
+        let pct = ctx.map_or(String::new(), |(_, p)| format!("ctx {p:.0}% · "));
+        put(buf, x, inner.y, &format!("{pct}{act}"), w, act_style);
+        return;
+    }
     if !big {
         let mut row = model.split('-').next().unwrap_or("").to_string();
         if let Some((_, pct)) = ctx {
@@ -340,6 +368,7 @@ pub(crate) fn draw(
         .collect();
     kids.sort_by_key(|&k| (st.agents[k].done, st.agents[k].started));
     let lay = layout(area, &kids, big);
+    let big = lay.big;
     let main = st.agents.iter().find(|a| a.id == "main");
     let legend_y = inner.bottom().saturating_sub(1);
     if lay.nodes.is_empty() {
@@ -370,7 +399,7 @@ pub(crate) fn draw(
     let mut lines = Lines::default();
     let mut paths: Vec<(&Edge, Vec<(u16, u16)>)> = vec![];
     let tx = lay.lead.x + lay.lead.width / 2;
-    let (top, bus) = (lay.lead.bottom(), lay.lead.bottom() + 1);
+    let (top, bus, ky) = (lay.lead.bottom(), lay.bus, lay.ky);
     let drop_x = |r: &Rect| r.x + r.width - 4;
     let mut drops: Vec<(String, u16)> = lay
         .nodes
@@ -388,10 +417,10 @@ pub(crate) fn draw(
     for (id, dx) in &drops {
         let done = st.agents.iter().any(|a| &a.id == id && a.done);
         let s = if done { faint() } else { dim() };
-        lines.run((*dx, bus), (*dx, bus + 1), false, s);
-        lines.poke(*dx, bus + 1, D, false, s);
-        if done && *dx >= area.x + 11 {
-            put(buf, dx - 10, bus + 1, "↩ result", 9, faint());
+        lines.run((*dx, bus), (*dx, ky - 1), false, s);
+        lines.poke(*dx, ky - 1, D, false, s);
+        if done && *dx >= area.x + 11 && !lay.tight {
+            put(buf, dx - 10, ky - 1, "↩ result", 9, faint());
         }
     }
     // Lead ↔ kid messages ride that kid's spawn line, drawn heavy.
@@ -403,10 +432,10 @@ pub(crate) fn draw(
         let p = join(vec![
             lines.run((tx, top), (tx, bus), true, msg()),
             lines.run((tx, bus), (*dx, bus), true, msg()),
-            lines.run((*dx, bus), (*dx, bus + 1), true, msg()),
+            lines.run((*dx, bus), (*dx, ky - 1), true, msg()),
         ]);
-        if labels {
-            put(buf, dx + 2, bus + 1, &format!("⇄ {}", e.n), 6, msg());
+        if labels && !lay.tight {
+            put(buf, dx + 2, ky - 1, &format!("⇄ {}", e.n), 6, msg());
         }
         let p = if e.from == "main" {
             p
@@ -494,7 +523,7 @@ pub(crate) fn draw(
             .iter()
             .any(|(e, _)| (e.a == "main" || e.b == "main") && (&e.a == id || &e.b == id));
         let picked = sel.is_some_and(|s| s == id);
-        buf[(*dx, bus + 2)].set_symbol(match (picked, heavy) {
+        buf[(*dx, ky)].set_symbol(match (picked, heavy) {
             (true, _) => "┻",
             (false, true) => "┸",
             _ => "┴",
@@ -659,6 +688,37 @@ mod tests {
         let dots = |now| pane(&st, now, 100, 20).matches('●').count();
         assert_eq!(dots(100_000), 2);
         assert_eq!(dots(101_200), 1);
+    }
+
+    #[test]
+    fn short_panes_keep_nodes_inside() {
+        let st = with_main((1..=3).map(|n| kid(&format!("a{n}"), "main", n)).collect());
+        for (w, h, big) in [(72, 10, false), (78, 13, false), (120, 18, true)] {
+            let (u, x, cfg) = Default::default();
+            let i = Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now: 1,
+                clock: "",
+            };
+            let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+            let area = buf.area;
+            draw(&mut buf, area, &i, None, big, false);
+            let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+            let last = out.lines().last().unwrap();
+            assert!(
+                last.chars().all(|c| "╰─╯".contains(c)),
+                "{w}×{h}: bottom border broken:\n{out}"
+            );
+            for n in ["a1", "a2", "a3"] {
+                assert!(
+                    out.contains(&format!(" {n} ")),
+                    "{w}×{h}: {n} missing:\n{out}"
+                );
+            }
+        }
     }
 
     #[test]

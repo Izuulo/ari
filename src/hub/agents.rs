@@ -155,8 +155,10 @@ pub(crate) fn table(buf: &mut Buffer, area: Rect, i: &Input, sel: usize) {
     put(buf, col(c_state), inner.y, "state", 14, faint());
     put(buf, col(c_ctx), inner.y, "context", 15, faint());
     rput(buf, xr, inner.y, "tok", faint());
-    let notes = notes(i);
     let ord = order(st);
+    let mut notes = notes(i);
+    // Notes never push out the first agent rows: keep room for up to 3.
+    notes.truncate((inner.height as usize).saturating_sub(1 + ord.len().min(3) + 2));
     let room = (inner.height as usize)
         .saturating_sub(1 + if notes.is_empty() { 0 } else { notes.len() + 1 });
     let (start, shown) = if ord.len() <= room {
@@ -538,6 +540,24 @@ mod tests {
         let st = with_main((1..=30).map(|n| kid(&format!("a{n}"), "main", n)).collect());
         let out = draw_with(&st, 68, 12, |b, r, i| table(b, r, i, 0));
         assert!(out.contains("+") && out.contains("more"), "{out}");
+    }
+
+    #[test]
+    fn short_table_keeps_agent_rows() {
+        let mut st = six();
+        st.agents[1].waiting = Some((90_000, "$ curl -s x".into()));
+        let f = |edits| FileRec {
+            edits,
+            ..Default::default()
+        };
+        for p in ["a.rs", "b.rs"] {
+            st.agents[0].files.insert(p.into(), f(1));
+            st.agents[2].files.insert(p.into(), f(1));
+        }
+        let out = draw_with(&st, 48, 10, |b, r, i| table(b, r, i, 0));
+        for row in ["◆ main", "├ a1", "├ a2"] {
+            assert!(out.contains(row), "{row} missing:\n{out}");
+        }
     }
 
     #[test]

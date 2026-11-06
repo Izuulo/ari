@@ -491,6 +491,9 @@ fn tasks(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
             .iter()
             .filter(|t| t.owner.as_deref() == Some(me.as_str()))
     {
+        if y + 1 >= inner.bottom() {
+            break;
+        }
         let (gl, gs) = match t.status.as_str() {
             "completed" => ("✓".to_string(), ok()),
             "pending" => ("○".to_string(), dim()),
@@ -618,6 +621,28 @@ mod tests {
                 .any(|l| l.contains("f59.rs") || l.contains("f50.rs"))
         );
         assert!(up.iter().any(|l| l.contains("f49.rs")));
+    }
+
+    #[test]
+    fn zoom_tasks_stay_in_their_pane() {
+        let mut st = with_main(vec![kid("a1", "main", 1)]);
+        for n in 0..20 {
+            st.tasks.push(crate::state::Task {
+                id: n.to_string(),
+                subject: format!("job {n}"),
+                status: "pending".into(),
+                owner: Some("a1".into()),
+                ..Default::default()
+            });
+        }
+        let out = show(&st, &Default::default(), 1, 0);
+        let last = out.last().unwrap();
+        assert!(
+            !last.contains("job"),
+            "tasks ran past the pane:\n{}",
+            out.join("\n")
+        );
+        assert!(last.trim_end().ends_with('╯'), "{last}");
     }
 
     #[test]
