@@ -74,7 +74,7 @@ fn setup_then_uninstall_restores_exactly() {
         config.chain.commands,
         [r#"bash "$HOME/.claude/ponytail-statusline.sh""#]
     );
-    assert_eq!(config.hide, ["cost", "tokens", "time", "cache"]);
+    assert_eq!(config.hide, ["cost", "tokens"]);
     let backups = std::fs::read_dir(d.join("claude")).unwrap().filter(|e| {
         e.as_ref()
             .unwrap()

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub const ARI_CMD: &str = "ari statusline";
 const ORIGINAL: &str = "original-statusline.json";
-const CHAINED_HIDE: [&str; 4] = ["cost", "tokens", "time", "cache"];
+const CHAINED_HIDE: [&str; 2] = ["cost", "tokens"];
 
 pub fn settings_path() -> Option<PathBuf> {
     match std::env::var_os("CLAUDE_CONFIG_DIR") {
@@ -257,6 +257,11 @@ mod tests {
         );
         assert_eq!(p.config.chain.commands, vec!["bash ~/.claude/p.sh"]);
         assert_eq!(p.config.hide, CHAINED_HIDE);
+        assert!(
+            config::problems(&p.config).is_empty(),
+            "{:?}",
+            config::problems(&p.config)
+        );
         assert!(plan(&p.settings, &p.config).is_none());
         assert_eq!(restore(&p.settings, &p.original), s);
         assert_eq!(restore(&p.settings, &p.original).to_string(), s.to_string());

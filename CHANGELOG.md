@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Errors from different scripts of one runner (`npm run build` vs `npm run lint`, `python -m pytest` vs `python -m mypy`) are tracked apart: one passing no longer marks the other fixed, and three different failures no longer read as STUCK.
+- `ari setup` no longer writes `time` and `cache` into `hide`; they aren't segments, and `ari doctor` flagged them.
 
 ## 0.2.0 - 2026-11-06
 
