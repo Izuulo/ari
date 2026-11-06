@@ -50,7 +50,7 @@ Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agen
 
 ### Every agent at once: the hub
 
-Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. Here it is replaying `ari demo`:
+Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. `ari hub --all` (or `x` in `ari watch --all`) puts every live session's agents in one hub, each session a node under you. Here it is replaying `ari demo`:
 
 <p align="center"><img src="docs/hub.gif" alt="The ARI hub replaying the demo session: main gets STUCK on a failing test, waits on a permission prompt, fixes it, spawns two Explore subagents that each get a watch window, and the verdict turns to DONE" width="100%"></p>
 
@@ -125,7 +125,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 | `ari setup [--yes] [--dry-run]` | Add ARI's row to your statusline, chaining the one you have |
 | `ari uninstall [--yes] [--purge]` | Restore your original statusline byte for byte |
 | `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
-| `ari hub [--session <id>] [--ascii]` | The hub: every agent, its messages and context |
+| `ari hub [--session <id> \| --all] [--ascii]` | The hub: every agent, its messages and context |
 | `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
 | `ari demo [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed |
 | `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |

@@ -2,6 +2,7 @@
 //! Panes draw into a ratatui `Buffer`; `to_lines` turns it into the `Vec<Line>` watch draws.
 
 mod agents;
+pub mod all;
 mod feed;
 mod graph;
 mod zoom;
@@ -238,6 +239,13 @@ pub(crate) fn glyph(i: &Input, a: &Agent) -> (String, Style) {
     if a.waiting.is_some() {
         return ("◉".into(), msg().add_modifier(Modifier::BOLD));
     }
+    if let Some((active, v)) = a.session {
+        return if active {
+            (spin, agent())
+        } else {
+            (v.glyph().to_string(), crate::panel::verdict_style(v))
+        };
+    }
     if a.id == "main" {
         return if i.st.turn_active {
             (spin, lead())
@@ -303,7 +311,7 @@ pub(crate) fn ctx_of(i: &Input, a: &Agent) -> Option<(u64, f64)> {
         return Some((n, pct));
     }
     // shortcut: subagents use the main window size; a subagent on a model with another window is off.
-    let size = i.u.ctx_size.unwrap_or(200_000).max(1);
+    let size = a.ctx_size.or(i.u.ctx_size).unwrap_or(200_000).max(1);
     (used > 0).then(|| (used, used as f64 * 100.0 / size as f64))
 }
 
