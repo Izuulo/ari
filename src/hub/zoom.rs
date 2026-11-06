@@ -270,7 +270,8 @@ fn cat_style(name: &str) -> Style {
 }
 
 fn context(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
-    let size = if a.id == "main" { i.u.ctx_size } else { None }
+    let size = a
+        .ctx_size
         .or(i.u.ctx_size)
         .unwrap_or(200_000)
         .max(1);

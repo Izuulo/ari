@@ -238,12 +238,14 @@ pub struct Agent {
     pub lane: VecDeque<(u64, u16)>,
     /// Files it edited, by path as shown.
     pub files: BTreeMap<String, FileRec>,
+    /// Its context window when known (`ari hub --all` sets each session's); else the session's.
+    pub ctx_size: Option<u64>,
 }
 
 impl Agent {
     pub fn label(&self) -> String {
         if self.id == "main" {
-            "main".into()
+            self.name.clone().unwrap_or_else(|| "main".into())
         } else {
             self.name.clone().unwrap_or_else(|| self.kind.clone())
         }

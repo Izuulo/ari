@@ -1,6 +1,7 @@
 //! The hub: `ari watch`'s full-terminal mode (spec: docs/superpowers/specs/2026-11-05-hub-design.md).
 //! Panes draw into a ratatui `Buffer`; `to_lines` turns it into the `Vec<Line>` watch draws.
 
+pub mod all;
 mod agents;
 mod feed;
 mod graph;
@@ -303,7 +304,7 @@ pub(crate) fn ctx_of(i: &Input, a: &Agent) -> Option<(u64, f64)> {
         return Some((n, pct));
     }
     // shortcut: subagents use the main window size; a subagent on a model with another window is off.
-    let size = i.u.ctx_size.unwrap_or(200_000).max(1);
+    let size = a.ctx_size.or(i.u.ctx_size).unwrap_or(200_000).max(1);
     (used > 0).then(|| (used, used as f64 * 100.0 / size as f64))
 }
 
