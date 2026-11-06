@@ -5,7 +5,7 @@ use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
 use crate::usage::{self, Usage};
-use crate::{bar, burn, config, hook, paths, state, tokens};
+use crate::{bar, burn, config, hook, paths, settings, state, theme, tokens};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
@@ -29,7 +29,16 @@ enum Mode {
 struct App {
     root: PathBuf,
     mode: Mode,
+    /// What's drawn with: `file` plus command-line flags.
     cfg: config::Config,
+    /// config.toml as last read or saved; the settings screen edits this.
+    file: config::Config,
+    ascii_flag: bool,
+    cfg_path: Option<PathBuf>,
+    cfg_mtime: Option<SystemTime>,
+    /// Why config.toml couldn't be read (the last good config stays in use).
+    cfg_error: Option<String>,
+    settings_note: Option<String>,
     view: View,
     dir: Option<PathBuf>,
     st: State,
@@ -61,7 +70,61 @@ fn load_usage(dir: &Path) -> Usage {
 }
 
 impl App {
+    fn derive_cfg(&mut self) {
+        self.cfg = self.file.clone();
+        self.cfg.ascii |= self.ascii_flag;
+    }
+
+    /// Pick up config.toml when it changed on disk (a hand edit, another window).
+    fn reload_config(&mut self) {
+        let Some(p) = &self.cfg_path else { return };
+        let m = mtime(p);
+        if m == self.cfg_mtime {
+            return;
+        }
+        self.cfg_mtime = m;
+        match config::load_from(p) {
+            Ok(c) => {
+                self.file = c;
+                self.cfg_error = None;
+            }
+            Err(e) => self.cfg_error = Some(e),
+        }
+        self.derive_cfg();
+    }
+
+    /// Apply the settings change `key` queued, then save it.
+    fn apply_edit(&mut self, view: &mut View) {
+        let (Some(dir), Some(sel)) = (view.edit.take(), view.settings) else {
+            return;
+        };
+        // A hand edit since the last frame must win over (or block) this save.
+        self.reload_config();
+        if self.cfg_error.is_some() {
+            self.settings_note = Some("fix config.toml first (or delete it)".into());
+            return;
+        }
+        let Some(item) = settings::items().into_iter().nth(sel) else {
+            return;
+        };
+        if dir == 0 {
+            settings::reset(&mut self.file, item.key);
+        } else {
+            settings::step(&mut self.file, item.key, dir);
+        }
+        self.settings_note = None;
+        if let Some(p) = &self.cfg_path {
+            match config::save_to(p, &self.file) {
+                // Our own save isn't a hand edit to reload.
+                Ok(()) => self.cfg_mtime = mtime(p),
+                Err(e) => self.settings_note = Some(format!("couldn't save: {e}")),
+            }
+        }
+        self.derive_cfg();
+    }
+
     fn refresh(&mut self) {
+        self.reload_config();
         if self.picked_at.is_none_or(|t| t.elapsed() >= REPICK) {
             self.picked_at = Some(Instant::now());
             let dir = match &self.mode {
@@ -143,11 +206,91 @@ impl App {
     }
 
     fn lines(&mut self, width: u16, height: u16) -> Vec<Line<'static>> {
-        self.frame_lines(width, height).0
+        let lines = self.frame_lines(width, height).0;
+        self.themed(lines)
+    }
+
+    /// The settings screen colours itself; everything else gets the theme here.
+    fn themed(&self, lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+        if self.view.settings.is_some() {
+            lines
+        } else {
+            theme::lines(lines, &theme::Palette::new(&self.cfg))
+        }
+    }
+
+    fn settings_lines(&self, sel: usize, w: u16, h: u16) -> Vec<Line<'static>> {
+        let now = hook::now_ms();
+        let preview = self
+            .dir
+            .as_ref()
+            .filter(|_| w >= settings::PREVIEW_MIN_W && self.mode != Mode::All)
+            .map(|_| {
+                let pw = w - settings::LIST_W - 1;
+                // shortcut: the statusline row is shown uncoloured; parse its ANSI if colour matters.
+                let row = bar::render(
+                    &self.st,
+                    &self.usage,
+                    &self.x,
+                    &self.cfg,
+                    now,
+                    pw.into(),
+                    false,
+                );
+                let dim = Style::new().add_modifier(Modifier::DIM);
+                let mut lines = vec![
+                    Line::styled(
+                        "statusline",
+                        if self.color { dim } else { Style::default() },
+                    ),
+                    Line::from(row),
+                    Line::default(),
+                ];
+                lines.extend(panel::lines(
+                    &self.st,
+                    &self.usage,
+                    &self.x,
+                    &self.cfg,
+                    View::default(),
+                    now,
+                    &panel::local_hhmm(now),
+                    pw,
+                    h.saturating_sub(5),
+                    self.color,
+                ));
+                theme::lines(lines, &theme::Palette::new(&self.cfg))
+            });
+        let path = self
+            .cfg_path
+            .as_ref()
+            .map(|p| panel::tilde(&p.to_string_lossy()))
+            .unwrap_or_default();
+        let lines = settings::lines(
+            // Rows show the file, not command-line flags (`--ascii`).
+            &settings::Screen {
+                cfg: &self.file,
+                sel,
+                path: &path,
+                error: self.cfg_error.as_deref(),
+                note: self.settings_note.as_deref(),
+                preview,
+                color: self.color,
+            },
+            w,
+            h,
+        );
+        if self.cfg.ascii {
+            crate::ascii::map_lines(lines)
+        } else {
+            lines
+        }
     }
 
     /// The frame's lines, and the entry count while the `--all` list is what's drawn.
     fn frame_lines(&mut self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
+        if let Some(sel) = self.view.settings {
+            return (self.settings_lines(sel, width, height), None);
+        }
         let now = hook::now_ms();
         if self.mode == Mode::All {
             if !self.view.open {
@@ -260,7 +403,7 @@ impl App {
                 "tab next session"
             };
             let text = note.unwrap_or_else(|| {
-                format!("e errors · a agents · r recap · x hub · {back} · q quit")
+                format!("e errors · a agents · r recap · x hub · s settings · {back} · q quit")
             });
             let text = crate::event::truncate(&text, width as usize);
             let text = if self.cfg.ascii {
@@ -588,11 +731,17 @@ pub fn run(args: &[String]) -> ! {
     let mut app = App {
         root,
         mode: mode.unwrap_or(Mode::Follow(cwd)),
-        cfg: {
-            let mut c = config::load();
-            c.ascii |= ascii;
-            c
+        // Filled from config.toml by the first `refresh`.
+        cfg: config::Config {
+            ascii,
+            ..Default::default()
         },
+        file: config::Config::default(),
+        ascii_flag: ascii,
+        cfg_path: config::path(),
+        cfg_mtime: None,
+        cfg_error: None,
+        settings_note: None,
         view: View {
             hub: start_hub.then(HubView::default),
             ..Default::default()
@@ -634,7 +783,11 @@ pub fn run(args: &[String]) -> ! {
         if tab {
             app.cycle();
         }
-        app.view = view;
+        app.apply_edit(view);
+        if view.settings.is_none() {
+            app.settings_note = None;
+        }
+        app.view = *view;
         app.refresh();
         let now = hook::now_ms();
         let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
@@ -649,6 +802,7 @@ pub fn run(args: &[String]) -> ! {
             Alignment::Left
         };
         let (lines, agents) = app.frame_lines(w, h);
+        let lines = app.themed(lines);
         // The `--all` list's length rides in the same slot; the hub's count is separate.
         let (list_len, agents) = if app.mode == Mode::All && !app.view.open {
             (agents, None)
@@ -666,6 +820,25 @@ pub fn run(args: &[String]) -> ! {
 /// Apply a key to the view; true means quit. `list_len` is `Some` while the `--all` list shows,
 /// `agents` while the hub draws.
 fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<usize>) -> bool {
+    // Settings sit over everything and keep every key while open.
+    if let Some(sel) = view.settings {
+        let last = settings::items().len() - 1;
+        match code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Esc | KeyCode::Char('s') => view.settings = None,
+            KeyCode::Up | KeyCode::Char('k') => view.settings = Some(sel.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => view.settings = Some((sel + 1).min(last)),
+            KeyCode::Right | KeyCode::Char('l' | ' ') | KeyCode::Enter => view.edit = Some(1),
+            KeyCode::Left | KeyCode::Char('h') => view.edit = Some(-1),
+            KeyCode::Char('d') => view.edit = Some(0),
+            _ => {}
+        }
+        return false;
+    }
+    if code == KeyCode::Char('s') {
+        view.settings = Some(0);
+        return false;
+    }
     // The `--all` list keeps its keys; the hub's apply only while it draws (`agents` is Some).
     if let Some(h) = view.hub.as_mut()
         && list_len.is_none()
@@ -742,7 +915,7 @@ pub type Frame = (
 /// until `q`. `frame(view, tab_pressed, width, height)` produces each frame.
 pub fn run_tui(
     view: View,
-    mut frame: impl FnMut(View, bool, u16, u16) -> Frame,
+    mut frame: impl FnMut(&mut View, bool, u16, u16) -> Frame,
 ) -> std::io::Result<()> {
     let mut term = ratatui::init();
     let result = tui_loop(&mut term, view, &mut frame);
@@ -753,7 +926,7 @@ pub fn run_tui(
 fn tui_loop(
     term: &mut ratatui::DefaultTerminal,
     mut view: View,
-    frame: &mut impl FnMut(View, bool, u16, u16) -> Frame,
+    frame: &mut impl FnMut(&mut View, bool, u16, u16) -> Frame,
 ) -> std::io::Result<()> {
     let mut tab = false;
     let mut list_len;
@@ -761,7 +934,7 @@ fn tui_loop(
     loop {
         let size = term.size()?;
         let (lines, animating, align, n, agents) =
-            frame(view, std::mem::take(&mut tab), size.width, size.height);
+            frame(&mut view, std::mem::take(&mut tab), size.width, size.height);
         list_len = n;
         hub_agents = agents;
         if let (Some(h), Some(a)) = (view.hub.as_mut(), agents) {
@@ -820,6 +993,63 @@ mod key_tests {
         assert_eq!(v.hub, None);
         key(&mut v, KeyCode::Char('x'), Some(4), None);
         assert_eq!(v.hub, None, "the --all list keeps x to itself");
+    }
+
+    #[test]
+    fn s_opens_settings_everywhere() {
+        for (mut v, list, agents) in [
+            (View::default(), None, None),
+            (hub_view(Screen::Hub, 2), None, Some(3)),
+            (hub_view(Screen::Zoom, 0), None, None),
+            (View::default(), Some(4), None),
+        ] {
+            let hub = v.hub;
+            assert!(!key(&mut v, KeyCode::Char('s'), list, agents));
+            assert_eq!(v.settings, Some(0));
+            assert_eq!(v.hub, hub);
+        }
+    }
+
+    #[test]
+    fn settings_keys() {
+        let last = crate::settings::items().len() - 1;
+        let mut v = hub_view(Screen::Graph, 1);
+        key(&mut v, KeyCode::Char('s'), None, Some(3));
+        key(&mut v, KeyCode::Up, None, None);
+        assert_eq!(v.settings, Some(0));
+        key(&mut v, KeyCode::Down, None, None);
+        key(&mut v, KeyCode::Char('j'), None, None);
+        assert_eq!(v.settings, Some(2));
+        for _ in 0..100 {
+            key(&mut v, KeyCode::Down, None, None);
+        }
+        assert_eq!(v.settings, Some(last));
+        for (k, want) in [
+            (KeyCode::Right, 1),
+            (KeyCode::Char('l'), 1),
+            (KeyCode::Enter, 1),
+            (KeyCode::Char(' '), 1),
+            (KeyCode::Left, -1),
+            (KeyCode::Char('h'), -1),
+            (KeyCode::Char('d'), 0),
+        ] {
+            v.edit = None;
+            key(&mut v, k, None, None);
+            assert_eq!(v.edit, Some(want), "{k:?}");
+        }
+        assert_eq!(
+            v.hub,
+            hub_view(Screen::Graph, 1).hub,
+            "keys stay in settings"
+        );
+        key(&mut v, KeyCode::Esc, None, None);
+        assert_eq!(v.settings, None);
+        assert_eq!(v.hub, hub_view(Screen::Graph, 1).hub);
+        key(&mut v, KeyCode::Char('s'), None, Some(3));
+        key(&mut v, KeyCode::Char('s'), None, None);
+        assert_eq!(v.settings, None);
+        key(&mut v, KeyCode::Char('s'), None, Some(3));
+        assert!(key(&mut v, KeyCode::Char('q'), None, None));
     }
 
     #[test]
@@ -893,6 +1123,12 @@ mod key_tests {
             root: root.to_path_buf(),
             mode: Mode::Fixed(id.into()),
             cfg: config::Config::default(),
+            file: config::Config::default(),
+            ascii_flag: false,
+            cfg_path: None,
+            cfg_mtime: None,
+            cfg_error: None,
+            settings_note: None,
             view: View::default(),
             dir: None,
             st: State::default(),
@@ -909,6 +1145,163 @@ mod key_tests {
         };
         app.refresh();
         app
+    }
+
+    /// A fresh session plus a config file path of its own (tests run in parallel).
+    fn app_with_cfg(name: &str, text: Option<&str>) -> (App, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("ari-cfg-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let p = root.join("config.toml");
+        std::fs::create_dir_all(&root).unwrap();
+        if let Some(t) = text {
+            std::fs::write(&p, t).unwrap();
+        }
+        let mut app = app_on(&root, "s1", &[]);
+        app.cfg_path = Some(p.clone());
+        app.refresh();
+        (app, root, p)
+    }
+
+    fn edit(app: &mut App, key: &str, dir: i8) {
+        let i = crate::settings::items()
+            .iter()
+            .position(|it| it.key == key)
+            .unwrap();
+        let mut v = View {
+            settings: Some(i),
+            edit: Some(dir),
+            ..View::default()
+        };
+        app.apply_edit(&mut v);
+        assert_eq!(v.edit, None, "the edit is taken");
+    }
+
+    #[test]
+    fn edit_saves_and_applies() {
+        let (mut app, root, p) = app_with_cfg("edit", None);
+        assert!(!app.cfg.face);
+        edit(&mut app, "face", 1);
+        assert!(app.cfg.face);
+        assert_eq!(config::load_from(&p), Ok(app.file.clone()));
+        assert!(app.file.face);
+        edit(&mut app, "face", 0);
+        assert!(!app.cfg.face);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ascii_flag_is_not_saved() {
+        let (mut app, root, p) = app_with_cfg("ascii", None);
+        app.ascii_flag = true;
+        edit(&mut app, "bell", 1);
+        assert!(app.cfg.ascii && app.cfg.bell);
+        let saved = config::load_from(&p).unwrap();
+        assert!(!saved.ascii && saved.bell);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn broken_file_is_never_overwritten() {
+        let (mut app, root, p) = app_with_cfg("broken", Some("face = [[["));
+        assert!(app.cfg_error.is_some());
+        edit(&mut app, "bell", 1);
+        assert_eq!(
+            app.settings_note.as_deref(),
+            Some("fix config.toml first (or delete it)")
+        );
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
+        assert!(!app.cfg.bell);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn edit_right_after_a_hand_edit_keeps_it() {
+        let (mut app, root, p) = app_with_cfg("race", None);
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&p, "[chain]\ncommands = [\"mine\"]\n").unwrap();
+        edit(&mut app, "bell", 1); // no refresh in between
+        let saved = config::load_from(&p).unwrap();
+        assert_eq!(saved.chain.commands, ["mine"]);
+        assert!(saved.bell);
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&p, "face = [[[").unwrap();
+        edit(&mut app, "bell", 1);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
+        assert_eq!(
+            app.settings_note.as_deref(),
+            Some("fix config.toml first (or delete it)")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ascii_row_shows_the_file_under_the_flag() {
+        let (mut app, root, p) = app_with_cfg("asciirow", None);
+        app.ascii_flag = true;
+        app.derive_cfg();
+        let i = crate::settings::items()
+            .iter()
+            .position(|it| it.key == "ascii")
+            .unwrap();
+        app.view.settings = Some(i);
+        let row = |app: &mut App| {
+            panel::to_plain(&app.lines(100, 40))
+                .lines()
+                .find(|l| l.contains("ascii glyphs"))
+                .unwrap()
+                .to_string()
+        };
+        assert!(row(&mut app).contains("off"), "{}", row(&mut app));
+        edit(&mut app, "ascii", 1);
+        assert!(row(&mut app).contains("on"), "{}", row(&mut app));
+        assert!(config::load_from(&p).unwrap().ascii);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hand_edit_reloads() {
+        let (mut app, root, p) = app_with_cfg("reload", Some("theme = \"soft\"\n"));
+        assert_eq!(app.cfg.theme, "soft");
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&p, "theme = \"mono\"\n").unwrap();
+        app.refresh();
+        assert_eq!(app.cfg.theme, "mono");
+        std::fs::write(&p, "theme = [").unwrap();
+        app.refresh();
+        assert_eq!(
+            app.cfg.theme, "mono",
+            "a broken edit keeps the last good config"
+        );
+        assert!(app.cfg_error.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_preview_shows_the_statusline_row() {
+        let (mut app, root, _) = app_with_cfg("barprev", None);
+        let i = crate::settings::items()
+            .iter()
+            .position(|it| it.key == "hide.ctx")
+            .unwrap();
+        app.view.settings = Some(i);
+        let text = panel::to_plain(&app.lines(130, 40));
+        assert!(text.contains("│statusline"), "{text}");
+        assert!(text.contains("ctx —"), "{text}");
+        edit(&mut app, "hide.ctx", 1);
+        let text = panel::to_plain(&app.lines(130, 40));
+        assert!(!text.contains("ctx —"), "{text}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_frame_draws_the_screen() {
+        let (mut app, root, _) = app_with_cfg("frame", None);
+        app.view.settings = Some(0);
+        let text = panel::to_plain(&app.lines(130, 40));
+        assert!(text.contains("ARI settings"), "{text}");
+        assert!(text.contains("▸ theme"), "{text}");
+        assert!(text.contains("│╭─ ARI"), "preview beside the list:\n{text}");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1195,6 +1588,12 @@ mod key_tests {
             root: root.clone(),
             mode: Mode::All,
             cfg: config::Config::default(),
+            file: config::Config::default(),
+            ascii_flag: false,
+            cfg_path: None,
+            cfg_mtime: None,
+            cfg_error: None,
+            settings_note: None,
             view: View::default(),
             dir: None,
             st: State::default(),

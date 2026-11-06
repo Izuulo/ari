@@ -334,7 +334,8 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
     );
 }
 
-/// Draw the graph pane into `area` (its frame included).
+/// Draw the graph pane into `area` (its frame included). Kids finished over 5 minutes ago
+/// drop out unless `show_done`.
 pub(crate) fn draw(
     buf: &mut Buffer,
     area: Rect,
@@ -342,6 +343,7 @@ pub(crate) fn draw(
     sel: Option<&str>,
     big: bool,
     labels: bool,
+    show_done: bool,
 ) {
     let st = i.st;
     let all = edges(st);
@@ -363,7 +365,12 @@ pub(crate) fn draw(
     let mut kids: Vec<usize> = super::order(st)
         .into_iter()
         .filter(|&k| {
-            st.agents[k].id != "main" && st.agents[k].parent.as_deref().unwrap_or("main") == "main"
+            let a = &st.agents[k];
+            a.id != "main"
+                && a.parent.as_deref().unwrap_or("main") == "main"
+                && (show_done
+                    || !a.done
+                    || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
         })
         .collect();
     kids.sort_by_key(|&k| (st.agents[k].done, st.agents[k].started));
@@ -623,7 +630,7 @@ mod tests {
         };
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
         let area = buf.area;
-        draw(&mut buf, area, &i, Some("a1"), false, true);
+        draw(&mut buf, area, &i, Some("a1"), false, true, false);
         crate::panel::to_plain(&crate::hub::to_lines(&buf, false))
     }
     fn four() -> State {
@@ -705,7 +712,7 @@ mod tests {
             };
             let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
             let area = buf.area;
-            draw(&mut buf, area, &i, None, big, false);
+            draw(&mut buf, area, &i, None, big, false, false);
             let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
             let last = out.lines().last().unwrap();
             assert!(
@@ -719,6 +726,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn old_finished_kids_drop_out() {
+        let st = four();
+        assert!(pane(&st, 60_000, 100, 20).contains("a4"));
+        assert!(!pane(&st, 6 * 60_000, 100, 20).contains("a4"));
     }
 
     #[test]

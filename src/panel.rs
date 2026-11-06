@@ -20,6 +20,10 @@ pub struct View {
     pub open: bool,
     /// The hub (`x`) instead of the panel.
     pub hub: Option<crate::hub::HubView>,
+    /// The settings screen (`s`) over everything, at this row of `settings::items()`.
+    pub settings: Option<usize>,
+    /// A settings change the key handler queued: 1 forward, -1 back, 0 reset.
+    pub edit: Option<i8>,
 }
 
 type Row = Vec<Span<'static>>;
@@ -230,7 +234,7 @@ pub fn lines(
                     x.looks_active(),
                     &c,
                     v,
-                    cfg.thresholds.stuck_repeats,
+                    cfg,
                 );
                 if let Some(s) = crate::conflicts::summary(&x.conflicts) {
                     rows.insert(
@@ -274,8 +278,11 @@ pub fn lines(
             rows: turns(st, x, &rc, now),
         },
     ];
-    // A section with nothing to say is left out rather than drawn with dashes.
-    sections.retain(|s| s.title.is_none() || !s.rows.is_empty());
+    // A section with nothing to say, or switched off in config, is left out.
+    sections.retain(|s| {
+        s.title
+            .is_none_or(|t| !s.rows.is_empty() && !hidden(cfg, t))
+    });
     if view.recap
         && let Some(r) = &x.recap
     {
@@ -708,6 +715,11 @@ fn turns(st: &State, x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     items.into_iter().map(|(_, r)| r).collect()
 }
 
+/// Switched off with `hide_panel = ["<id>"]`.
+fn hidden(cfg: &Config, id: &str) -> bool {
+    cfg.hide_panel.iter().any(|h| h == id)
+}
+
 fn header(
     st: &State,
     plan: Option<&crate::state::PlanFile>,
@@ -715,8 +727,9 @@ fn header(
     active: bool,
     c: &Ctx,
     v: Verdict,
-    repeats: u8,
+    cfg: &Config,
 ) -> Vec<Row> {
+    let repeats = cfg.thresholds.stuck_repeats;
     let mut rows = Vec::new();
     if st.first_t == 0 {
         rows.push(vec![if active {
@@ -776,7 +789,9 @@ fn header(
         }]);
     }
     let (done, total) = st.tasks_done();
-    if total == 0 {
+    if hidden(cfg, "tasks") {
+        // switched off: no checklist bar
+    } else if total == 0 {
         if let Some(p) = plan {
             let tail = format!(" {}/{} · {}", p.done, p.total, p.name);
             let n = c.inner.saturating_sub(tail.width()).min(20);
@@ -832,12 +847,12 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         return vec![vec![c.dim("no activity yet")]];
     };
     let subs: Vec<_> = st.agents.iter().skip(1).collect();
-    // Finished agents worth showing: did some work, and finished in the last 10 minutes.
+    // Finished agents worth showing: did some work, and finished in the last 5 minutes.
     let mut done: Vec<_> = subs
         .iter()
         .filter(|a| a.done)
         .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
-        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 10 * 60_000)
+        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
         .collect();
     done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
@@ -1018,29 +1033,10 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             line(format!("{}helpers", n_x(helpers)));
         }
     } else if subs.len() > shown.len() {
-        let hidden: Vec<_> = subs
-            .iter()
-            .copied()
-            .filter(|a| !shown.iter().any(|s| s.id == a.id))
-            .collect();
-        let mut kinds: Vec<(&str, usize)> = vec![];
-        for a in &hidden {
-            match kinds.iter_mut().find(|k| k.0 == a.kind) {
-                Some(k) => k.1 += 1,
-                None => kinds.push((&a.kind, 1)),
-            }
-        }
-        kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-        let named: String = kinds
-            .iter()
-            .take(3)
-            .map(|(k, n)| format!(" · {n} {k}"))
-            .collect();
-        fold = Some(vec![c.dim(format!(
-            "└─ ✓ {} more done{named}{} (a)",
-            hidden.len(),
-            tok_part(toks(&hidden))
-        ))]);
+        // One quiet count; the kinds and tokens live behind `a`.
+        fold = Some(vec![
+            c.dim(format!("└─ ✓ {} done (a)", subs.len() - shown.len())),
+        ]);
     }
     let last = rows.len().saturating_sub(1);
     for (i, r) in rows.iter_mut().enumerate().skip(first_sub) {
@@ -2110,6 +2106,82 @@ mod tests {
         );
     }
 
+    fn render_cfg(st: &State, u: &Usage, x: &Extras, cfg: &Config) -> String {
+        to_plain(&lines(
+            st,
+            u,
+            x,
+            cfg,
+            View::default(),
+            NOW,
+            "12:41",
+            50,
+            60,
+            false,
+        ))
+    }
+
+    fn hiding(ids: &[&str]) -> Config {
+        Config {
+            hide_panel: ids.iter().map(|s| s.to_string()).collect(),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn statusline_hide_leaves_the_panel_alone() {
+        let (st, u) = multi();
+        let cfg = Config {
+            hide: vec!["agents".into(), "tasks".into(), "errors".into()],
+            ..Config::default()
+        };
+        let out = render_cfg(&st, &u, &Extras::default(), &cfg);
+        assert!(out.contains("├─ agents"), "{out}");
+        assert!(out.contains("├─ errors"), "{out}");
+        assert!(out.contains("4/7 tasks"), "{out}");
+    }
+
+    #[test]
+    fn hide_drops_panel_sections() {
+        let (st, u) = multi();
+        let x = Extras::default();
+        let all = render_cfg(&st, &u, &x, &Config::default());
+        for t in ["├─ agents", "├─ errors", "├─ usage", "├─ session"] {
+            assert!(all.contains(t), "{t} in {all}");
+        }
+        let out = render_cfg(&st, &u, &x, &hiding(&["agents", "usage", "turns"]));
+        assert!(!out.contains("├─ agents"), "{out}");
+        assert!(!out.contains("├─ usage"), "{out}");
+        assert!(out.contains("├─ errors"), "{out}");
+        assert!(out.contains("├─ session"), "{out}");
+    }
+
+    #[test]
+    fn hide_tasks_drops_the_checklist_bar() {
+        let (mut st, u) = multi();
+        let x = Extras::default();
+        assert!(render_cfg(&st, &u, &x, &Config::default()).contains("4/7 tasks"));
+        let out = render_cfg(&st, &u, &x, &hiding(&["tasks"]));
+        assert!(!out.contains("tasks"), "{out}");
+        st.tasks.clear();
+        let x = Extras {
+            plan: Some(crate::state::PlanFile {
+                name: "plan.md".into(),
+                done: 2,
+                total: 5,
+            }),
+            ..Extras::default()
+        };
+        assert!(render_cfg(&st, &u, &x, &Config::default()).contains("2/5 · plan.md"));
+        assert!(!render_cfg(&st, &u, &x, &hiding(&["tasks"])).contains("plan.md"));
+    }
+
+    #[test]
+    fn features_on_by_default() {
+        assert!(Config::default().hide.is_empty());
+        assert!(Config::default().hide_panel.is_empty());
+    }
+
     #[test]
     fn no_plan_row_without_tasks() {
         let (mut st, u) = multi();
@@ -2355,10 +2427,7 @@ mod tests {
         assert!(out.contains("recent result"), "{out}");
         assert!(!out.contains("instant result"), "{out}");
         assert!(!out.contains("oldone result"), "{out}");
-        assert!(
-            out.contains("✓ 2 more done · 1 instant · 1 oldone (a)"),
-            "{out}"
-        );
+        assert!(out.contains("└─ ✓ 2 done (a)"), "{out}");
         let all = View {
             expand_agents: true,
             ..View::default()
@@ -2461,10 +2530,7 @@ mod tests {
         let (st, u, x) = long_list();
         let out = render_ex(&st, &u, &x, View::default());
         assert!(out.contains("runner"), "{out}");
-        assert!(
-            out.contains("✓ 32 more done · 29 general-purpose · 3 agent · 29k tok (a)"),
-            "{out}"
-        );
+        assert!(out.contains("└─ ✓ 32 done (a)"), "{out}");
     }
 
     #[test]

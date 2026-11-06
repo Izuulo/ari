@@ -50,4 +50,4 @@ expression: "show(&s, &x, now, v, 168, 49)"
 ┃ ✓ returned 3s ago · The checker confirmed that notes.md has 3 lines, so the task is comple… ┃│                                                                       │
 ┃ 0 errors · 1 messages in · 1 out · 1 files                                                  ┃│                                                                       │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰───────────────────────────────────────────────────────────────────────╯
-  ↑↓ agent   pgup pgdn scroll   esc back   g graph   q quit                                                                                                      168×49
+  ↑↓ agent   pgup pgdn scroll   esc back   g graph   s settings   q quit                                                                                         168×49

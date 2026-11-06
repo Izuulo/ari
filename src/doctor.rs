@@ -322,11 +322,34 @@ fn hook_check(files: &[PathBuf], now_ms: u64) -> Check {
     )
 }
 
+/// config.toml: missing (defaults), unreadable, or values ARI can't use.
+fn config_status(exists: bool, loaded: Result<config::Config, String>) -> Check {
+    match loaded {
+        _ if !exists => pass("config", "none, using defaults"),
+        Err(e) => problem(
+            "config",
+            e,
+            "fix that line, or delete the file to use defaults",
+        ),
+        Ok(c) => match config::problems(&c) {
+            p if p.is_empty() => pass("config", "ok"),
+            p => problem(
+                "config",
+                p.join("; "),
+                "fix these in config.toml, or press s in ari watch",
+            ),
+        },
+    }
+}
+
 pub fn checks(now_ms: u64) -> Vec<Check> {
     let claude = claude_dir().unwrap_or_default();
     let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
     let mut out = vec![binary(), plugin(&claude, &settings), statusline(&settings)];
-    out.extend(chain_checks(&config::load()));
+    let exists = config::path().is_some_and(|p| p.exists());
+    let loaded = config::load_checked();
+    out.push(config_status(exists, loaded.clone()));
+    out.extend(chain_checks(&loaded.unwrap_or_default()));
     out.push(hooks(now_ms));
     out.push(hook_failures(now_ms));
     out
@@ -361,6 +384,34 @@ pub fn run(_args: &[String]) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_check_reports() {
+        let c = config_status(false, Ok(config::Config::default()));
+        assert!(c.ok);
+        assert_eq!(c.detail, "none, using defaults");
+        let c = config_status(true, Ok(config::Config::default()));
+        assert!(c.ok);
+        assert_eq!(c.detail, "ok");
+        let c = config_status(true, Err("expected `=` at line 3".into()));
+        assert!(!c.ok);
+        assert_eq!(c.detail, "expected `=` at line 3");
+        assert_eq!(
+            c.fix.as_deref(),
+            Some("fix that line, or delete the file to use defaults")
+        );
+        let bad = config::Config {
+            theme: "neon".into(),
+            hide: vec!["nope".into()],
+            ..config::Config::default()
+        };
+        let c = config_status(true, Ok(bad));
+        assert!(!c.ok);
+        assert_eq!(
+            c.detail,
+            "unknown theme \"neon\"; hide: unknown segment \"nope\""
+        );
+    }
 
     const DYLD: &str =
         "dyld[…]: Library not loaded: /opt/homebrew/opt/llhttp/lib/libllhttp.9.3.dylib";

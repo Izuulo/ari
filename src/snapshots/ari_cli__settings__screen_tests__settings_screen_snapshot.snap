@@ -1,0 +1,44 @@
+---
+source: src/settings.rs
+expression: to_plain(&out)
+---
+ ARI settings                                                                                 ~/.config/ari/config.toml
+ LOOK                                           │╭─ ARI ─ preview ─╮                                                    
+   theme                     default            ││ ● ON TRACK      │                                                    
+   face                      off                │
+   ascii glyphs              off                │
+ COLOURS                                        │
+   good                      ■ theme            │
+   warn                      ■ theme            │
+   bad                       ■ theme            │
+   accent                    ■ theme            │
+   highlight                 ■ theme            │
+   info                      ■ theme            │
+   muted                     ■ theme            │
+   bar                       ■ theme            │
+ STATUSLINE                                     │
+   row                       top                │
+   width                     auto               │
+ ▸ conflicts · file clashes  on                 │
+   now · current step        on                 │
+   tasks · task progress     on                 │
+   agents · running count    on                 │
+   errors · open errors      on                 │
+   tests · test results      on                 │
+   ctx · context meter       on                 │
+   5h · 5-hour limit         on                 │
+   7d · weekly limit         on                 │
+   cost · session cost       on                 │
+   tokens · token count      on                 │
+ PANEL                                          │
+   task checklist            on                 │
+   agents · subagents        on                 │
+   errors · failed calls     on                 │
+   usage · context, limits   on                 │
+   session · cost, time      on                 │
+   turns · recent turns      on                 │
+ ALERTS                                         │
+   bell                      off                │
+   context warn              60%                │
+   context critical          80%                │
+ ↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file
