@@ -41,6 +41,8 @@ struct App {
     settings_note: Option<String>,
     view: View,
     dir: Option<PathBuf>,
+    /// The watched session's app, read when its files change (not per frame).
+    session_app: crate::app::App,
     st: State,
     usage: Usage,
     x: bar::Extras,
@@ -55,6 +57,14 @@ struct App {
     interactive: bool,
     /// The session opened from the `--all` list: it stays put while the urgency order shifts.
     pinned: Option<PathBuf>,
+}
+
+/// `auto` follows the watched session's app; the merged views (no session) use `default`.
+fn palette(cfg: &config::Config, app: Option<crate::app::App>) -> theme::Palette {
+    app.map_or_else(
+        || theme::Palette::new(cfg),
+        |a| theme::Palette::for_app(cfg, a),
+    )
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -128,6 +138,7 @@ impl App {
             };
             if dir != self.dir {
                 self.dir = dir;
+                self.session_app = Default::default();
                 self.mtimes = (None, None);
                 self.st = State::default();
                 self.usage = Usage::default();
@@ -156,6 +167,7 @@ impl App {
         }
         if changed {
             self.mtimes = now;
+            self.session_app = app::of(dir);
             self.st = state::load_session(dir);
             self.usage = usage::load(dir);
             self.x.tokens = Some(tokens::update(
@@ -207,14 +219,8 @@ impl App {
         if self.view.settings.is_some() {
             lines
         } else {
-            // `auto` follows the watched session; the merged views have none.
-            let app = self.dir.as_deref().filter(|_| self.mode != Mode::All);
-            let p = theme::Palette::for_app(&self.cfg, app.map_or_else(Default::default, app::of));
-            let p = if app.is_some() {
-                p
-            } else {
-                theme::Palette::new(&self.cfg)
-            };
+            let single = self.dir.is_some() && self.mode != Mode::All;
+            let p = palette(&self.cfg, single.then_some(self.session_app));
             theme::lines(lines, &p)
         }
     }
@@ -790,6 +796,7 @@ pub fn run(args: &[String]) -> ! {
             ..Default::default()
         },
         dir: None,
+        session_app: Default::default(),
         st: State::default(),
         usage: Usage::default(),
         x: bar::Extras::default(),
@@ -1191,6 +1198,7 @@ mod key_tests {
             settings_note: None,
             view: View::default(),
             dir: None,
+            session_app: Default::default(),
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
@@ -1220,6 +1228,20 @@ mod key_tests {
         app.cfg_path = Some(p.clone());
         app.refresh();
         (app, root, p)
+    }
+
+    #[test]
+    fn auto_palette_follows_the_session_app() {
+        let cfg = config::Config {
+            theme: "auto".into(),
+            ..Default::default()
+        };
+        let codex = palette(&cfg, Some(crate::app::App::Codex));
+        assert_eq!(codex.accent, crate::app::App::Codex.accent());
+        assert_eq!(
+            palette(&cfg, None),
+            theme::Palette::new(&config::Config::default())
+        );
     }
 
     fn edit(app: &mut App, key: &str, dir: i8) {
@@ -1656,6 +1678,7 @@ mod key_tests {
             settings_note: None,
             view: View::default(),
             dir: None,
+            session_app: Default::default(),
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
