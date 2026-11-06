@@ -1,5 +1,6 @@
 use ari_cli::bar::Extras;
 use ari_cli::config::Config;
+use ari_cli::hub::all::{Part, merge};
 use ari_cli::hub::{self, HubView, Input};
 use ari_cli::state::State;
 use ari_cli::usage::Usage;
@@ -33,16 +34,39 @@ fn team() -> (State, Extras, u64) {
 }
 
 fn show(st: &State, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
-    let (u, cfg) = (Usage::default(), Config::default());
+    show_u(st, &Usage::default(), x, now, v, w, h)
+}
+
+fn show_u(st: &State, u: &Usage, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
+    let cfg = Config::default();
     let i = Input {
         st,
-        u: &u,
+        u,
         x,
         cfg: &cfg,
         now,
         clock: "13:04",
     };
     panel::to_plain(&hub::lines(&i, &v, w, h, false))
+}
+
+#[test]
+fn hub_all_frame() {
+    let (s, x, now) = team();
+    let tokens = x.tokens.unwrap();
+    let part = |key: &str, name: &str| Part {
+        key: key.into(),
+        name: name.into(),
+        st: s.clone(),
+        u: Usage::default(),
+        tokens: tokens.clone(),
+    };
+    let (st, u, tokens) = merge(vec![part("aaaaaaaa", "api"), part("bbbbbbbb", "web")]);
+    let x = Extras {
+        tokens: Some(tokens),
+        ..Default::default()
+    };
+    insta::assert_snapshot!(show_u(&st, &u, &x, now, HubView::default(), 168, 49));
 }
 
 #[test]

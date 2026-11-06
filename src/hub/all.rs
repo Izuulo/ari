@@ -148,6 +148,7 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
             tok.agents.insert(id(&a), l);
         }
     }
+    (st.agents[0].started, st.agents[0].last_t) = (st.first_t, st.last_t);
     st.messages.make_contiguous().sort_by_key(|m| m.t);
     (st, u, tok)
 }
@@ -208,7 +209,10 @@ mod tests {
         assert_eq!(st.agents[2].parent.as_deref(), Some("aaaaaaaa"));
         assert!(t.agents.contains_key("aaaaaaaa") && t.agents.contains_key("aaaaaaaa/rev"));
         assert_eq!(st.label.as_deref(), Some("2 sessions"));
-        assert_eq!(st.agents[0].kind, "2 sessions", "the root node's second line");
+        assert_eq!(
+            st.agents[0].kind, "2 sessions",
+            "the root node's second line"
+        );
     }
 
     #[test]
@@ -286,5 +290,14 @@ mod tests {
         b.st.agents[1].waiting = Some((1, "Bash rm".into()));
         let (st, _, _) = merge(vec![a, b]);
         assert_eq!(st.verdict_with(3), Verdict::NeedsYou);
+    }
+
+    #[test]
+    fn root_spans_the_sessions() {
+        let (mut a, mut b) = two();
+        (a.st.first_t, a.st.last_t) = (50, 90);
+        (b.st.first_t, b.st.last_t) = (20, 70);
+        let (st, _, _) = merge(vec![a, b]);
+        assert_eq!((st.agents[0].started, st.agents[0].last_t), (20, 90));
     }
 }

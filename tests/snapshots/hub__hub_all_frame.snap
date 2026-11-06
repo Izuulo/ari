@@ -1,0 +1,53 @@
+---
+source: tests/hub.rs
+expression: "show_u(&st, &u, &x, now, HubView::default(), 168, 49)"
+---
+ ARI hub   all sessions · 2 sessions                                                                                                                              13:04 
+ ✓ DONE │ ▰▰▰▰▰▰▰▰▰▰ 4/4 │ ⠼ 2 agents │ ✗ 0 │ ctx — │ 5h — │ 7d — │ 653k tok                                                                                            
+╭─ graph ───────────────────────────────────────────────────────────────────── 7 agents · 2 links ─╮╭─ agents ─────────────────────────────────────────────────────────╮
+│                                       ┏━ ✓ you ━━━━━━━━━━┓                                       ││ agent       model   state          context                   tok │
+│                                       ┃ 2 sessions       ┃                                       ││▸◆ you               ✓ done                                       │
+│                                       ┃ —                ┃                                       ││ └ api       haiku   ⠧ thinking     ▰▰▱▱▱▱▱▱▱▱  17%          160k │
+│                                       ┗━━━━━━━━━┳━━━━━━━━┛                                       ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
+│                                                 │                                                ││ └ writer    haiku   ✓ done 3s      ▰▱▱▱▱▱▱▱▱▱  11%           83k │
+│                                           ╭─────┴─────────────────╮                              ││ └ web       haiku   ⠦ thinking     ▰▰▱▱▱▱▱▱▱▱  17%          160k │
+│                                           │                       │                              ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
+│                           ╭─ ⠧ api ─ +2 su┴ ─╮    ╭─ ⠦ web ─ +2 su┴ ─╮                           ││ └ writer    haiku   ✓ done 3s      ▰▱▱▱▱▱▱▱▱▱  11%           83k │
+│                           │ haiku · ctx 17%  │    │ haiku · ctx 17%  │                           ││                                                                  │
+│                           │ —                │    │ —                │                           ││                                                                  │
+│                           ╰──────────────────╯    ╰──────────────────╯                           ││                                                                  │
+│                                                                                                  ││                                                                  │
+│ also: writer⇄checker 2 · writer⇄checker 2                                                        ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  │├──────────────────────────────────────────────────────────────────┤
+│                                                                                                  ││ ⚠ 2 agents edited notes.md                                       │
+│ ── spawn   ━━ message   ● in flight   dim = finished                                             ││   writer ×1 · writer ×1                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
+┏━ ✓ you ━━━━━━━━━━━━━━━━━━━━━━━━━━ 22s ━┓╭─ ⠧ api · haiku-5-5 ────────────── 22s ─╮╭─ ⠦ web · haiku-5-5 ────────────── 22s ─╮                                          
+┃ 2 sessions · 0 calls · 0 tok           ┃│ session · 7 calls · 160k tok           ││ session · 7 calls · 160k tok           │                                          
+┃                                        ┃│ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k       ││ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k       │                                          
+┃ filled by                              ┃│ filled by messages 7.4k                ││ filled by messages 7.4k                │                                          
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄││┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄│                                          
+┃                                        ┃│ 19s ToolS ToolSearch             ✓ .0s ││ 19s ToolS ToolSearch             ✓ .0s │                                          
+┃                                        ┃│ 17s TaskC plan                   ✓ .0s ││ 17s TaskC plan                   ✓ .0s │                                          
+┃                                        ┃│ 17s TaskC plan                   ✓ .0s ││ 17s TaskC plan                   ✓ .0s │                                          
+┃                                        ┃│ 14s Agent general-purpose: Wri… ✓ 6.6s ││ 14s Agent general-purpose: Wri… ✓ 6.6s │                                          
+┃                                        ┃│ 13s Agent general-purpose: Che… ✓ 8.6s ││ 13s Agent general-purpose: Che… ✓ 8.6s │                                          
+┃                                        ┃│  2s TaskU plan                   ✓ .0s ││  2s TaskU plan                   ✓ .0s │                                          
+┃                                        ┃│  2s TaskU plan                   ✓ .0s ││  2s TaskU plan                   ✓ .0s │                                          
+┃                                        ┃│                                        ││                                        │                                          
+┃                                        ┃│                                        ││                                        │                                          
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄││┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄│                                          
+┃ ✓ done                              1s ┃│ ⠧ thinking                          1s ││ ⠦ thinking                          1s │                                          
+┃                                        ┃│                                        ││                                        │                                          
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰────────────────────────────────────────╯╰────────────────────────────────────────╯                                          
+╭─ messages ──────────────────────────────────────────────────────── 4 this session · newest last ─╮╭─ activity ─────────────────────────── last 10 min · 12 s a cell ─╮
+│   9s  writer    ━▸ checker   notes.md is ready in /home/user/proj. It has three lines about rai… ││ you                                                          ✓   │
+│   9s  writer    ━▸ checker   notes.md is ready in /home/user/proj. It has three lines about rai… ││ api                                                      ▆▄▄ ⠧   │
+│   5s  checker   ━▸ writer    notes.md has 3 lines.                                               ││ checker                                                   █  ✓   │
+│   5s  checker   ━▸ writer    notes.md has 3 lines.                                               ││ writer                                                    ▆  ✓   │
+│                                                                                                  ││ web                                                      ▆▄▄ ⠦   │
+│                                                                                                  ││           −10m                   −5m                     now     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
+  ↑↓ select   ⏎ zoom   g graph   z show finished (4)   x back to panel   s settings   q quit                                                                     168×49
