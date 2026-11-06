@@ -24,7 +24,7 @@ use ari_cli::{demo, doctor, hook, recap, replay, setup, statusline, watch};
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("hook") => hook::run(),
+        Some("hook") => hook::run(&args[1..]),
         Some("statusline") => statusline::run(),
         Some("setup") => setup::run_setup(&args[1..]),
         Some("uninstall") => setup::run_uninstall(&args[1..]),

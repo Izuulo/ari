@@ -185,6 +185,7 @@ impl Ledger {
 
 /// `claude-opus-5-5-20261001` → `opus-5-5`; other providers' names pass through.
 pub fn short_model(id: &str) -> String {
+    let id = id.split_once('[').map_or(id, |(head, _)| head); // `[1m]` context suffix
     let id = id.strip_prefix("claude-").unwrap_or(id);
     match id.rsplit_once('-') {
         Some((head, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => {
@@ -355,6 +356,12 @@ pub fn savings(l: &Ledger, cost_usd: Option<f64>, prices: &BTreeMap<String, Pric
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn short_model_keeps_other_providers_and_drops_suffix() {
+        assert_eq!(super::short_model("gpt-5.5-codex"), "gpt-5.5-codex");
+        assert_eq!(super::short_model("deepseek-v4-pro[1m]"), "deepseek-v4-pro");
+    }
+
     #[test]
     fn away_summary_keeps_the_last_first_line() {
         let l = ledger_from(

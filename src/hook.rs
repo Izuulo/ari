@@ -1,20 +1,24 @@
 //! `ari hook`: called synchronously by Claude Code on every hook event.
 //! Rules: always exit 0, never print, append one line, do nothing heavy.
 
-use crate::{config, event, paths};
+use crate::{app::App, config, event, paths};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub fn run() -> ! {
+pub fn run(args: &[String]) -> ! {
     std::panic::set_hook(Box::new(|_| {}));
-    let _ = std::panic::catch_unwind(handle);
+    let app = args
+        .windows(2)
+        .find(|w| w[0] == "--agent")
+        .map_or(App::Claude, |w| App::parse(&w[1]));
+    let _ = std::panic::catch_unwind(|| handle(app));
     std::process::exit(0)
 }
 
-fn handle() {
+fn handle(app: App) {
     let mut buf = Vec::new();
     if std::io::stdin().read_to_end(&mut buf).is_err() {
         return;
@@ -44,7 +48,7 @@ fn handle() {
         return;
     }
     // Create-only, on any event: sessions that began before ARI was installed still get a cwd.
-    write_meta(&dir, &raw, t);
+    write_meta(&dir, &raw, t, app);
     if ev.e == "SessionStart" {
         let days = config::load().retention_days.max(1);
         prune(&root, Duration::from_secs(days * 86_400), &dir);
@@ -67,8 +71,9 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .write_all(bytes)
 }
 
-fn write_meta(dir: &Path, raw: &Value, t: u64) {
+fn write_meta(dir: &Path, raw: &Value, t: u64, app: App) {
     let meta = serde_json::json!({
+        "agent": app.as_str(),
         "cwd": raw.get("cwd"),
         "started": t,
         "transcript": raw.get("transcript_path"),
