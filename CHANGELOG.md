@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-06
 
 - **Settings**: `s` in `ari watch` opens a settings screen with a live preview: five colour themes (`default`, `soft`, `vivid`, `colorblind`, `mono`) plus per-colour overrides, separate on/off switches for every statusline segment (`hide`) and every panel section (`hide_panel`, the task checklist is one), a live preview of both, alerts and log retention. Changes save to `config.toml` at once; hand edits to the file apply live. A config.toml ARI can't read is reported (settings screen, `ari doctor`) and never overwritten.
 - **The hub**: `x` in `ari watch` (or `ari hub`) takes the whole terminal. It shows a graph of spawns and messages between agents, a table with each agent's own context window, a watch window per running agent, the message log and activity lanes. `⏎` zooms into one agent (timeline, what filled its context, files, tasks, errors) and `g` shows the graph full size with the task list. Needs 120×30; `--ascii` works too.
