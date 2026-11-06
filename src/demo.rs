@@ -3,7 +3,7 @@
 use crate::bar::Extras;
 use crate::event::Event;
 use crate::panel::{self, View};
-use crate::state::State;
+use crate::state::{State, Verdict};
 use crate::tokens::{self, Ledger, TokenCache};
 use crate::usage::{Limit, Usage};
 use crate::{config, hub, replay, watch};
@@ -148,13 +148,18 @@ pub fn run(args: &[String]) -> ! {
         println!("{}", panel::to_plain(&lines));
         std::process::exit(0)
     }
-    let start = Instant::now();
+    let mut progress = 0.0_f64;
+    let mut last = Instant::now();
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let result = watch::run_tui(View::default(), |view, _tab, w, h| {
         // The demo replays with defaults; it has no settings screen.
         view.settings = None;
-        let progress = (start.elapsed().as_millis() as f64 * speed) as u64;
-        let (st, u, x, now) = frame_at(&events, progress);
+        let (st, u, x, now) = frame_at(&events, progress as u64);
+        progress += last.elapsed().as_secs_f64()
+            * 1000.0
+            * pace(st.verdict_with(now, cfg.thresholds.stuck_repeats), speed);
+        last = Instant::now();
+        let progress = progress as u64;
         let clock = panel::local_hhmm(now);
         let animating = progress < total || st.turn_active;
         if let Some(hv) = view.hub.filter(|_| hub::fit(w, h) != hub::Fit::TooSmall) {
@@ -189,6 +194,16 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
+/// Replay speed for a frame showing `v`: trouble plays at most at real time, STUCK slower
+/// still, so a viewer can read what went wrong before the replay moves on.
+fn pace(v: Verdict, speed: f64) -> f64 {
+    match v {
+        Verdict::Stuck => speed.min(0.4),
+        Verdict::Retrying | Verdict::NeedsYou => speed.min(1.0),
+        _ => speed,
+    }
+}
+
 fn fail(msg: &str) -> ! {
     eprintln!("ari demo: {msg}");
     std::process::exit(2)
@@ -197,7 +212,14 @@ fn fail(msg: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Verdict;
+
+    #[test]
+    fn dwells_on_trouble() {
+        assert_eq!(pace(Verdict::OnTrack, 2.5), 2.5);
+        assert_eq!(pace(Verdict::Retrying, 2.5), 1.0);
+        assert_eq!(pace(Verdict::Stuck, 2.5), 0.4);
+        assert_eq!(pace(Verdict::Stuck, 0.2), 0.2, "never faster than asked");
+    }
 
     #[test]
     fn replays_the_story() {
