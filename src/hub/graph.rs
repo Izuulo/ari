@@ -11,6 +11,14 @@ use std::collections::BTreeMap;
 use unicode_width::UnicodeWidthStr;
 
 const MIN_W: u16 = 16;
+
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
 const GAP: u16 = 4;
 const PACKET_MS: u64 = 1600;
 
@@ -314,7 +322,11 @@ pub(crate) fn draw(
         area,
         vec![Span::styled("graph", bold())],
         vec![Span::styled(
-            format!("{} agents · {} links", st.agents.len(), all.len()),
+            format!(
+                "{} · {}",
+                plural(st.agents.len(), "agent"),
+                plural(all.len(), "link")
+            ),
             dim(),
         )],
         faint(),

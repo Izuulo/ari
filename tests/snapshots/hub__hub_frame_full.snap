@@ -4,7 +4,7 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 ---
  ARI hub · Do these steps in order, using the tool…                                                                                                               13:04 
  ✓ DONE │ ▰▰▰▰▰▰▰▰▰▰ 2/2 │ ✗ 0 │ ctx — │ 5h — │ 7d — │ 326k tok                                                                                                         
-╭─ graph ───────────────────────────────────────────────────────────────────── 3 agents · 1 links ─╮╭─ agents ─────────────────────────────────────────────────────────╮
+╭─ graph ────────────────────────────────────────────────────────────────────── 3 agents · 1 link ─╮╭─ agents ─────────────────────────────────────────────────────────╮
 │                                       ┏━ ✓ main ━━━━━━━━━┓                                       ││ agent       model   state          context                   tok │
 │                                       ┃ haiku · ctx 17%  ┃                                       ││▸◆ main      haiku   ✓ done         ▰▰▱▱▱▱▱▱▱▱  17%          160k │
 │                                       ┃ —                ┃                                       ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
