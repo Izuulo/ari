@@ -1,7 +1,8 @@
 //! One hook payload → one compact event line. Pure; no I/O.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::borrow::Cow;
 
 pub const MAX_LINE: usize = 4096;
 
@@ -94,7 +95,71 @@ pub struct Todo {
     pub s: String,
 }
 
+/// Codex and dsh tool calls rewritten as their Claude Code equivalents; Claude payloads pass
+/// through borrowed. Codex has no failure event, so a nonzero `tool_response.exit_code` makes one.
+fn canonical(raw: &Value) -> Cow<'_, Value> {
+    let name = raw.get("tool_name").and_then(Value::as_str).unwrap_or("");
+    let tool = match name {
+        "bash" => "Bash",
+        "read" => "Read",
+        "write" => "Write",
+        "edit" => "Edit",
+        "grep" => "Grep",
+        "glob" => "Glob",
+        "apply_patch" | "str_replace_editor" => "Edit",
+        "spawn_agent" => "Agent",
+        _ => name,
+    };
+    let code = raw
+        .pointer("/tool_response/exit_code")
+        .and_then(Value::as_i64)
+        .filter(|c| *c != 0);
+    let failed = code.is_some() && raw.get("hook_event_name") == Some(&json!("PostToolUse"));
+    if tool == name && !failed {
+        return Cow::Borrowed(raw);
+    }
+    let mut v = raw.clone();
+    let input = raw.get("tool_input").unwrap_or(&Value::Null);
+    let str_at = |k: &str| input.get(k).and_then(Value::as_str);
+    match name {
+        "apply_patch" => {
+            let path = ["command", "input", "patch"]
+                .iter()
+                .find_map(|k| str_at(k))
+                .and_then(|p| {
+                    p.lines().find_map(|l| {
+                        ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+                            .iter()
+                            .find_map(|pre| l.strip_prefix(pre))
+                    })
+                });
+            v["tool_input"] = json!({ "file_path": path.unwrap_or("") });
+        }
+        "str_replace_editor" => {
+            v["tool_input"] = json!({"file_path": str_at("path"),
+                "old_string": str_at("old_str"), "new_string": str_at("new_str")});
+        }
+        _ => {}
+    }
+    if !tool.is_empty() {
+        v["tool_name"] = json!(tool);
+    }
+    if let Some(c) = code.filter(|_| failed) {
+        let resp = &raw["tool_response"];
+        let text = |k: &str| {
+            resp.get(k)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+        };
+        let body = text("stderr").or_else(|| text("output")).unwrap_or("");
+        v["hook_event_name"] = json!("PostToolUseFailure");
+        v["error"] = json!(format!("Exit code {c}\n{body}"));
+    }
+    Cow::Owned(v)
+}
+
 pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
+    let raw = &*canonical(raw);
     let s = |k: &str| raw.get(k).and_then(Value::as_str);
     let owned = |k: &str| s(k).filter(|v| !v.is_empty()).map(String::from);
     let mut ev = Event {
@@ -114,7 +179,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         ev.id = owned("tool_use_id");
         ev.act = Some(truncate(&action(tool, input, cwd), 80));
         ev.sig = Some(truncate(&signature(tool, input), 200));
-        ev.h = Some(fnv1a(&canonical(input)));
+        ev.h = Some(fnv1a(&sorted_json(input)));
     }
     let line = |k: &str| s(k).map(|v| truncate(first_line(v), 160));
     match ev.e.as_str() {
@@ -500,7 +565,7 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
 }
 
 /// JSON bytes with object keys sorted recursively, so the hash ignores key order.
-fn canonical(v: &Value) -> Vec<u8> {
+fn sorted_json(v: &Value) -> Vec<u8> {
     fn sort(v: &Value) -> Value {
         match v {
             Value::Object(m) => {
@@ -561,6 +626,59 @@ mod tests {
 
     fn post(tool: &str, input: Value) -> Event {
         n(json!({"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": input}))
+    }
+
+    #[test]
+    fn codex_apply_patch_reads_as_edit() {
+        let ev = n(
+            json!({"hook_event_name": "PreToolUse", "cwd": "/p", "tool_name": "apply_patch",
+            "tool_input": {"command": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-x\n+y\n*** End Patch"}}),
+        );
+        assert_eq!(ev.tool.as_deref(), Some("Edit"));
+        assert_eq!(ev.act.as_deref(), Some("editing src/a.rs"));
+    }
+
+    #[test]
+    fn codex_nonzero_exit_is_a_failure() {
+        let ev = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "tool_response": {"exit_code": 101, "stderr": "test result: FAILED. 3 passed; 1 failed"}}),
+        );
+        assert_eq!(ev.ok, Some(false));
+        assert_eq!(ev.kind.as_deref(), Some("exit 101"));
+        assert_eq!(ev.tests, Some((3, 1)));
+    }
+
+    #[test]
+    fn dsh_lowercase_tools_map() {
+        let ev = pre("bash", json!({"command": "ls"}));
+        assert_eq!(ev.tool.as_deref(), Some("Bash"));
+        let ev = n(
+            json!({"hook_event_name": "PreToolUse", "cwd": "/p", "tool_name": "edit",
+            "tool_input": {"file_path": "/p/b.rs", "old_string": "a", "new_string": "b"}}),
+        );
+        assert_eq!(ev.act.as_deref(), Some("editing b.rs"));
+        let ev = pre(
+            "str_replace_editor",
+            json!({"path": "/p/c.rs", "old_str": "a", "new_str": "b"}),
+        );
+        assert_eq!(ev.tool.as_deref(), Some("Edit"));
+        assert_eq!(ev.sig.as_deref(), Some("Edit:/p/c.rs"));
+    }
+
+    #[test]
+    fn claude_payloads_untouched() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/basic/raw.jsonl"
+        ))
+        .unwrap();
+        for l in text.lines() {
+            let v: Value = serde_json::from_str(l).unwrap();
+            let p = &v["p"];
+            assert!(matches!(canonical(p), Cow::Borrowed(_)), "{l}");
+        }
     }
 
     #[test]

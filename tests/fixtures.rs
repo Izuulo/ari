@@ -194,3 +194,23 @@ fn team_links() {
         .collect();
     assert_eq!(m, [(w.clone(), c.clone()), (c, w)]);
 }
+
+/// Codex and dsh tool calls read like Claude's: failures count, edits name their file.
+#[test]
+fn codex_and_dsh_replay() {
+    use ari_cli::state::State;
+    for (name, edit) in [("codex", "editing src/a.rs"), ("dsh", "editing b.rs")] {
+        let mut s = State::default();
+        let mut act = None;
+        for ev in &fixture(name) {
+            s.apply(ev);
+            if ev.e == "PreToolUse" && ev.tool.as_deref() == Some("Edit") {
+                act = s.agents[0].act.clone();
+            }
+        }
+        assert_eq!(act.as_deref(), Some(edit), "{name}");
+        assert_eq!(s.open_errors(), 1, "{name}");
+        let calls = &s.agents[0].recent;
+        assert!(calls.iter().any(|c| c.ok == Some(true)), "{name}");
+    }
+}
