@@ -5,7 +5,7 @@ use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
 use crate::usage::{self, Usage};
-use crate::{bar, burn, config, hook, paths, settings, state, theme, tokens};
+use crate::{app, bar, burn, config, hook, paths, settings, state, theme, tokens};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
@@ -207,7 +207,15 @@ impl App {
         if self.view.settings.is_some() {
             lines
         } else {
-            theme::lines(lines, &theme::Palette::new(&self.cfg))
+            // `auto` follows the watched session; the merged views have none.
+            let app = self.dir.as_deref().filter(|_| self.mode != Mode::All);
+            let p = theme::Palette::for_app(&self.cfg, app.map_or_else(Default::default, app::of));
+            let p = if app.is_some() {
+                p
+            } else {
+                theme::Palette::new(&self.cfg)
+            };
+            theme::lines(lines, &p)
         }
     }
 

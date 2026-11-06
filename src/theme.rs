@@ -1,6 +1,7 @@
 //! Colour themes. ARI draws with eight base colours; a `Palette` maps each to its role's
 //! colour at the very end, so drawing code never changes (spec: 2026-11-06-settings-design.md).
 
+use crate::app::App;
 use crate::config::{Config, ROLES};
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
@@ -45,6 +46,36 @@ fn preset(theme: &str) -> [Color; 8] {
             Indexed(234),
         ],
         "colorblind" => [39, 220, 208, 255, 175, 111, 243, 236].map(Indexed),
+        "claude" => [
+            Green,
+            Yellow,
+            Red,
+            Rgb(0xD9, 0x77, 0x57),
+            Rgb(0xE8, 0xA3, 0x83),
+            Rgb(0xB5, 0xAD, 0xA4),
+            Indexed(244),
+            Indexed(237),
+        ],
+        "codex" => [
+            Green,
+            Yellow,
+            Red,
+            Rgb(0xEC, 0xEC, 0xEC),
+            Indexed(252),
+            Indexed(110),
+            Indexed(243),
+            Indexed(235),
+        ],
+        "deepseek" => [
+            Green,
+            Yellow,
+            Red,
+            Rgb(0x4D, 0x6B, 0xFE),
+            Rgb(0x8F, 0xA4, 0xFF),
+            Rgb(0x6F, 0x8C, 0xC9),
+            Indexed(103),
+            Indexed(236),
+        ],
         "mono" => [
             Reset,
             Reset,
@@ -59,10 +90,28 @@ fn preset(theme: &str) -> [Color; 8] {
     }
 }
 
+impl App {
+    pub fn accent(self) -> Color {
+        preset(self.theme())[3]
+    }
+}
+
 impl Palette {
     /// The theme's colours (unknown theme: default), then each readable `[colors]` override.
     pub fn new(cfg: &Config) -> Palette {
-        let mut c = preset(&cfg.theme);
+        Self::build(preset(&cfg.theme), cfg)
+    }
+
+    /// Like `new`, but `auto` takes the colours of the session's app.
+    pub fn for_app(cfg: &Config, app: App) -> Palette {
+        if cfg.theme == "auto" {
+            Self::build(preset(app.theme()), cfg)
+        } else {
+            Self::new(cfg)
+        }
+    }
+
+    fn build(mut c: [Color; 8], cfg: &Config) -> Palette {
         for (i, role) in ROLES.iter().enumerate() {
             if let Some(v) = cfg.colors.get(*role).and_then(|v| Color::from_str(v).ok()) {
                 c[i] = v;
@@ -231,6 +280,41 @@ mod tests {
             Span::styled("bar", Style::new().bg(Color::Indexed(236))),
             Span::raw("plain"),
         ])]
+    }
+
+    #[test]
+    fn app_themes_keep_status_colours() {
+        for t in ["claude", "codex", "deepseek"] {
+            let p = Palette::new(&cfg(t, &[]));
+            assert_eq!(
+                (p.good, p.warn, p.bad),
+                (Color::Green, Color::Yellow, Color::Red)
+            );
+        }
+    }
+
+    #[test]
+    fn auto_follows_app() {
+        let auto = cfg("auto", &[]);
+        assert_eq!(
+            Palette::for_app(&auto, App::Codex).accent,
+            Color::Rgb(0xEC, 0xEC, 0xEC)
+        );
+        assert_eq!(
+            Palette::for_app(&auto, App::Claude).accent,
+            Color::Rgb(0xD9, 0x77, 0x57)
+        );
+        assert_eq!(App::Dsh.accent(), Color::Rgb(0x4D, 0x6B, 0xFE));
+        let soft = cfg("soft", &[]);
+        assert_eq!(Palette::for_app(&soft, App::Codex), Palette::new(&soft));
+    }
+
+    #[test]
+    fn auto_alone_is_default() {
+        assert_eq!(
+            Palette::new(&cfg("auto", &[])),
+            Palette::new(&cfg("default", &[]))
+        );
     }
 
     #[test]

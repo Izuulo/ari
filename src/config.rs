@@ -4,7 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const THEMES: [&str; 5] = ["default", "soft", "vivid", "colorblind", "mono"];
+pub const THEMES: [&str; 9] = [
+    "default",
+    "soft",
+    "vivid",
+    "colorblind",
+    "mono",
+    "auto",
+    "claude",
+    "codex",
+    "deepseek",
+];
 /// Colour roles a theme sets and `[colors]` can override.
 pub const ROLES: [&str; 8] = [
     "good",
