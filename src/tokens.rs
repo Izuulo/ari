@@ -8,10 +8,11 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 /// Requests with fewer input-side tokens than this don't move the hit-rate needle.
 const MIN_HIT_TOKENS: u64 = 1000;
 const RECENT_IDS: usize = 16;
+const TOOL_IDS: usize = 32;
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
@@ -40,6 +41,14 @@ pub struct Ledger {
     pub last_model: Option<String>,
     /// Latest `away_summary` system record: first line, capped.
     pub away: Option<String>,
+    /// Input side (input + cache write + cache read) of the latest request: context in use.
+    pub ctx: u64,
+    /// Estimate of what filled `ctx`: `base`, `messages`, or a tool name → tokens.
+    pub fill: BTreeMap<String, u64>,
+    /// Recent tool_use id → tool name, to name the results that follow.
+    pub tool_ids: VecDeque<(String, String)>,
+    /// Tools whose results arrived since the latest request.
+    pub pending: Vec<String>,
 }
 
 impl Ledger {
@@ -67,6 +76,22 @@ impl Ledger {
         }
     }
 
+    /// Credit the context's growth to the tool results since the last request (an estimate).
+    fn grow(&mut self, side: u64) {
+        let pending = std::mem::take(&mut self.pending);
+        if self.ctx == 0 || side < self.ctx {
+            self.fill = BTreeMap::from([("base".to_string(), side)]);
+        } else if pending.is_empty() {
+            *self.fill.entry("messages".into()).or_default() += side - self.ctx;
+        } else {
+            let (d, n) = (side - self.ctx, pending.len() as u64);
+            for (i, tool) in pending.into_iter().enumerate() {
+                *self.fill.entry(tool).or_default() += d / n + if i == 0 { d % n } else { 0 };
+            }
+        }
+        self.ctx = side;
+    }
+
     fn apply(&mut self, entry: &Value) {
         if entry.get("subtype").and_then(Value::as_str) == Some("away_summary")
             && let Some(l) = entry
@@ -76,12 +101,43 @@ impl Ledger {
         {
             self.away = Some(crate::event::truncate(l, 200));
         }
+        let blocks = |m: &Value| {
+            m.get("content")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
+        if entry.get("type").and_then(Value::as_str) == Some("user")
+            && let Some(m) = entry.get("message")
+        {
+            for b in blocks(m) {
+                if let Some(id) = b.get("tool_use_id").and_then(Value::as_str)
+                    && let Some((_, name)) = self.tool_ids.iter().find(|(i, _)| i == id)
+                {
+                    self.pending.push(name.clone());
+                }
+            }
+        }
         if entry.get("type").and_then(Value::as_str) != Some("assistant") {
             return;
         }
         let Some(m) = entry.get("message") else {
             return;
         };
+        // Before the dedupe: one response's tool_use blocks arrive in later entries (D14).
+        for b in blocks(m) {
+            if b.get("type").and_then(Value::as_str) == Some("tool_use")
+                && let (Some(id), Some(name)) = (
+                    b.get("id").and_then(Value::as_str),
+                    b.get("name").and_then(Value::as_str),
+                )
+            {
+                self.tool_ids.push_back((id.into(), name.into()));
+                if self.tool_ids.len() > TOOL_IDS {
+                    self.tool_ids.pop_front();
+                }
+            }
+        }
         let id = m
             .get("id")
             .and_then(Value::as_str)
@@ -110,6 +166,7 @@ impl Ledger {
         self.output += t.output;
         self.requests += 1;
         let side = t.input + t.cache_write + t.cache_read;
+        self.grow(side);
         if side >= MIN_HIT_TOKENS {
             self.prev_hit = self.last_hit;
             self.last_hit = Some(t.cache_read as f64 / side as f64);
@@ -321,6 +378,80 @@ mod tests {
 
     use super::*;
     use crate::state::Agent;
+
+    /// An assistant entry: message id, input side split as input + cache_read, tool_use blocks.
+    fn asst(id: &str, input: u64, cache_read: u64, uses: &[(&str, &str)]) -> String {
+        let content: Vec<Value> = uses
+            .iter()
+            .map(|(i, n)| serde_json::json!({"type": "tool_use", "id": i, "name": n}))
+            .collect();
+        serde_json::json!({"type": "assistant", "message": {"id": id, "model": "m",
+            "usage": {"input_tokens": input, "cache_read_input_tokens": cache_read},
+            "content": content}})
+        .to_string()
+    }
+    fn results(ids: &[&str]) -> String {
+        let content: Vec<Value> = ids
+            .iter()
+            .map(|i| serde_json::json!({"type": "tool_result", "tool_use_id": i}))
+            .collect();
+        serde_json::json!({"type": "user", "message": {"role": "user", "content": content}})
+            .to_string()
+    }
+    fn fill(l: &Ledger) -> Vec<(&str, u64)> {
+        l.fill.iter().map(|(k, v)| (k.as_str(), *v)).collect()
+    }
+
+    #[test]
+    fn fill_starts_with_base() {
+        let l = ledger_from(&asst("m1", 100, 900, &[]));
+        assert_eq!(l.ctx, 1000);
+        assert_eq!(fill(&l), [("base", 1000)]);
+    }
+
+    #[test]
+    fn fill_splits_growth_by_tool_results() {
+        let t = [
+            asst("m1", 100, 900, &[("tu1", "Read"), ("tu2", "Bash")]),
+            results(&["tu1", "tu2"]),
+            asst("m2", 101, 1500, &[]),
+        ]
+        .join("\n");
+        let l = ledger_from(&t);
+        assert_eq!(fill(&l), [("Bash", 300), ("Read", 301), ("base", 1000)]);
+        assert_eq!(l.ctx, 1601);
+    }
+
+    #[test]
+    fn tool_use_in_a_repeated_entry_still_counts() {
+        let t = [
+            asst("m1", 100, 900, &[]),
+            asst("m1", 100, 900, &[("tu1", "Read")]),
+            results(&["tu1"]),
+            asst("m2", 100, 1100, &[]),
+        ]
+        .join("\n");
+        assert_eq!(fill(&ledger_from(&t)), [("Read", 200), ("base", 1000)]);
+    }
+
+    #[test]
+    fn growth_without_tool_results_is_messages() {
+        let t = [asst("m1", 100, 900, &[]), asst("m2", 100, 1100, &[])].join("\n");
+        assert_eq!(fill(&ledger_from(&t)), [("base", 1000), ("messages", 200)]);
+    }
+
+    #[test]
+    fn shrink_resets_to_base() {
+        let t = [
+            asst("m1", 100, 900, &[]),
+            asst("m2", 100, 1100, &[]),
+            asst("m3", 100, 400, &[]),
+        ]
+        .join("\n");
+        let l = ledger_from(&t);
+        assert_eq!(fill(&l), [("base", 500)]);
+        assert_eq!(l.ctx, 500);
+    }
 
     fn fixture(p: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
