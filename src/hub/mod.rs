@@ -428,6 +428,7 @@ fn graph_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("↑↓", "select".to_string()),
         ("⏎", "zoom".into()),
         ("h", "hub".into()),
+        ("z", "show finished".into()),
         ("esc", "back".into()),
         ("q", "quit".into()),
     ];
@@ -435,7 +436,15 @@ fn graph_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let gh = (h - 3) * 31 / 46;
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(buf, Rect::new(0, 2, w, gh), i, sel, true, f == Fit::Full);
+    graph::draw(
+        buf,
+        Rect::new(0, 2, w, gh),
+        i,
+        sel,
+        true,
+        f == Fit::Full,
+        v.show_done,
+    );
     feed::tasks(buf, Rect::new(0, 2 + gh, w, h - 3 - gh), i);
 }
 
@@ -454,7 +463,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(buf, a.graph, i, sel, false, f == Fit::Full);
+    graph::draw(buf, a.graph, i, sel, false, f == Fit::Full, v.show_done);
     agents::table(buf, a.table, i, v.sel);
     agents::tiles(buf, a.tiles, i, v, if f == Fit::Full { 4 } else { 2 });
     feed::messages(buf, a.messages, i);
