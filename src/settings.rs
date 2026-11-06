@@ -116,14 +116,15 @@ pub fn value(cfg: &Config, key: &str) -> String {
     }
 }
 
-/// `n` moved `by`, kept within `lo..=hi`.
-fn nudge(n: u8, by: i32, lo: u8, hi: u8) -> u8 {
-    (n as i32 + by).clamp(lo as i32, hi as i32) as u8
+/// `n` moved `by` within `lo..=hi`; a hand-written value outside the range is never pushed
+/// further out or snapped in (no panic when the bounds cross, either).
+fn nudge(n: i64, by: i64, lo: i64, hi: i64) -> i64 {
+    (n + by).clamp(lo.min(n), hi.max(n))
 }
 
 /// Change the row one step: `dir` 1 forward, -1 back. On/off rows flip either way.
 pub fn step(cfg: &mut Config, key: &str, dir: i8) {
-    let d = if dir >= 0 { 1 } else { -1 };
+    let d: i64 = if dir >= 0 { 1 } else { -1 };
     if let Some(role) = key.strip_prefix("color.") {
         // `theme` sits at both ends of the named colours; a hand-typed value steps to `theme`.
         let cur = cfg.colors.get(role).map(String::as_str);
@@ -131,7 +132,7 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
             None if d > 0 => Some(COLOR_CYCLE[0]),
             None => Some(COLOR_CYCLE[COLOR_CYCLE.len() - 1]),
             Some(None) => None,
-            Some(Some(i)) => COLOR_CYCLE.get((i as i32 + d) as usize).copied(),
+            Some(Some(i)) => COLOR_CYCLE.get((i as i64 + d) as usize).copied(),
         };
         match next {
             Some(c) => cfg.colors.insert(role.into(), c.into()),
@@ -168,18 +169,18 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         "max_width" => {
             cfg.max_width = match (cfg.max_width, d > 0) {
                 (0, true) => 40,
-                (w, true) => (w + 20).min(200),
+                (w, true) => (w + 20).min(200.max(w)),
                 (w, false) if w <= 40 => 0,
                 (w, false) => w - 20,
             }
         }
-        "ctx_warn" => t.ctx_warn = nudge(t.ctx_warn, 5 * d, 5, t.ctx_crit.saturating_sub(5)),
-        "ctx_crit" => t.ctx_crit = nudge(t.ctx_crit, 5 * d, t.ctx_warn + 5, 100),
-        "stuck_repeats" => t.stuck_repeats = nudge(t.stuck_repeats, d, 2, 10),
-        "compact_pct" => t.compact_pct = nudge(t.compact_pct, 5 * d, 50, 100),
-        "retention_days" => {
-            cfg.retention_days = (cfg.retention_days as i64 + d as i64).clamp(1, 90) as u64
+        "ctx_warn" => t.ctx_warn = nudge(t.ctx_warn.into(), 5 * d, 5, t.ctx_crit as i64 - 5) as u8,
+        "ctx_crit" => {
+            t.ctx_crit = nudge(t.ctx_crit.into(), 5 * d, t.ctx_warn as i64 + 5, 100) as u8
         }
+        "stuck_repeats" => t.stuck_repeats = nudge(t.stuck_repeats.into(), d, 2, 10) as u8,
+        "compact_pct" => t.compact_pct = nudge(t.compact_pct.into(), 5 * d, 50, 100) as u8,
+        "retention_days" => cfg.retention_days = nudge(cfg.retention_days as i64, d, 1, 90) as u64,
         _ => {}
     }
 }
@@ -210,6 +211,8 @@ pub fn lines(s: &Screen, w: u16, h: u16) -> Vec<Line<'static>> {
         Span::styled(path, st(dim)),
     ]));
     if let Some(e) = s.error {
+        // toml's message runs on with a code snippet; its first line names the spot.
+        let e = e.lines().next().unwrap_or(e);
         let e = truncate(&format!(" config.toml: {e}"), w);
         out.push(Line::from(Span::styled(e, st(Style::new().fg(Color::Red)))));
     }
@@ -238,9 +241,8 @@ pub fn lines(s: &Screen, w: u16, h: u16) -> Vec<Line<'static>> {
         )];
         let v = value(s.cfg, it.key);
         if let Some(role) = it.key.strip_prefix("color.") {
-            let sw = if s.cfg.ascii { "#" } else { "■" };
             let c = pal.role(role).unwrap_or(Color::Reset);
-            row.push(Span::styled(sw.to_string(), st(Style::new().fg(c))));
+            row.push(Span::styled("■", st(Style::new().fg(c))));
             row.push(Span::raw(" "));
         }
         row.push(Span::styled(
@@ -428,6 +430,33 @@ mod tests {
     }
 
     #[test]
+    fn out_of_range_values_never_panic_or_shrink() {
+        for (warn, crit) in [(100, 80), (255, 80), (60, 5), (96, 100)] {
+            let mut c = Config::default();
+            c.thresholds.ctx_warn = warn;
+            c.thresholds.ctx_crit = crit;
+            for k in ["ctx_warn", "ctx_crit"] {
+                step(&mut c, k, 1);
+                step(&mut c, k, -1);
+            }
+        }
+        let mut c = Config {
+            retention_days: 365,
+            max_width: 300,
+            ..Config::default()
+        };
+        step(&mut c, "retention_days", 1);
+        step(&mut c, "max_width", 1);
+        assert_eq!((c.retention_days, c.max_width), (365, 300));
+        step(&mut c, "retention_days", -1);
+        step(&mut c, "max_width", -1);
+        assert_eq!((c.retention_days, c.max_width), (364, 280));
+        c.thresholds.compact_pct = 30;
+        step(&mut c, "compact_pct", -1);
+        assert_eq!(c.thresholds.compact_pct, 30);
+    }
+
+    #[test]
     fn color_cycle() {
         let mut c = Config::default();
         assert_eq!(value(&c, "color.good"), "theme");
@@ -589,6 +618,32 @@ mod screen_tests {
             .collect();
         assert!(rows[1].contains("expected `=` at line 3"), "{rows:?}");
         assert!(rows[19].contains("couldn't save: denied"), "{rows:?}");
+    }
+
+    #[test]
+    fn error_row_is_the_first_line() {
+        let cfg = Config::default();
+        let out = lines(
+            &Screen {
+                cfg: &cfg,
+                sel: 0,
+                path: "p",
+                error: Some(
+                    "TOML parse error at line 1, column 11\n  |\n1 | face = [[[\n  |  ^\nunclosed array",
+                ),
+                note: None,
+                preview: None,
+                color: false,
+            },
+            120,
+            20,
+        );
+        let row = to_plain(std::slice::from_ref(&out[1]));
+        assert!(
+            row.contains("TOML parse error at line 1, column 11"),
+            "{row}"
+        );
+        assert!(!row.contains("face = [[["), "{row}");
     }
 
     #[test]

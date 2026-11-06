@@ -171,15 +171,18 @@ pub fn load() -> Config {
     load_checked().unwrap_or_default()
 }
 
-fn to_file_text(cfg: &Config) -> String {
-    HEADER.to_string() + &toml::to_string_pretty(cfg).unwrap_or_default()
+fn to_file_text(cfg: &Config) -> Result<String, toml::ser::Error> {
+    Ok(HEADER.to_string() + &toml::to_string_pretty(cfg)?)
 }
 
 pub fn save_to(p: &Path, cfg: &Config) -> std::io::Result<()> {
+    let text = to_file_text(cfg).map_err(std::io::Error::other)?;
+    // A dotfile manager's symlink stays a symlink: write where it points.
+    let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    crate::paths::write_atomic(p, to_file_text(cfg).as_bytes())
+    crate::paths::write_atomic(&p, text.as_bytes())
 }
 
 pub fn save(cfg: &Config) -> std::io::Result<()> {
@@ -273,7 +276,7 @@ mod tests {
             hide: vec!["tasks".into()],
             ..Config::default()
         };
-        let text = to_file_text(&c);
+        let text = to_file_text(&c).unwrap();
         assert!(text.starts_with("# ARI settings."), "{text}");
         assert_eq!(parse(&text), c);
     }
@@ -292,6 +295,31 @@ mod tests {
         assert_eq!(load_from(&p), Ok(c));
         std::fs::write(&p, "face = [[[").unwrap();
         assert!(load_from(&p).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_follows_a_symlink() {
+        let dir = std::env::temp_dir().join(format!("ari-cfg-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("dotfiles.toml");
+        let link = dir.join("config.toml");
+        std::fs::write(&real, "bell = false\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let c = Config {
+            bell: true,
+            ..Config::default()
+        };
+        save_to(&link, &c).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(load_from(&real), Ok(c));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

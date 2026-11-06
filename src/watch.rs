@@ -98,6 +98,8 @@ impl App {
         let (Some(dir), Some(sel)) = (view.edit.take(), view.settings) else {
             return;
         };
+        // A hand edit since the last frame must win over (or block) this save.
+        self.reload_config();
         if self.cfg_error.is_some() {
             self.settings_note = Some("fix config.toml first (or delete it)".into());
             return;
@@ -244,8 +246,9 @@ impl App {
             .map(|p| panel::tilde(&p.to_string_lossy()))
             .unwrap_or_default();
         let lines = settings::lines(
+            // Rows show the file, not command-line flags (`--ascii`).
             &settings::Screen {
-                cfg: &self.cfg,
+                cfg: &self.file,
                 sel,
                 path: &path,
                 error: self.cfg_error.as_deref(),
@@ -1188,6 +1191,50 @@ mod key_tests {
         );
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
         assert!(!app.cfg.bell);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn edit_right_after_a_hand_edit_keeps_it() {
+        let (mut app, root, p) = app_with_cfg("race", None);
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&p, "[chain]\ncommands = [\"mine\"]\n").unwrap();
+        edit(&mut app, "bell", 1); // no refresh in between
+        let saved = config::load_from(&p).unwrap();
+        assert_eq!(saved.chain.commands, ["mine"]);
+        assert!(saved.bell);
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(&p, "face = [[[").unwrap();
+        edit(&mut app, "bell", 1);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
+        assert_eq!(
+            app.settings_note.as_deref(),
+            Some("fix config.toml first (or delete it)")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ascii_row_shows_the_file_under_the_flag() {
+        let (mut app, root, p) = app_with_cfg("asciirow", None);
+        app.ascii_flag = true;
+        app.derive_cfg();
+        let i = crate::settings::items()
+            .iter()
+            .position(|it| it.key == "ascii")
+            .unwrap();
+        app.view.settings = Some(i);
+        let row = |app: &mut App| {
+            panel::to_plain(&app.lines(100, 40))
+                .lines()
+                .find(|l| l.contains("ascii glyphs"))
+                .unwrap()
+                .to_string()
+        };
+        assert!(row(&mut app).contains("off"), "{}", row(&mut app));
+        edit(&mut app, "ascii", 1);
+        assert!(row(&mut app).contains("on"), "{}", row(&mut app));
+        assert!(config::load_from(&p).unwrap().ascii);
         let _ = std::fs::remove_dir_all(root);
     }
 
