@@ -8,6 +8,7 @@ pub mod demo;
 pub mod doctor;
 pub mod event;
 pub mod hook;
+pub mod hub;
 pub mod panel;
 pub mod paths;
 pub mod recap;
