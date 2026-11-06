@@ -1,8 +1,8 @@
 //! The hub: `ari watch`'s full-terminal mode (spec: docs/superpowers/specs/2026-11-05-hub-design.md).
 //! Panes draw into a ratatui `Buffer`; `to_lines` turns it into the `Vec<Line>` watch draws.
 
-pub mod all;
 mod agents;
+pub mod all;
 mod feed;
 mod graph;
 mod zoom;

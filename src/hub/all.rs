@@ -51,7 +51,8 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
     };
     st.agents.push(Agent {
         id: "main".into(),
-        kind: "main".into(),
+        // The graph node's second line.
+        kind: format!("{} sessions", parts.len()),
         name: Some("you".into()),
         ..Default::default()
     });
@@ -194,13 +195,20 @@ mod tests {
         let ids: Vec<_> = st.agents.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["main", "aaaaaaaa", "aaaaaaaa/rev", "bbbbbbbb", "bbbbbbbb/rev"]
+            [
+                "main",
+                "aaaaaaaa",
+                "aaaaaaaa/rev",
+                "bbbbbbbb",
+                "bbbbbbbb/rev"
+            ]
         );
         assert_eq!(st.agents[1].parent.as_deref(), Some("main"));
         assert_eq!(st.agents[1].label(), "api");
         assert_eq!(st.agents[2].parent.as_deref(), Some("aaaaaaaa"));
         assert!(t.agents.contains_key("aaaaaaaa") && t.agents.contains_key("aaaaaaaa/rev"));
         assert_eq!(st.label.as_deref(), Some("2 sessions"));
+        assert_eq!(st.agents[0].kind, "2 sessions", "the root node's second line");
     }
 
     #[test]
@@ -218,8 +226,11 @@ mod tests {
             to: to.into(),
             text: "hi".into(),
         };
-        a.st.messages
-            .extend([m("rev", "main", 1), m("main", "Web", 2), m("main", "nobody", 3)]);
+        a.st.messages.extend([
+            m("rev", "main", 1),
+            m("main", "Web", 2),
+            m("main", "nobody", 3),
+        ]);
         let (st, _, _) = merge(vec![a, b]);
         let got: Vec<_> = st
             .messages

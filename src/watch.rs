@@ -305,6 +305,9 @@ impl App {
                 }
                 self.pinned = None; // gone: back to the list, tui_loop clears `open`
             }
+            if self.view.hub.is_some() {
+                return self.all_hub_lines(width, height, now);
+            }
             let entries = all_entries(&self.root, &self.cfg, now);
             let sel = self.interactive.then_some(self.view.sel);
             let lines = list_lines(&entries, sel, &self.cfg, now, width);
@@ -323,6 +326,46 @@ impl App {
             height,
             now,
         )
+    }
+
+    /// `ari hub --all`: every live session in one hub; a note while the window is too small.
+    fn all_hub_lines(
+        &self,
+        width: u16,
+        height: u16,
+        now: u64,
+    ) -> (Vec<Line<'static>>, Option<usize>) {
+        if hub::fit(width, height) == Fit::TooSmall {
+            let note = format!("hub needs 120×30 · this window is {width}×{height} · x list");
+            let dim = Style::new().add_modifier(Modifier::DIM);
+            let line = Line::from(Span::styled(
+                crate::event::truncate(&note, width as usize),
+                if self.color { dim } else { Style::default() },
+            ));
+            return (vec![line], None);
+        }
+        let (st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now));
+        let x = bar::Extras {
+            tokens: Some(tokens),
+            ..Default::default()
+        };
+        let clock = panel::local_hhmm(now);
+        let i = hub::Input {
+            st: &st,
+            u: &usage,
+            x: &x,
+            cfg: &self.cfg,
+            now,
+            clock: &clock,
+        };
+        let hv = self.view.hub.unwrap_or_default();
+        let lines = hub::lines(&i, &hv, width, height, self.color);
+        let lines = if self.cfg.ascii {
+            crate::ascii::map_lines(lines)
+        } else {
+            lines
+        };
+        (lines, Some(st.agents.len()))
     }
 
     /// The hub when it's open and fits, else the panel (with a note when the hub doesn't fit).
@@ -796,11 +839,12 @@ pub fn run(args: &[String]) -> ! {
         let (lines, agents) = app.frame_lines(w, h);
         let lines = app.themed(lines);
         // The `--all` list's length rides in the same slot; the hub's count is separate.
-        let (list_len, agents) = if app.mode == Mode::All && !app.view.open {
-            (agents, None)
-        } else {
-            (None, agents)
-        };
+        let (list_len, agents) =
+            if app.mode == Mode::All && !app.view.open && app.view.hub.is_none() {
+                (agents, None)
+            } else {
+                (None, agents)
+            };
         (lines, app.animating(now), align, list_len, agents)
     });
     if let Err(e) = result {
@@ -871,7 +915,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         }
         return false;
     }
-    if code == KeyCode::Char('x') && list_len.is_none() {
+    if code == KeyCode::Char('x') {
         view.hub = Some(HubView::default());
         return false;
     }
@@ -984,7 +1028,23 @@ mod key_tests {
         key(&mut v, KeyCode::Char('x'), None, Some(3));
         assert_eq!(v.hub, None);
         key(&mut v, KeyCode::Char('x'), Some(4), None);
-        assert_eq!(v.hub, None, "the --all list keeps x to itself");
+        assert_eq!(
+            v.hub,
+            Some(HubView::default()),
+            "x in the --all list opens the combined hub"
+        );
+    }
+
+    #[test]
+    fn combined_hub_too_small_keeps_x_and_q() {
+        let mut v = View {
+            hub: Some(HubView::default()),
+            ..Default::default()
+        };
+        assert!(!key(&mut v, KeyCode::Char('x'), None, None));
+        assert_eq!(v.hub, None);
+        v.hub = Some(HubView::default());
+        assert!(key(&mut v, KeyCode::Char('q'), None, None));
     }
 
     #[test]

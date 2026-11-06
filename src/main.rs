@@ -9,7 +9,7 @@ usage:
                         restore your original statusline
   ari watch [--session <id> | --all] [--once] [--ascii] [--hub]
                         full panel for this directory's session
-  ari hub [--session <id>] [--ascii]
+  ari hub [--session <id> | --all] [--ascii]
                         the hub: every agent, its messages and context
   ari doctor            check that binary, plugin, statusline and hooks are wired
   ari demo [--speed <x>] [--ascii] [--once]
