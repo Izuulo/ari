@@ -107,7 +107,7 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         from,
         events: window.len(),
         verdict: {
-            let v = after.verdict(now);
+            let v = after.verdict();
             format!("{} {}", v.glyph(), v.label())
         },
         done: after

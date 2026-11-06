@@ -491,7 +491,7 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
         }
         let row = bar::render(&st, &u, &x, &row_cfg, now, 10_000, false);
         let (verdict, detail) = row.split_once(" │ ").unwrap_or((row.as_str(), ""));
-        let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
+        let v = st.verdict_with(cfg.thresholds.stuck_repeats);
         let (rank, style) = if st.first_t > 0 {
             (v as u8, panel::verdict_style(v))
         } else if x.looks_active() {
@@ -782,7 +782,7 @@ pub fn run(args: &[String]) -> ! {
         app.view = *view;
         app.refresh();
         let now = hook::now_ms();
-        let v = app.st.verdict_with(now, app.cfg.thresholds.stuck_repeats);
+        let v = app.st.verdict_with(app.cfg.thresholds.stuck_repeats);
         if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
             let mut out = std::io::stdout();
             let _ = out.write_all(b"\x07").and_then(|_| out.flush());

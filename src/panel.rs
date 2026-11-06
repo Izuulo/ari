@@ -212,7 +212,7 @@ pub fn lines(
     } else {
         (col(c.inner), col(c.inner))
     };
-    let v = st.verdict_with(now, cfg.thresholds.stuck_repeats);
+    let v = st.verdict_with(cfg.thresholds.stuck_repeats);
     if w < 12 {
         let row = vec![c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))];
         let out = vec![Line::from(fit(row, w))];
@@ -2017,7 +2017,7 @@ mod tests {
         st.errors.clear();
         st.recent.clear();
         st.last_main_result = None;
-        assert_eq!(st.verdict(NOW), crate::state::Verdict::Done);
+        assert_eq!(st.verdict(), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
     }
