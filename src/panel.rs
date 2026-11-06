@@ -832,12 +832,12 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         return vec![vec![c.dim("no activity yet")]];
     };
     let subs: Vec<_> = st.agents.iter().skip(1).collect();
-    // Finished agents worth showing: did some work, and finished in the last 10 minutes.
+    // Finished agents worth showing: did some work, and finished in the last 5 minutes.
     let mut done: Vec<_> = subs
         .iter()
         .filter(|a| a.done)
         .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
-        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 10 * 60_000)
+        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
         .collect();
     done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
     let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
@@ -1018,29 +1018,10 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
             line(format!("{}helpers", n_x(helpers)));
         }
     } else if subs.len() > shown.len() {
-        let hidden: Vec<_> = subs
-            .iter()
-            .copied()
-            .filter(|a| !shown.iter().any(|s| s.id == a.id))
-            .collect();
-        let mut kinds: Vec<(&str, usize)> = vec![];
-        for a in &hidden {
-            match kinds.iter_mut().find(|k| k.0 == a.kind) {
-                Some(k) => k.1 += 1,
-                None => kinds.push((&a.kind, 1)),
-            }
-        }
-        kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-        let named: String = kinds
-            .iter()
-            .take(3)
-            .map(|(k, n)| format!(" · {n} {k}"))
-            .collect();
-        fold = Some(vec![c.dim(format!(
-            "└─ ✓ {} more done{named}{} (a)",
-            hidden.len(),
-            tok_part(toks(&hidden))
-        ))]);
+        // One quiet count; the kinds and tokens live behind `a`.
+        fold = Some(vec![
+            c.dim(format!("└─ ✓ {} done (a)", subs.len() - shown.len())),
+        ]);
     }
     let last = rows.len().saturating_sub(1);
     for (i, r) in rows.iter_mut().enumerate().skip(first_sub) {
@@ -2355,10 +2336,7 @@ mod tests {
         assert!(out.contains("recent result"), "{out}");
         assert!(!out.contains("instant result"), "{out}");
         assert!(!out.contains("oldone result"), "{out}");
-        assert!(
-            out.contains("✓ 2 more done · 1 instant · 1 oldone (a)"),
-            "{out}"
-        );
+        assert!(out.contains("└─ ✓ 2 done (a)"), "{out}");
         let all = View {
             expand_agents: true,
             ..View::default()
@@ -2461,10 +2439,7 @@ mod tests {
         let (st, u, x) = long_list();
         let out = render_ex(&st, &u, &x, View::default());
         assert!(out.contains("runner"), "{out}");
-        assert!(
-            out.contains("✓ 32 more done · 29 general-purpose · 3 agent · 29k tok (a)"),
-            "{out}"
-        );
+        assert!(out.contains("└─ ✓ 32 done (a)"), "{out}");
     }
 
     #[test]
