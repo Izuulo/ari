@@ -57,6 +57,8 @@ pub(crate) fn state_text(i: &Input, a: &Agent) -> (String, Style) {
     let (g, gs) = glyph(i, a);
     let t = if a.waiting.is_some() {
         "needs you".to_string()
+    } else if let Some((false, v)) = a.session {
+        v.label().to_lowercase()
     } else if a.done {
         format!(
             "done {}",

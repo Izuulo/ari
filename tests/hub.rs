@@ -61,7 +61,7 @@ fn hub_all_frame() {
         u: Usage::default(),
         tokens: tokens.clone(),
     };
-    let (st, u, tokens) = merge(vec![part("aaaaaaaa", "api"), part("bbbbbbbb", "web")]);
+    let (st, u, tokens) = merge(vec![part("aaaaaaaa", "api"), part("bbbbbbbb", "web")], now);
     let x = Extras {
         tokens: Some(tokens),
         ..Default::default()

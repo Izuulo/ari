@@ -344,7 +344,7 @@ impl App {
             ));
             return (vec![line], None);
         }
-        let (st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now));
+        let (st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now), now);
         let x = bar::Extras {
             tokens: Some(tokens),
             ..Default::default()

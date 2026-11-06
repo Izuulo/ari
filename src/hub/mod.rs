@@ -239,6 +239,13 @@ pub(crate) fn glyph(i: &Input, a: &Agent) -> (String, Style) {
     if a.waiting.is_some() {
         return ("◉".into(), msg().add_modifier(Modifier::BOLD));
     }
+    if let Some((active, v)) = a.session {
+        return if active {
+            (spin, agent())
+        } else {
+            (v.glyph().to_string(), crate::panel::verdict_style(v))
+        };
+    }
     if a.id == "main" {
         return if i.st.turn_active {
             (spin, lead())

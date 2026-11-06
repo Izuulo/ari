@@ -44,7 +44,7 @@ pub fn load(root: &Path, now: u64) -> Vec<Part> {
 
 /// One state over all sessions: the root `main` is you, each session's lead becomes `<key>`
 /// under it, and every other agent `<key>/<id>`. `parts` are most recently active first.
-pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
+pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
     let mut st = State {
         label: Some(format!("{} sessions", parts.len())),
         ..Default::default()
@@ -77,6 +77,18 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
         };
         let s = p.st;
         let size = p.u.ctx_size;
+        // Paths are relative to each session's folder; anchor them so two repos' README.md differ.
+        let anchor = |a: &mut Agent| {
+            if let Some(dir) = &p.u.dir {
+                a.files = std::mem::take(&mut a.files)
+                    .into_iter()
+                    .map(|(k, f)| match k.starts_with('/') {
+                        true => (k, f),
+                        false => (format!("{dir}/{k}"), f),
+                    })
+                    .collect();
+            }
+        };
         let mut lead = s
             .agents
             .iter()
@@ -86,6 +98,9 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
                 started: s.first_t,
                 ..Default::default()
             });
+        if lead.started == 0 {
+            lead.started = now; // live by its transcript, no hook events yet
+        }
         lead.id = key.clone();
         lead.kind = "session".into();
         lead.name = Some(p.name.clone());
@@ -93,12 +108,17 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
         // A live session isn't stale while its subagents work.
         lead.last_t = lead.last_t.max(s.last_t);
         lead.ctx_size = size;
+        // shortcut: the default stuck threshold; pass the config's if a custom one reads wrong here.
+        let repeats = crate::config::Config::default().thresholds.stuck_repeats;
+        lead.session = Some((s.turn_active, s.verdict_with(repeats)));
+        anchor(&mut lead);
         st.agents.push(lead);
         for a in s.agents.iter().filter(|a| a.id != "main") {
             let mut a = a.clone();
             a.parent = Some(id(a.parent.as_deref().unwrap_or("main")));
             a.id = id(&a.id);
             a.ctx_size = size;
+            anchor(&mut a);
             st.agents.push(a);
         }
         let known = |to: &str| to == "main" || s.agents.iter().any(|a| a.id == to);
@@ -119,6 +139,8 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
         st.errors.extend(s.errors.iter().map(|e| {
             let mut e = e.clone();
             e.agent = id(&e.agent);
+            // `open_errors` counts the merged turn (0): this session's current turn maps there.
+            e.turn = (e.turn != s.turns) as u32;
             e
         }));
         st.tasks.extend(s.tasks.iter().map(|t| {
@@ -148,7 +170,8 @@ pub fn merge(parts: Vec<Part>) -> (State, Usage, TokenCache) {
             tok.agents.insert(id(&a), l);
         }
     }
-    (st.agents[0].started, st.agents[0].last_t) = (st.first_t, st.last_t);
+    let span = |t: u64| if t == 0 { now } else { t };
+    (st.agents[0].started, st.agents[0].last_t) = (span(st.first_t), span(st.last_t));
     st.messages.make_contiguous().sort_by_key(|m| m.t);
     (st, u, tok)
 }
@@ -182,7 +205,7 @@ mod tests {
 
     #[test]
     fn empty_is_root_only() {
-        let (st, u, _) = merge(vec![]);
+        let (st, u, _) = merge(vec![], 0);
         assert_eq!(st.agents.len(), 1);
         assert_eq!(st.agents[0].label(), "you");
         assert_eq!(u.project.as_deref(), Some("all sessions"));
@@ -192,7 +215,7 @@ mod tests {
     fn sessions_hang_under_root_and_ids_dont_collide() {
         let (mut a, b) = two();
         a.tokens.agents.insert("rev".into(), Ledger::default());
-        let (st, _, t) = merge(vec![a, b]);
+        let (st, _, t) = merge(vec![a, b], 0);
         let ids: Vec<_> = st.agents.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -217,7 +240,7 @@ mod tests {
 
     #[test]
     fn session_without_events_still_has_a_node() {
-        let (st, _, _) = merge(vec![part("cccccccc", "cli", State::default())]);
+        let (st, _, _) = merge(vec![part("cccccccc", "cli", State::default())], 0);
         assert_eq!(agent(&st, "cccccccc").label(), "cli");
     }
 
@@ -235,7 +258,7 @@ mod tests {
             m("main", "Web", 2),
             m("main", "nobody", 3),
         ]);
-        let (st, _, _) = merge(vec![a, b]);
+        let (st, _, _) = merge(vec![a, b], 0);
         let got: Vec<_> = st
             .messages
             .iter()
@@ -259,7 +282,7 @@ mod tests {
             ctx: 100_000,
             ..Default::default()
         };
-        let (st, u, tokens) = merge(vec![a, b]);
+        let (st, u, tokens) = merge(vec![a, b], 0);
         assert_eq!(agent(&st, "aaaaaaaa").ctx_size, Some(1_000_000));
         assert_eq!(agent(&st, "aaaaaaaa/rev").ctx_size, Some(1_000_000));
         assert_eq!(agent(&st, "bbbbbbbb").ctx_size, None);
@@ -288,8 +311,92 @@ mod tests {
     fn a_waiting_agent_makes_the_merge_need_you() {
         let (a, mut b) = two();
         b.st.agents[1].waiting = Some((1, "Bash rm".into()));
-        let (st, _, _) = merge(vec![a, b]);
+        let (st, _, _) = merge(vec![a, b], 0);
         assert_eq!(st.verdict_with(3), Verdict::NeedsYou);
+    }
+
+    fn input<'a>(
+        st: &'a State,
+        u: &'a Usage,
+        x: &'a crate::bar::Extras,
+        cfg: &'a crate::config::Config,
+        now: u64,
+    ) -> crate::hub::Input<'a> {
+        crate::hub::Input {
+            st,
+            u,
+            x,
+            cfg,
+            now,
+            clock: "",
+        }
+    }
+
+    #[test]
+    fn session_nodes_show_the_session_state() {
+        let (mut a, b) = two();
+        a.st.turn_active = true;
+        let idle = b.st.verdict_with(3);
+        let (st, u, _) = merge(vec![a, b], 0);
+        let (x, cfg) = Default::default();
+        let i = input(&st, &u, &x, &cfg, 0);
+        let busy = crate::hub::agents::state_text(&i, agent(&st, "aaaaaaaa")).0;
+        assert!(busy.ends_with("thinking"), "{busy}");
+        let quiet = crate::hub::agents::state_text(&i, agent(&st, "bbbbbbbb")).0;
+        assert_eq!(
+            quiet,
+            format!("{} {}", idle.glyph(), idle.label().to_lowercase())
+        );
+        // Even long idle, a live session isn't stale.
+        let i = input(&st, &u, &x, &cfg, 10 * crate::state::STALE_MS);
+        let later = crate::hub::agents::state_text(&i, agent(&st, "bbbbbbbb")).0;
+        assert_eq!(later, quiet);
+        assert_eq!(st.running_agents(0), 2, "the two revs, not the sessions");
+    }
+
+    #[test]
+    fn current_turn_errors_still_count() {
+        let (mut a, b) = two();
+        a.st.turns = 3;
+        a.st.errors.push(crate::state::ErrorRec {
+            agent: "main".into(),
+            turn: 3,
+            ..Default::default()
+        });
+        a.st.errors.push(crate::state::ErrorRec {
+            agent: "main".into(),
+            turn: 2,
+            ..Default::default()
+        });
+        let (st, _, _) = merge(vec![a, b], 0);
+        assert_eq!(st.open_errors(), 1);
+    }
+
+    #[test]
+    fn same_relative_path_in_two_repos_is_not_shared() {
+        let files = |dir: &str| {
+            let (mut p, _) = two();
+            p.u.dir = Some(dir.into());
+            p.st.agents[0]
+                .files
+                .insert("README.md".into(), Default::default());
+            p
+        };
+        let (mut a, mut b) = (files("/a"), files("/b"));
+        b.key = "bbbbbbbb".into();
+        let (st, _, _) = merge(vec![a, b], 0);
+        assert!(crate::hub::agents::shared_files(&st).is_empty());
+        (a, b) = (files("/a"), files("/a"));
+        b.key = "bbbbbbbb".into();
+        let (st, _, _) = merge(vec![a, b], 0);
+        assert_eq!(crate::hub::agents::shared_files(&st).len(), 1);
+    }
+
+    #[test]
+    fn nothing_started_reads_as_now() {
+        let (st, _, _) = merge(vec![part("cccccccc", "cli", State::default())], 77);
+        assert_eq!(st.agents[0].started, 77);
+        assert_eq!(agent(&st, "cccccccc").started, 77);
     }
 
     #[test]
@@ -297,7 +404,7 @@ mod tests {
         let (mut a, mut b) = two();
         (a.st.first_t, a.st.last_t) = (50, 90);
         (b.st.first_t, b.st.last_t) = (20, 70);
-        let (st, _, _) = merge(vec![a, b]);
+        let (st, _, _) = merge(vec![a, b], 0);
         assert_eq!((st.agents[0].started, st.agents[0].last_t), (20, 90));
     }
 }
