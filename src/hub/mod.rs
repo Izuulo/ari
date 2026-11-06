@@ -3,6 +3,8 @@
 
 #![allow(dead_code)] // shortcut: helpers for panes from later tasks; removed once all panes land.
 
+mod graph;
+
 use crate::bar::{self, Extras};
 use crate::config::Config;
 use crate::state::{Agent, State};
@@ -201,7 +203,7 @@ pub(crate) fn frame(
     heavy: bool,
 ) -> Rect {
     Clear.render(r, buf);
-    let mut t = vec![Span::styled("─ ", style)];
+    let mut t = vec![Span::styled(if heavy { "━ " } else { "─ " }, style)];
     t.extend(title);
     t.push(Span::raw(" "));
     let mut b = Block::bordered()
@@ -215,12 +217,54 @@ pub(crate) fn frame(
     if !right.is_empty() {
         let mut rt = vec![Span::raw(" ")];
         rt.extend(right);
-        rt.push(Span::styled(" ─", style));
+        rt.push(Span::styled(if heavy { " ━" } else { " ─" }, style));
         b = b.title_top(Line::from(rt).right_aligned());
     }
     let inner = b.inner(r);
     b.render(r, buf);
     inner
+}
+
+/// The state glyph for an agent and its style: spinner, `✓`, `↻` (last call failed), `◉` (waiting), `?` (stale).
+pub(crate) fn glyph(i: &Input, a: &Agent) -> (String, Style) {
+    use crate::state::AgentStatus;
+    let k = i.st.agents.iter().position(|x| x.id == a.id).unwrap_or(0);
+    let spin = bar::SPINNER[((i.now / 100) as usize + k * 3) % bar::SPINNER.len()].to_string();
+    if a.waiting.is_some() {
+        return ("◉".into(), msg().add_modifier(Modifier::BOLD));
+    }
+    if a.id == "main" {
+        return if i.st.turn_active {
+            (spin, lead())
+        } else {
+            let v = i.st.verdict_with(i.now, i.cfg.thresholds.stuck_repeats);
+            (v.glyph().to_string(), crate::panel::verdict_style(v))
+        };
+    }
+    match i.st.agent_status(a, i.now) {
+        AgentStatus::Done => ("✓".into(), ok()),
+        AgentStatus::Stale => ("?".into(), faint()),
+        AgentStatus::Running if a.recent.back().is_some_and(|r| r.ok == Some(false)) => {
+            ("↻".into(), warn())
+        }
+        AgentStatus::Running => (spin, agent()),
+    }
+}
+
+/// Border and name color: lead, waiting, retrying, finished, running.
+pub(crate) fn node_style(i: &Input, a: &Agent) -> Style {
+    if a.id == "main" {
+        lead()
+    } else if a.waiting.is_some() {
+        msg()
+    } else if a.done {
+        faint()
+    } else if a.recent.back().is_some_and(|r| r.ok == Some(false)) {
+        warn()
+    } else {
+        let _ = i;
+        agent()
+    }
 }
 
 pub(crate) fn ledger<'a>(i: &'a Input, a: &Agent) -> Option<&'a Ledger> {
@@ -356,14 +400,9 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("q", "quit".into()),
     ];
     chrome(buf, i, &a, &keys);
-    frame(
-        buf,
-        a.graph,
-        vec![Span::styled("graph", bold())],
-        vec![],
-        faint(),
-        false,
-    );
+    let ord = order(i.st);
+    let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
+    graph::draw(buf, a.graph, i, sel, false, f == Fit::Full);
     frame(
         buf,
         a.table,

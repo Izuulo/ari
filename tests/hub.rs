@@ -62,4 +62,5 @@ fn hub_no_hooks() {
         49,
     );
     assert!(out.contains("ARI hub"), "{out}");
+    assert!(out.contains("no agents yet"), "{out}");
 }
