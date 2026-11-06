@@ -14,6 +14,7 @@ pub mod paths;
 pub mod recap;
 pub mod replay;
 pub mod sessions;
+pub mod settings;
 pub mod setup;
 pub mod state;
 pub mod statusline;
