@@ -4,6 +4,7 @@
 
 - Errors from different scripts of one runner (`npm run build` vs `npm run lint`, `python -m pytest` vs `python -m mypy`) are tracked apart: one passing no longer marks the other fixed, and three different failures no longer read as STUCK.
 - `ari setup` no longer writes `time` and `cache` into `hide`; they aren't segments, and `ari doctor` flagged them.
+- `retention_days = 0` counts as 1 day instead of deleting every other session's logs, live ones included.
 
 ## 0.2.0 - 2026-11-06
 

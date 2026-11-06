@@ -148,7 +148,7 @@ face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere
 max_width = 0               # compact row width; 0 = terminal width
-retention_days = 7          # session logs older than this are deleted
+retention_days = 7          # session logs older than this are deleted (at least 1)
 
 [chain]
 commands = []               # your previous statusline commands (ari setup fills this)
