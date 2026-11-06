@@ -47,7 +47,9 @@ Shipped from this list in M5: test pass/fail counts, files touched (in `ari reca
 |---|---|---|
 | In-app pane via a plugin mod | The panel beside the chat without a second terminal | New: Claude Code's mod API |
 | Subagent rows via `subagentStatusLine` | Per-agent status inside Claude Code's own agent list | Have it (agent events); new: the setting |
-| Hooks `PermissionRequest`, `PermissionDenied`, `Pre/PostModelSwitch` | Exact permission waits and model changes instead of guessing from notifications | New: register the hooks |
+| Hooks `PermissionDenied`, `Pre/PostModelSwitch` | Denials and model changes instead of guessing (`PermissionRequest` shipped with the hub) | New: register the hooks |
+| Hub: split-pane teammates | Agent-team teammates in tmux/iTerm2 panes are separate sessions; join them into the lead's hub | New: read `~/.claude/teams/{team}/config.json` |
+| Hub: per-agent compaction forecast | Only main has one today | Have it (per-agent context from transcripts) |
 
 ## 6. Platform and polish
 
