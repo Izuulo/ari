@@ -1517,6 +1517,7 @@ mod tests {
                     format!("t{i}")
                 },
                 status: s.to_string(),
+                ..Default::default()
             });
         }
         st.errors = vec![

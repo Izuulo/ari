@@ -170,3 +170,27 @@ fn multi_panel_with_tokens() {
     assert!(out.contains("481k · 3.1k out · cache 90% hit"), "{out}");
     insta::assert_snapshot!(out);
 }
+
+/// Named subagents get their names and parent; their SendMessage calls land in the log.
+#[test]
+fn team_links() {
+    use ari_cli::state::State;
+    let mut s = State::default();
+    for ev in &fixture("team") {
+        s.apply(ev);
+    }
+    let id = |n: &str| {
+        let a = s
+            .agent_by_name(n)
+            .unwrap_or_else(|| panic!("no agent named {n}"));
+        assert_eq!(a.parent.as_deref(), Some("main"));
+        a.id.clone()
+    };
+    let (w, c) = (id("writer"), id("checker"));
+    let m: Vec<_> = s
+        .messages
+        .iter()
+        .map(|m| (m.from.clone(), m.to.clone()))
+        .collect();
+    assert_eq!(m, [(w.clone(), c.clone()), (c, w)]);
+}
