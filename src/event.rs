@@ -335,7 +335,6 @@ fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
                             .collect()
                     })
                     .unwrap_or_default(),
-                ..Default::default()
             });
         }
         Some("TodoWrite") => {
