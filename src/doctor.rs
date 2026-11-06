@@ -409,7 +409,7 @@ mod tests {
         assert!(!c.ok);
         assert_eq!(
             c.detail,
-            "unknown theme \"neon\"; hide: unknown feature \"nope\""
+            "unknown theme \"neon\"; hide: unknown segment \"nope\""
         );
     }
 

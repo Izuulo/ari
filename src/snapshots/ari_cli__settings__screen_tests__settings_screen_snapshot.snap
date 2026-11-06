@@ -7,8 +7,6 @@ expression: to_plain(&out)
    theme                     default            ││ ● ON TRACK      │                                                    
    face                      off                │
    ascii glyphs              off                │
-   statusline row            top                │
-   statusline width          auto               │
  COLOURS                                        │
    good                      ■ theme            │
    warn                      ■ theme            │
@@ -18,27 +16,29 @@ expression: to_plain(&out)
    info                      ■ theme            │
    muted                     ■ theme            │
    bar                       ■ theme            │
- FEATURES                                       │
- ▸ task checklist            on                 │
-   agents · subagents        on                 │
-   errors · failed calls     on                 │
-   usage · context, limits   on                 │
-   session · cost, time      on                 │
-   turns · recent turns      on                 │
-   conflicts · file clashes  on                 │
+ STATUSLINE                                     │
+   row                       top                │
+   width                     auto               │
+ ▸ conflicts · file clashes  on                 │
    now · current step        on                 │
+   tasks · task progress     on                 │
+   agents · running count    on                 │
+   errors · open errors      on                 │
    tests · test results      on                 │
    ctx · context meter       on                 │
    5h · 5-hour limit         on                 │
    7d · weekly limit         on                 │
    cost · session cost       on                 │
    tokens · token count      on                 │
+ PANEL                                          │
+   task checklist            on                 │
+   agents · subagents        on                 │
+   errors · failed calls     on                 │
+   usage · context, limits   on                 │
+   session · cost, time      on                 │
+   turns · recent turns      on                 │
  ALERTS                                         │
    bell                      off                │
    context warn              60%                │
    context critical          80%                │
-   stuck after               3 repeats          │
-   compact at                90%                │
- DATA                                           │
-   keep logs                 7 days             │
  ↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file

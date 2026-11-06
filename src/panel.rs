@@ -715,9 +715,9 @@ fn turns(st: &State, x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     items.into_iter().map(|(_, r)| r).collect()
 }
 
-/// Switched off with `hide = ["<id>"]`.
+/// Switched off with `hide_panel = ["<id>"]`.
 fn hidden(cfg: &Config, id: &str) -> bool {
-    cfg.hide.iter().any(|h| h == id)
+    cfg.hide_panel.iter().any(|h| h == id)
 }
 
 fn header(
@@ -2123,9 +2123,22 @@ mod tests {
 
     fn hiding(ids: &[&str]) -> Config {
         Config {
-            hide: ids.iter().map(|s| s.to_string()).collect(),
+            hide_panel: ids.iter().map(|s| s.to_string()).collect(),
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn statusline_hide_leaves_the_panel_alone() {
+        let (st, u) = multi();
+        let cfg = Config {
+            hide: vec!["agents".into(), "tasks".into(), "errors".into()],
+            ..Config::default()
+        };
+        let out = render_cfg(&st, &u, &Extras::default(), &cfg);
+        assert!(out.contains("├─ agents"), "{out}");
+        assert!(out.contains("├─ errors"), "{out}");
+        assert!(out.contains("4/7 tasks"), "{out}");
     }
 
     #[test]
@@ -2166,6 +2179,7 @@ mod tests {
     #[test]
     fn features_on_by_default() {
         assert!(Config::default().hide.is_empty());
+        assert!(Config::default().hide_panel.is_empty());
     }
 
     #[test]

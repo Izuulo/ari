@@ -226,7 +226,27 @@ impl App {
             .as_ref()
             .filter(|_| w >= settings::PREVIEW_MIN_W && self.mode != Mode::All)
             .map(|_| {
-                let lines = panel::lines(
+                let pw = w - settings::LIST_W - 1;
+                // shortcut: the statusline row is shown uncoloured; parse its ANSI if colour matters.
+                let row = bar::render(
+                    &self.st,
+                    &self.usage,
+                    &self.x,
+                    &self.cfg,
+                    now,
+                    pw.into(),
+                    false,
+                );
+                let dim = Style::new().add_modifier(Modifier::DIM);
+                let mut lines = vec![
+                    Line::styled(
+                        "statusline",
+                        if self.color { dim } else { Style::default() },
+                    ),
+                    Line::from(row),
+                    Line::default(),
+                ];
+                lines.extend(panel::lines(
                     &self.st,
                     &self.usage,
                     &self.x,
@@ -234,10 +254,10 @@ impl App {
                     View::default(),
                     now,
                     &panel::local_hhmm(now),
-                    w - settings::LIST_W - 1,
-                    h.saturating_sub(2),
+                    pw,
+                    h.saturating_sub(5),
                     self.color,
-                );
+                ));
                 theme::lines(lines, &theme::Palette::new(&self.cfg))
             });
         let path = self
@@ -1253,6 +1273,23 @@ mod key_tests {
             "a broken edit keeps the last good config"
         );
         assert!(app.cfg_error.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_preview_shows_the_statusline_row() {
+        let (mut app, root, _) = app_with_cfg("barprev", None);
+        let i = crate::settings::items()
+            .iter()
+            .position(|it| it.key == "hide.ctx")
+            .unwrap();
+        app.view.settings = Some(i);
+        let text = panel::to_plain(&app.lines(130, 40));
+        assert!(text.contains("│statusline"), "{text}");
+        assert!(text.contains("ctx —"), "{text}");
+        edit(&mut app, "hide.ctx", 1);
+        let text = panel::to_plain(&app.lines(130, 40));
+        assert!(!text.contains("ctx —"), "{text}");
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -16,16 +16,13 @@ pub const ROLES: [&str; 8] = [
     "muted",
     "bar",
 ];
-/// Ids `hide` understands: panel sections and statusline segments, one id per feature.
-pub const FEATURES: [&str; 14] = [
+/// Statusline segments `hide` understands.
+pub const SEGMENTS: [&str; 11] = [
+    "conflicts",
+    "now",
     "tasks",
     "agents",
     "errors",
-    "usage",
-    "session",
-    "turns",
-    "conflicts",
-    "now",
     "tests",
     "ctx",
     "5h",
@@ -33,6 +30,8 @@ pub const FEATURES: [&str; 14] = [
     "cost",
     "tokens",
 ];
+/// Panel sections `hide_panel` understands (`tasks` is the checklist bar in the header).
+pub const SECTIONS: [&str; 6] = ["tasks", "agents", "errors", "usage", "session", "turns"];
 /// The colours the settings screen steps through for a role, after `theme`.
 pub const COLOR_CYCLE: [&str; 15] = [
     "red",
@@ -59,7 +58,10 @@ const HEADER: &str = "# ARI settings. Edit here or press s in ari watch; changes
 pub struct Config {
     pub position: Position,
     pub theme: String,
+    /// Statusline segments to leave out.
     pub hide: Vec<String>,
+    /// Panel sections to leave out.
+    pub hide_panel: Vec<String>,
     pub face: bool,
     pub bell: bool,
     pub ascii: bool,
@@ -113,6 +115,7 @@ impl Default for Config {
             position: Position::Top,
             theme: "default".into(),
             hide: Vec::new(),
+            hide_panel: Vec::new(),
             face: false,
             bell: false,
             ascii: false,
@@ -207,8 +210,13 @@ pub fn problems(cfg: &Config) -> Vec<String> {
         }
     }
     for id in &cfg.hide {
-        if !FEATURES.contains(&id.as_str()) {
-            out.push(format!("hide: unknown feature \"{id}\""));
+        if !SEGMENTS.contains(&id.as_str()) {
+            out.push(format!("hide: unknown segment \"{id}\""));
+        }
+    }
+    for id in &cfg.hide_panel {
+        if !SECTIONS.contains(&id.as_str()) {
+            out.push(format!("hide_panel: unknown section \"{id}\""));
         }
     }
     out
@@ -257,6 +265,14 @@ mod tests {
         c.theme = "mono".into();
         c.colors.insert("bad".into(), "lightred".into());
         assert_eq!(parse(&toml::to_string_pretty(&c).unwrap()), c);
+    }
+
+    #[test]
+    fn hide_panel_parses_apart_from_hide() {
+        let c = parse("hide = [\"agents\"]\nhide_panel = [\"turns\"]\n");
+        assert_eq!(c.hide, ["agents"]);
+        assert_eq!(c.hide_panel, ["turns"]);
+        assert!(parse("").hide_panel.is_empty());
     }
 
     #[test]
@@ -332,9 +348,17 @@ mod tests {
         c.colors.insert("shiny".into(), "red".into());
         c.colors.insert("good".into(), "#zz".into());
         c.hide = vec!["nope".into(), "cost".into()];
+        // `usage` is a panel section, not a statusline segment.
+        c.hide_panel = vec!["usage".into(), "cost".into()];
         let p = problems(&c);
-        assert_eq!(p.len(), 4, "{p:?}");
-        for word in ["neon", "shiny", "#zz", "nope"] {
+        assert_eq!(p.len(), 5, "{p:?}");
+        for word in [
+            "neon",
+            "shiny",
+            "#zz",
+            "nope",
+            "hide_panel: unknown section \"cost\"",
+        ] {
             assert!(p.iter().any(|l| l.contains(word)), "{word} in {p:?}");
         }
         assert!(problems(&Config::default()).is_empty());

@@ -30,17 +30,15 @@ pub struct Screen<'a> {
 
 pub struct Item {
     pub group: &'static str,
-    /// A `Config` field, `color.<role>` or `hide.<feature id>`.
+    /// A `Config` field, `color.<role>`, `hide.<segment>` or `hide_panel.<section>`.
     pub key: &'static str,
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 33] = [
+const ITEMS: [(&str, &str, &str); 36] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
-    ("LOOK", "position", "statusline row"),
-    ("LOOK", "max_width", "statusline width"),
     ("COLOURS", "color.good", "good"),
     ("COLOURS", "color.warn", "warn"),
     ("COLOURS", "color.bad", "bad"),
@@ -49,20 +47,25 @@ const ITEMS: [(&str, &str, &str); 33] = [
     ("COLOURS", "color.info", "info"),
     ("COLOURS", "color.muted", "muted"),
     ("COLOURS", "color.bar", "bar"),
-    ("FEATURES", "hide.tasks", "task checklist"),
-    ("FEATURES", "hide.agents", "agents · subagents"),
-    ("FEATURES", "hide.errors", "errors · failed calls"),
-    ("FEATURES", "hide.usage", "usage · context, limits"),
-    ("FEATURES", "hide.session", "session · cost, time"),
-    ("FEATURES", "hide.turns", "turns · recent turns"),
-    ("FEATURES", "hide.conflicts", "conflicts · file clashes"),
-    ("FEATURES", "hide.now", "now · current step"),
-    ("FEATURES", "hide.tests", "tests · test results"),
-    ("FEATURES", "hide.ctx", "ctx · context meter"),
-    ("FEATURES", "hide.5h", "5h · 5-hour limit"),
-    ("FEATURES", "hide.7d", "7d · weekly limit"),
-    ("FEATURES", "hide.cost", "cost · session cost"),
-    ("FEATURES", "hide.tokens", "tokens · token count"),
+    ("STATUSLINE", "position", "row"),
+    ("STATUSLINE", "max_width", "width"),
+    ("STATUSLINE", "hide.conflicts", "conflicts · file clashes"),
+    ("STATUSLINE", "hide.now", "now · current step"),
+    ("STATUSLINE", "hide.tasks", "tasks · task progress"),
+    ("STATUSLINE", "hide.agents", "agents · running count"),
+    ("STATUSLINE", "hide.errors", "errors · open errors"),
+    ("STATUSLINE", "hide.tests", "tests · test results"),
+    ("STATUSLINE", "hide.ctx", "ctx · context meter"),
+    ("STATUSLINE", "hide.5h", "5h · 5-hour limit"),
+    ("STATUSLINE", "hide.7d", "7d · weekly limit"),
+    ("STATUSLINE", "hide.cost", "cost · session cost"),
+    ("STATUSLINE", "hide.tokens", "tokens · token count"),
+    ("PANEL", "hide_panel.tasks", "task checklist"),
+    ("PANEL", "hide_panel.agents", "agents · subagents"),
+    ("PANEL", "hide_panel.errors", "errors · failed calls"),
+    ("PANEL", "hide_panel.usage", "usage · context, limits"),
+    ("PANEL", "hide_panel.session", "session · cost, time"),
+    ("PANEL", "hide_panel.turns", "turns · recent turns"),
     ("ALERTS", "bell", "bell"),
     ("ALERTS", "ctx_warn", "context warn"),
     ("ALERTS", "ctx_crit", "context critical"),
@@ -76,6 +79,23 @@ pub fn items() -> Vec<Item> {
         .iter()
         .map(|&(group, key, label)| Item { group, key, label })
         .collect()
+}
+
+/// An on/off row's off-list and id: `hide.<segment>` or `hide_panel.<section>`.
+fn switch<'a>(cfg: &'a Config, key: &'a str) -> Option<(&'a Vec<String>, &'a str)> {
+    match key.split_once('.')? {
+        ("hide", id) => Some((&cfg.hide, id)),
+        ("hide_panel", id) => Some((&cfg.hide_panel, id)),
+        _ => None,
+    }
+}
+
+fn switch_mut<'a>(cfg: &'a mut Config, key: &'a str) -> Option<(&'a mut Vec<String>, &'a str)> {
+    match key.split_once('.')? {
+        ("hide", id) => Some((&mut cfg.hide, id)),
+        ("hide_panel", id) => Some((&mut cfg.hide_panel, id)),
+        _ => None,
+    }
 }
 
 fn on(b: bool) -> String {
@@ -92,8 +112,8 @@ pub fn value(cfg: &Config, key: &str) -> String {
             .cloned()
             .unwrap_or_else(|| "theme".into());
     }
-    if let Some(id) = key.strip_prefix("hide.") {
-        return on(!cfg.hide.iter().any(|h| h == id));
+    if let Some((list, id)) = switch(cfg, key) {
+        return on(!list.iter().any(|h| h == id));
     }
     match key {
         "theme" => cfg.theme.clone(),
@@ -140,12 +160,12 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         };
         return;
     }
-    if let Some(id) = key.strip_prefix("hide.") {
-        match cfg.hide.iter().position(|h| h == id) {
+    if let Some((list, id)) = switch_mut(cfg, key) {
+        match list.iter().position(|h| h == id) {
             Some(i) => {
-                cfg.hide.remove(i);
+                list.remove(i);
             }
-            None => cfg.hide.push(id.into()),
+            None => list.push(id.into()),
         }
         return;
     }
@@ -305,8 +325,8 @@ pub fn reset(cfg: &mut Config, key: &str) {
         cfg.colors.remove(role);
         return;
     }
-    if let Some(id) = key.strip_prefix("hide.") {
-        cfg.hide.retain(|h| h != id);
+    if let Some((list, id)) = switch_mut(cfg, key) {
+        list.retain(|h| h != id);
         return;
     }
     let (t, dt) = (&mut cfg.thresholds, &def.thresholds);
@@ -329,21 +349,32 @@ pub fn reset(cfg: &mut Config, key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, FEATURES, ROLES};
+    use crate::config::{Config, ROLES, SECTIONS, SEGMENTS};
 
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 33);
+        assert_eq!(it.len(), 36);
         for r in ROLES {
             assert!(it.iter().any(|i| i.key == format!("color.{r}")), "{r}");
         }
-        for f in FEATURES {
-            assert!(it.iter().any(|i| i.key == format!("hide.{f}")), "{f}");
+        for f in SEGMENTS {
+            let i = it.iter().find(|i| i.key == format!("hide.{f}")).unwrap();
+            assert_eq!(i.group, "STATUSLINE", "{f}");
         }
-        let groups: Vec<&str> = it.iter().map(|i| i.group).collect();
-        assert_eq!(groups[0], "LOOK");
-        assert_eq!(groups[32], "DATA");
+        for f in SECTIONS {
+            let i = it
+                .iter()
+                .find(|i| i.key == format!("hide_panel.{f}"))
+                .unwrap();
+            assert_eq!(i.group, "PANEL", "{f}");
+        }
+        let mut groups: Vec<&str> = it.iter().map(|i| i.group).collect();
+        groups.dedup();
+        assert_eq!(
+            groups,
+            ["LOOK", "COLOURS", "STATUSLINE", "PANEL", "ALERTS", "DATA"]
+        );
     }
 
     #[test]
@@ -480,11 +511,17 @@ mod tests {
         step(&mut c, "hide.tasks", 1);
         assert_eq!(c.hide, ["tasks"]);
         assert_eq!(value(&c, "hide.tasks"), "off");
+        assert_eq!(value(&c, "hide_panel.tasks"), "on", "statusline only");
         step(&mut c, "hide.cost", -1);
         assert_eq!(c.hide, ["tasks", "cost"]);
         step(&mut c, "hide.tasks", 1);
         assert_eq!(c.hide, ["cost"]);
         assert_eq!(value(&c, "hide.tasks"), "on");
+        step(&mut c, "hide_panel.turns", 1);
+        assert_eq!(c.hide_panel, ["turns"]);
+        assert_eq!(c.hide, ["cost"]);
+        reset(&mut c, "hide_panel.turns");
+        assert!(c.hide_panel.is_empty());
     }
 
     #[test]
@@ -518,7 +555,8 @@ mod tests {
     fn task_checklist_is_listed_and_on() {
         let it = items();
         let t = it.iter().find(|i| i.label == "task checklist").unwrap();
-        assert_eq!(t.key, "hide.tasks");
+        assert_eq!(t.key, "hide_panel.tasks");
+        assert_eq!(t.group, "PANEL");
         assert_eq!(value(&Config::default(), t.key), "on");
     }
 }
@@ -566,7 +604,8 @@ mod screen_tests {
             "ARI settings",
             "LOOK",
             "COLOURS",
-            "FEATURES",
+            "STATUSLINE",
+            "PANEL",
             "▸ theme",
             "task checklist",
             "~/.config/ari/config.toml",
