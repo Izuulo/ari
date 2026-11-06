@@ -74,3 +74,18 @@ fn graph_screen_full() {
     };
     insta::assert_snapshot!(show(&s, &x, now, v, 168, 49));
 }
+
+#[test]
+fn zoom_screen_full() {
+    let (s, x, now) = team();
+    let sel = hub::order(&s)
+        .iter()
+        .position(|&k| s.agents[k].name.as_deref() == Some("writer"))
+        .unwrap();
+    let v = HubView {
+        screen: hub::Screen::Zoom,
+        sel,
+        ..Default::default()
+    };
+    insta::assert_snapshot!(show(&s, &x, now, v, 168, 49));
+}

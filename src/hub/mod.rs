@@ -1,11 +1,10 @@
 //! The hub: `ari watch`'s full-terminal mode (spec: docs/superpowers/specs/2026-11-05-hub-design.md).
 //! Panes draw into a ratatui `Buffer`; `to_lines` turns it into the `Vec<Line>` watch draws.
 
-#![allow(dead_code)] // shortcut: helpers for panes from later tasks; removed once all panes land.
-
 mod agents;
 mod feed;
 mod graph;
+mod zoom;
 
 use crate::bar::{self, Extras};
 use crate::config::Config;
@@ -102,6 +101,7 @@ pub fn lines(i: &Input, v: &HubView, w: u16, h: u16, color: bool) -> Vec<Line<'s
     let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
     match v.screen {
         Screen::Graph => graph_screen(&mut buf, i, v, f),
+        Screen::Zoom if !i.st.agents.is_empty() => zoom_screen(&mut buf, i, v, f),
         _ => hub_screen(&mut buf, i, v, f),
     }
     to_lines(&buf, color)
@@ -309,7 +309,6 @@ pub(crate) fn ctx_of(i: &Input, a: &Agent) -> Option<(u64, f64)> {
 
 pub(crate) struct Areas {
     pub top: Rect,
-    pub strip: Rect,
     pub graph: Rect,
     pub table: Rect,
     pub tiles: Rect,
@@ -327,7 +326,6 @@ pub(crate) fn areas(w: u16, h: u16, fit: Fit) -> Areas {
     let by = 2 + r;
     Areas {
         top: Rect::new(0, 0, w, 1),
-        strip: Rect::new(0, 1, w, 1),
         graph: Rect::new(0, 2, gw, band),
         table: Rect::new(gw, 2, w - gw, band),
         tiles: Rect::new(0, 2 + band, w, r - band),
@@ -403,6 +401,23 @@ fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
         x = put(buf, x, y, &format!("{l}  "), w - x, dim());
     }
     rput(buf, w - 2, y, &format!("{}×{}", w, a.keys.y + 1), faint());
+}
+
+/// One agent over the whole body.
+fn zoom_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
+    let (w, h) = (buf.area.width, buf.area.height);
+    let a = areas(w, h, f);
+    let keys = [
+        ("↑↓", "agent".to_string()),
+        ("pgup pgdn", "scroll".into()),
+        ("esc", "back".into()),
+        ("g", "graph".into()),
+        ("q", "quit".into()),
+    ];
+    chrome(buf, i, &a, &keys);
+    let ord = order(i.st);
+    let k = ord[v.sel.min(ord.len() - 1)];
+    zoom::draw(buf, Rect::new(0, 2, w, h - 3), i, &i.st.agents[k], v.scroll);
 }
 
 /// The graph over most of the height, the tasks board under it.

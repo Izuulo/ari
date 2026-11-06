@@ -388,6 +388,7 @@ fn action(tool: &str, input: &Value, cwd: &str) -> String {
                 f("description")
             )
         }
+        "SendMessage" => format!("message {}", f("to")),
         "WebFetch" => format!("fetch {}", f("url")),
         "WebSearch" => format!("search {}", f("query")),
         "TaskCreate" | "TaskUpdate" | "TodoWrite" => "updating plan".into(),
