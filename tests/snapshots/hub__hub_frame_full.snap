@@ -42,12 +42,12 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 ┃ ✓ done                              2s ┃                                                                                                                              
 ┃                                        ┃                                                                                                                              
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                                                                              
-╭─ messages ───────────────────────────────────────────────────────────────────────────────────────╮╭─ activity ───────────────────────────────────────────────────────╮
+╭─ messages ──────────────────────────────────────────────────────── 2 this session · newest last ─╮╭─ activity ─────────────────────────── last 10 min · 12 s a cell ─╮
+│   9s  writer    ━▸ checker   notes.md is ready in /home/user/proj. It has three lines about rai… ││ main                                                     ▆▄▄ ✓   │
+│   5s  checker   ━▸ writer    notes.md has 3 lines.                                               ││ checker                                                   █  ✓   │
+│                                                                                                  ││ writer                                                    ▆  ✓   │
 │                                                                                                  ││                                                                  │
 │                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
-│                                                                                                  ││                                                                  │
+│                                                                                                  ││           −10m                   −5m                     now     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
   ↑↓ select   ⏎ zoom   g graph   z show finished (2)   x back to panel   q quit                                                                                  168×49

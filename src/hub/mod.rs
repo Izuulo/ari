@@ -4,6 +4,7 @@
 #![allow(dead_code)] // shortcut: helpers for panes from later tasks; removed once all panes land.
 
 mod agents;
+mod feed;
 mod graph;
 
 use crate::bar::{self, Extras};
@@ -99,7 +100,10 @@ pub fn lines(i: &Input, v: &HubView, w: u16, h: u16, color: bool) -> Vec<Line<'s
         return Vec::new();
     }
     let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
-    hub_screen(&mut buf, i, v, f);
+    match v.screen {
+        Screen::Graph => graph_screen(&mut buf, i, v, f),
+        _ => hub_screen(&mut buf, i, v, f),
+    }
     to_lines(&buf, color)
 }
 
@@ -401,6 +405,25 @@ fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
     rput(buf, w - 2, y, &format!("{}×{}", w, a.keys.y + 1), faint());
 }
 
+/// The graph over most of the height, the tasks board under it.
+fn graph_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
+    let (w, h) = (buf.area.width, buf.area.height);
+    let a = areas(w, h, f);
+    let keys = [
+        ("↑↓", "select".to_string()),
+        ("⏎", "zoom".into()),
+        ("h", "hub".into()),
+        ("esc", "back".into()),
+        ("q", "quit".into()),
+    ];
+    chrome(buf, i, &a, &keys);
+    let gh = (h - 3) * 31 / 46;
+    let ord = order(i.st);
+    let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
+    graph::draw(buf, Rect::new(0, 2, w, gh), i, sel, true, f == Fit::Full);
+    feed::tasks(buf, Rect::new(0, 2 + gh, w, h - 3 - gh), i);
+}
+
 fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let (w, h) = (buf.area.width, buf.area.height);
     let a = areas(w, h, f);
@@ -419,23 +442,9 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     graph::draw(buf, a.graph, i, sel, false, f == Fit::Full);
     agents::table(buf, a.table, i, v.sel);
     agents::tiles(buf, a.tiles, i, v, if f == Fit::Full { 4 } else { 2 });
-    frame(
-        buf,
-        a.messages,
-        vec![Span::styled("messages", bold())],
-        vec![],
-        faint(),
-        false,
-    );
+    feed::messages(buf, a.messages, i);
     if let Some(l) = a.lanes {
-        frame(
-            buf,
-            l,
-            vec![Span::styled("activity", bold())],
-            vec![],
-            faint(),
-            false,
-        );
+        feed::lanes(buf, l, i);
     }
 }
 

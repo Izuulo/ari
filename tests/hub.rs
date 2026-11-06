@@ -64,3 +64,13 @@ fn hub_no_hooks() {
     assert!(out.contains("ARI hub"), "{out}");
     assert!(out.contains("no agents yet"), "{out}");
 }
+
+#[test]
+fn graph_screen_full() {
+    let (s, x, now) = team();
+    let v = HubView {
+        screen: hub::Screen::Graph,
+        ..Default::default()
+    };
+    insta::assert_snapshot!(show(&s, &x, now, v, 168, 49));
+}
