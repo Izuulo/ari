@@ -28,7 +28,7 @@ claude plugin install ari --marketplace Izuulo/ari
 ari setup
 ```
 
-1. Installs the `ari` binary to `~/.local/bin` (macOS and Linux). With Homebrew: `brew install Izuulo/tap/ari`. With Rust: `cargo install --git https://github.com/Izuulo/ari ari-cli`.
+1. Installs the `ari` binary to `~/.local/bin` (macOS and Linux). With Homebrew: `brew tap Izuulo/tap && brew trust --formula izuulo/tap/ari && brew install Izuulo/tap/ari` (newer Homebrew asks you to trust third-party taps). With Rust: `cargo install --git https://github.com/Izuulo/ari ari-cli`.
 2. Adds the plugin whose hooks feed ARI. In-app: `/plugin marketplace add Izuulo/ari`, then `/plugin install ari@ari`.
 3. Adds ARI's row to your statusline. It shows the change, asks first, and keeps your current statusline running alongside.
 
