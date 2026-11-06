@@ -356,6 +356,12 @@ fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
     let label = i.u.session_name.clone().or_else(|| i.st.label.clone());
     let mut x = put(buf, 0, 0, " ARI ", w, lead().add_modifier(Modifier::BOLD));
     x = put(buf, x, 0, "hub", w - x, bold());
+    if i.x.app != crate::app::App::Claude {
+        let st = Style::new()
+            .fg(i.x.app.accent())
+            .add_modifier(Modifier::BOLD);
+        x = put(buf, x, 0, &format!("   {}", i.x.app.label()), w - x, st);
+    }
     if !project.is_empty() {
         x = put(buf, x, 0, &format!("   {project}"), w - x, Style::default());
     }

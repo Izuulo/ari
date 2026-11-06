@@ -1,6 +1,7 @@
 //! `ari hub --all`: every live session merged into one state the hub draws
 //! (spec: docs/superpowers/specs/2026-11-06-hub-all-design.md).
 
+use crate::app::App;
 use crate::sessions;
 use crate::state::{self, Agent, State};
 use crate::tokens::{self, TokenCache};
@@ -13,6 +14,7 @@ pub struct Part {
     pub key: String,
     pub name: String,
     pub st: State,
+    pub app: App,
     pub u: Usage,
     pub tokens: TokenCache,
 }
@@ -33,6 +35,7 @@ pub fn load(root: &Path, now: u64) -> Vec<Part> {
                 .unwrap_or_else(|| key.clone());
             Part {
                 st: state::load_session(&s.dir),
+                app: s.app,
                 tokens: tokens::cached(&s.dir),
                 key,
                 name,
@@ -61,6 +64,11 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         ..Default::default()
     };
     let mut tok = TokenCache::default();
+    let mut limits: Vec<(
+        App,
+        Option<crate::usage::Limit>,
+        Option<crate::usage::Limit>,
+    )> = vec![];
     // shortcut: another session is addressed by its name as ARI knows it; aliases miss.
     let names: Vec<(String, String)> = parts
         .iter()
@@ -103,6 +111,7 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         }
         lead.id = key.clone();
         lead.kind = "session".into();
+        lead.app = p.app;
         lead.name = Some(p.name.clone());
         lead.parent = Some("main".into());
         // A live session isn't stale while its subagents work.
@@ -158,17 +167,32 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
             st.first_t = s.first_t;
         }
         st.last_t = st.last_t.max(s.last_t);
-        if let Some(c) = p.u.cost_usd {
+        // Dollars are Claude Code's; other apps' tokens are counted, not priced.
+        if p.app == App::Claude
+            && let Some(c) = p.u.cost_usd
+        {
             *u.cost_usd.get_or_insert(0.0) += c;
         }
-        // Limits are per account: the most recent session's are the freshest.
-        if u.five_h.is_none() && u.seven_d.is_none() {
-            (u.five_h, u.seven_d) = (p.u.five_h, p.u.seven_d);
+        // Limits are per account: each app's most recent session has the freshest.
+        if (p.u.five_h.is_some() || p.u.seven_d.is_some())
+            && !limits.iter().any(|(a, ..)| *a == p.app)
+        {
+            limits.push((p.app, p.u.five_h, p.u.seven_d));
         }
         tok.agents.insert(key.clone(), p.tokens.main);
         for (a, l) in p.tokens.agents {
             tok.agents.insert(id(&a), l);
         }
+    }
+    if let Some((_, five, seven)) = limits.iter().find(|l| l.0 == App::Claude) {
+        (u.five_h, u.seven_d) = (*five, *seven);
+    }
+    if limits.iter().any(|l| l.0 != App::Claude) {
+        limits.sort_by_key(|l| l.0 != App::Claude); // stable: Claude first
+        u.app_limits = limits
+            .into_iter()
+            .map(|(a, f, s)| (a.label().to_string(), f, s))
+            .collect();
     }
     let span = |t: u64| if t == 0 { now } else { t };
     (st.agents[0].started, st.agents[0].last_t) = (span(st.first_t), span(st.last_t));
@@ -189,6 +213,7 @@ mod tests {
             key: key.into(),
             name: name.into(),
             st,
+            app: App::Claude,
             u: Usage::default(),
             tokens: TokenCache::default(),
         }

@@ -168,6 +168,7 @@ impl App {
         if changed {
             self.mtimes = now;
             self.session_app = app::of(dir);
+            self.x.app = self.session_app;
             self.st = state::load_session(dir);
             self.usage = usage::load(dir);
             self.x.tokens = Some(tokens::update(
@@ -510,6 +511,7 @@ struct Entry {
     verdict: String,
     style: Style,
     project: String,
+    app: crate::app::App,
     title: Option<String>,
     detail: String,
     ctx: Option<f64>,
@@ -580,14 +582,18 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
                 .clone()
                 .or_else(|| s.cwd.as_deref()?.rsplit('/').next().map(String::from))
                 .unwrap_or_else(|| s.id.chars().take(8).collect()),
+            app: s.app,
             title: u.session_name.clone(),
             // What it's asking beats what it was doing.
             detail,
             ctx: u.ctx_pct,
-            cost: u.cost_usd,
+            cost: u.cost_usd.filter(|_| s.app == crate::app::App::Claude),
             age_ms: now.saturating_sub(s.last_ms),
             dir: s.dir.clone(),
-            limits: (u.five_h.is_some() || u.seven_d.is_some()).then_some((u.five_h, u.seven_d)),
+            // One header line, so only Claude Code's account shows; others' never mix in.
+            limits: (s.app == crate::app::App::Claude
+                && (u.five_h.is_some() || u.seven_d.is_some()))
+            .then_some((u.five_h, u.seven_d)),
         });
     }
     // Stable: equally urgent sessions keep most-recent-first.
@@ -668,9 +674,14 @@ fn list_lines(
         .unwrap_or(0)
         .min(22);
     let right = if w >= 70 { 26 } else { 0 };
+    // "Codex " before the project; Claude Code's rows stay bare.
+    let pre = |e: &Entry| match e.app {
+        crate::app::App::Claude => String::new(),
+        a => format!("{} ", a.label()),
+    };
     let label = |e: &Entry| match &e.title {
-        Some(t) => format!("{} · {t}", e.project),
-        None => e.project.clone(),
+        Some(t) => format!("{}{} · {t}", pre(e), e.project),
+        None => format!("{}{}", pre(e), e.project),
     };
     let full = entries.iter().map(|e| label(e).width()).max().unwrap_or(0);
     // Which session it is matters more than what it's doing: the label gets room first.
@@ -692,7 +703,12 @@ fn list_lines(
             Span::raw(" ".repeat(vw.saturating_sub(e.verdict.width()) + 2)),
         ];
         let text = crate::event::truncate(&label(e), lw);
-        let (p, t) = text.split_at(text.floor_char_boundary(e.project.len()));
+        let (a, rest) = text.split_at(text.floor_char_boundary(pre(e).len()));
+        let (p, t) = rest.split_at(rest.floor_char_boundary(e.project.len()));
+        spans.push(Span::styled(
+            a.to_string(),
+            paint(Style::new().fg(e.app.accent()).add_modifier(Modifier::BOLD)),
+        ));
         spans.push(Span::styled(
             p.to_string(),
             paint(if quiet { dim } else { bold }),
@@ -1730,6 +1746,7 @@ mod key_tests {
     #[test]
     fn list_marks_the_selected_row_and_ends_with_a_hint() {
         let e = |p: &str| Entry {
+            app: Default::default(),
             rank: 0,
             verdict: "ON TRACK".into(),
             style: Style::default(),
@@ -1787,6 +1804,7 @@ mod key_tests {
     #[test]
     fn narrow_list_puts_the_detail_under_the_session() {
         let e = |w: &str| Entry {
+            app: Default::default(),
             rank: 0,
             verdict: "ON TRACK".into(),
             style: Style::default(),
@@ -1829,6 +1847,7 @@ mod key_tests {
     fn long_project_names_truncate_on_a_char_boundary() {
         for (n, w) in [(35, 120), (36, 120), (37, 120), (12, 40), (13, 40)] {
             let e = Entry {
+                app: Default::default(),
                 rank: 0,
                 verdict: "ON TRACK".into(),
                 style: Style::default(),

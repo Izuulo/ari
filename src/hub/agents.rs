@@ -193,7 +193,14 @@ pub(crate) fn table(buf: &mut Buffer, area: Rect, i: &Input, sel: usize) {
         } else {
             node_style(i, a).add_modifier(Modifier::BOLD)
         };
-        put(buf, x, y, &a.label(), c_model.min(c_state) - 3, ns);
+        let mut room = c_model.min(c_state) - 3;
+        let mut x = x;
+        if a.app != crate::app::App::Claude {
+            let st = Style::new().fg(a.app.accent()).add_modifier(Modifier::BOLD);
+            let nx = put(buf, x, y, &format!("{} ", a.app.label()), room, st);
+            (room, x) = (room.saturating_sub(nx - x), nx);
+        }
+        put(buf, x, y, &a.label(), room, ns);
         let l = ledger(i, a);
         if wide {
             let m = l

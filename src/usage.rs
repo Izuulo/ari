@@ -32,6 +32,9 @@ pub struct Usage {
     pub worktree: Option<String>,
     /// Prompt-cache state; absent on older Claude Code.
     pub cache: Option<CacheState>,
+    /// Hub `--all` only: (app label, 5h, 7d) per app, when apps' accounts mix.
+    #[serde(skip)]
+    pub app_limits: Vec<(String, Option<Limit>, Option<Limit>)>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -95,6 +98,7 @@ pub fn from_value(v: &Value) -> Usage {
         .or_else(|| s("/workspace/current_dir"))
         .or_else(|| s("/cwd"));
     Usage {
+        app_limits: Vec::new(),
         session_id: s("/session_id"),
         transcript_path: s("/transcript_path"),
         model: s("/model/display_name").or_else(|| s("/model/id")),

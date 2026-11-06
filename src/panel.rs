@@ -227,15 +227,7 @@ pub fn lines(
         Section {
             title: None,
             rows: {
-                let mut rows = header(
-                    st,
-                    x.plan.as_ref(),
-                    u.session_name.as_deref(),
-                    x.looks_active(),
-                    &c,
-                    v,
-                    cfg,
-                );
+                let mut rows = header(st, x, u.session_name.as_deref(), &c, v, cfg);
                 if let Some(s) = crate::conflicts::summary(&x.conflicts) {
                     rows.insert(
                         1.min(rows.len()),
@@ -722,13 +714,13 @@ fn hidden(cfg: &Config, id: &str) -> bool {
 
 fn header(
     st: &State,
-    plan: Option<&crate::state::PlanFile>,
+    x: &Extras,
     title: Option<&str>,
-    active: bool,
     c: &Ctx,
     v: Verdict,
     cfg: &Config,
 ) -> Vec<Row> {
+    let (plan, active, app) = (x.plan.as_ref(), x.looks_active(), x.app);
     let repeats = cfg.thresholds.stuck_repeats;
     let mut rows = Vec::new();
     if st.first_t == 0 {
@@ -754,6 +746,12 @@ fn header(
         c.span(format!("{} {}", v.glyph(), v.label()), verdict_style(v))
     };
     let mut row = vec![left];
+    if app != crate::app::App::Claude {
+        row.push(c.span(
+            format!(" · {}", app.label()),
+            Style::new().fg(app.accent()).add_modifier(Modifier::BOLD),
+        ));
+    }
     // Claude Code's own session title beats a truncated first prompt.
     if let Some(label) = title.map(String::from).or_else(|| st.label.clone())
         && c.inner.saturating_sub(row_width(&row)) >= 8
@@ -1341,7 +1339,9 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
         );
         if let Some(hit) = total.hit() {
             text += &format!(" · cache {:.0}% hit", hit * 100.0);
-            if let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices) {
+            if x.app == crate::app::App::Claude
+                && let Some(saved) = crate::tokens::savings(&total, u.cost_usd, &cfg.prices)
+            {
                 text += &format!(", saved ${saved:.2}");
             }
             text += &cache_suffix(u, now);

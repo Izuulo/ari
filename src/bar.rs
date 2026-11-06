@@ -26,6 +26,8 @@ pub struct Extras {
     pub plan: Option<crate::state::PlanFile>,
     /// The session's recent limit/context/cost samples, oldest first (panel only).
     pub samples: Vec<crate::burn::Sample>,
+    /// The session's app; a label shows for any but Claude Code.
+    pub app: crate::app::App,
 }
 
 /// Forecasts are only worth showing this close.
@@ -299,11 +301,29 @@ pub fn render(
             None => "ctx —".into(),
         });
     }
-    if shown("5h") {
-        segs.push(limit("5h", u.five_h, now_ms, cfg, color));
-    }
-    if shown("7d") {
-        segs.push(limit("7d", u.seven_d, now_ms, cfg, color));
+    if !u.app_limits.is_empty() {
+        // Accounts differ per app: "Claude 5h 40% · Codex 5h 12%".
+        let apps: Vec<String> = u
+            .app_limits
+            .iter()
+            .map(|(app, five, seven)| {
+                let mut parts = vec![app.split(' ').next().unwrap_or(app).to_string()];
+                for (name, l) in [("5h", five), ("7d", seven)] {
+                    if shown(name) && l.is_some() {
+                        parts.push(limit(name, *l, now_ms, cfg, color));
+                    }
+                }
+                parts.join(" ")
+            })
+            .collect();
+        segs.push(apps.join(" · "));
+    } else {
+        if shown("5h") {
+            segs.push(limit("5h", u.five_h, now_ms, cfg, color));
+        }
+        if shown("7d") {
+            segs.push(limit("7d", u.seven_d, now_ms, cfg, color));
+        }
     }
     if shown("cost")
         && let Some(c) = u.cost_usd
