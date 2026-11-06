@@ -110,6 +110,7 @@ fn canonical(raw: &Value) -> Cow<'_, Value> {
         "spawn_agent" => "Agent",
         _ => name,
     };
+    // shortcut: dsh's bash result shape is unverified; confirm with a recorded dsh session.
     let code = raw
         .pointer("/tool_response/exit_code")
         .and_then(Value::as_i64)
@@ -217,10 +218,17 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
             ev.lines = edit_lines(ev.tool.as_deref().unwrap_or(""), input);
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
-            (ev.tests, ev.partial) = split_run(test_run(
-                input,
-                &format!("{}\n{}", out("stdout"), out("stderr")),
-            ));
+            // Codex sends a shell result as the output string itself.
+            let text = resp.as_str().map_or_else(
+                || format!("{}\n{}", out("stdout"), out("stderr")),
+                String::from,
+            );
+            (ev.tests, ev.partial) = split_run(test_run(input, &text));
+            if resp.is_string() && ev.tests.is_some_and(|(_, f)| f > 0) {
+                ev.ok = Some(false);
+                ev.kind = Some("tests failed".into());
+                ev.msg = Some(truncate(failure_line(&text, ev.kind.as_deref()), 160));
+            }
         }
         "PostToolUseFailure" => {
             ev.ok = Some(false);
@@ -639,7 +647,28 @@ mod tests {
     }
 
     #[test]
-    fn codex_nonzero_exit_is_a_failure() {
+    fn codex_string_response_with_failed_tests_is_a_failure() {
+        let ev = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "tool_response": "test result: FAILED. 3 passed; 1 failed"}),
+        );
+        assert_eq!(ev.ok, Some(false));
+        assert_eq!(ev.kind.as_deref(), Some("tests failed"));
+        assert_eq!(ev.tests, Some((3, 1)));
+        assert_eq!(
+            ev.msg.as_deref(),
+            Some("test result: FAILED. 3 passed; 1 failed")
+        );
+        let ok = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"}, "tool_response": "test result: ok. 4 passed; 0 failed"}),
+        );
+        assert_eq!((ok.ok, ok.tests), (Some(true), Some((4, 0))));
+    }
+
+    #[test]
+    fn object_exit_code_is_a_failure() {
         let ev = n(
             json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
             "tool_input": {"command": "cargo test"},
