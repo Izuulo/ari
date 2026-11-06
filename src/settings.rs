@@ -1,6 +1,32 @@
 //! The settings screen in `ari watch` (`s`): every row, its value, how it steps, and the screen.
 
 use crate::config::{COLOR_CYCLE, Config, Position, THEMES};
+use crate::event::truncate;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
+
+/// The list column's width when the live preview sits beside it.
+pub const LIST_W: u16 = 48;
+/// The narrowest window that gets the preview.
+pub const PREVIEW_MIN_W: u16 = 110;
+const KEYS: &str = "↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file";
+const LABEL_W: usize = 25;
+
+pub struct Screen<'a> {
+    pub cfg: &'a Config,
+    /// Index into `items()`.
+    pub sel: usize,
+    /// The config file, as shown in the title.
+    pub path: &'a str,
+    /// Why config.toml couldn't be read; edits are refused while set.
+    pub error: Option<&'a str>,
+    /// Replaces the key hint (a failed save, a refused edit).
+    pub note: Option<&'a str>,
+    /// The panel drawn with `cfg`, already themed; shown when the window is wide enough.
+    pub preview: Option<Vec<Line<'static>>>,
+    pub color: bool,
+}
 
 pub struct Item {
     pub group: &'static str,
@@ -156,6 +182,118 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         }
         _ => {}
     }
+}
+
+/// The screen: title, list (scrolled to `sel`) with the preview beside it, key hint.
+pub fn lines(s: &Screen, w: u16, h: u16) -> Vec<Line<'static>> {
+    if w < 40 || h < 10 {
+        return vec![Line::from("settings need 40×10")];
+    }
+    let st = |style: Style| if s.color { style } else { Style::default() };
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    let dim = Style::new().add_modifier(Modifier::DIM);
+    let (w, h) = (w as usize, h as usize);
+    let preview = s.preview.as_ref().filter(|_| w >= PREVIEW_MIN_W as usize);
+    let list_w = if preview.is_some() {
+        LIST_W as usize
+    } else {
+        w
+    };
+    let pal = crate::theme::Palette::new(s.cfg);
+
+    let mut out = Vec::with_capacity(h);
+    let path = truncate(s.path, w.saturating_sub(16));
+    let gap = w.saturating_sub(13 + path.width() + 1);
+    out.push(Line::from(vec![
+        Span::styled(" ARI settings", st(bold)),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(path, st(dim)),
+    ]));
+    if let Some(e) = s.error {
+        let e = truncate(&format!(" config.toml: {e}"), w);
+        out.push(Line::from(Span::styled(e, st(Style::new().fg(Color::Red)))));
+    }
+
+    // Group headers and rows; remember which row is selected.
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut sel_row = 0;
+    let mut group = "";
+    for (i, it) in items().into_iter().enumerate() {
+        if it.group != group {
+            group = it.group;
+            rows.push(vec![Span::styled(
+                format!(" {group}"),
+                st(dim.add_modifier(Modifier::BOLD)),
+            )]);
+        }
+        let picked = i == s.sel;
+        if picked {
+            sel_row = rows.len();
+        }
+        let mark = if picked { "▸" } else { " " };
+        let label = format!(" {mark} {:<LABEL_W$} ", it.label);
+        let mut row = vec![Span::styled(
+            label,
+            st(if picked { bold } else { Style::default() }),
+        )];
+        let v = value(s.cfg, it.key);
+        if let Some(role) = it.key.strip_prefix("color.") {
+            let sw = if s.cfg.ascii { "#" } else { "■" };
+            let c = pal.role(role).unwrap_or(Color::Reset);
+            row.push(Span::styled(sw.to_string(), st(Style::new().fg(c))));
+            row.push(Span::raw(" "));
+        }
+        row.push(Span::styled(
+            v,
+            st(if picked { bold } else { Style::default() }),
+        ));
+        rows.push(row);
+    }
+
+    let body_h = h - out.len() - 1;
+    let start = (sel_row + 1).saturating_sub(body_h);
+    let empty: Vec<Span<'static>> = Vec::new();
+    for k in 0..body_h {
+        let row = rows.get(start + k).unwrap_or(&empty);
+        let mut spans = fit(row, list_w);
+        if let Some(p) = preview {
+            spans.push(Span::styled("│", st(dim)));
+            if let Some(pl) = p.get(k) {
+                spans.extend(fit(&pl.spans, w - list_w - 1));
+            }
+        }
+        out.push(Line::from(spans));
+    }
+    let foot = truncate(s.note.unwrap_or(KEYS), w.saturating_sub(1));
+    let foot_style = if s.note.is_some() {
+        Style::new().fg(Color::Yellow)
+    } else {
+        dim
+    };
+    out.push(Line::from(Span::styled(format!(" {foot}"), st(foot_style))));
+    out
+}
+
+/// Spans cut to `w` columns and padded to exactly `w`.
+fn fit(spans: &[Span<'static>], w: usize) -> Vec<Span<'static>> {
+    let mut out = Vec::new();
+    let mut used = 0;
+    for sp in spans {
+        if used >= w {
+            break;
+        }
+        let text = if used + sp.content.width() > w {
+            truncate(&sp.content, w - used)
+        } else {
+            sp.content.to_string()
+        };
+        used += text.width();
+        out.push(Span::styled(text, sp.style));
+    }
+    if used < w {
+        out.push(Span::raw(" ".repeat(w - used)));
+    }
+    out
 }
 
 /// Put the row back to its default.
@@ -353,5 +491,153 @@ mod tests {
         let t = it.iter().find(|i| i.label == "task checklist").unwrap();
         assert_eq!(t.key, "hide.tasks");
         assert_eq!(value(&Config::default(), t.key), "on");
+    }
+}
+
+#[cfg(test)]
+mod screen_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::panel::to_plain;
+    use ratatui::text::Line;
+
+    fn draw(cfg: &Config, sel: usize, w: u16, h: u16) -> Vec<Line<'static>> {
+        lines(
+            &Screen {
+                cfg,
+                sel,
+                path: "~/.config/ari/config.toml",
+                error: None,
+                note: None,
+                preview: None,
+                color: false,
+            },
+            w,
+            h,
+        )
+    }
+
+    fn fits(out: &[Line], w: u16) {
+        for l in out {
+            assert!(
+                l.width() <= w as usize,
+                "wider than {w}: {:?}",
+                to_plain(std::slice::from_ref(l))
+            );
+        }
+    }
+
+    #[test]
+    fn screen_lists_groups_and_marks_selection() {
+        let out = draw(&Config::default(), 0, 100, 40);
+        assert_eq!(out.len(), 40);
+        fits(&out, 100);
+        let text = to_plain(&out);
+        for want in [
+            "ARI settings",
+            "LOOK",
+            "COLOURS",
+            "FEATURES",
+            "▸ theme",
+            "task checklist",
+            "~/.config/ari/config.toml",
+        ] {
+            assert!(text.contains(want), "{want} in\n{text}");
+        }
+        assert!(text.contains("esc back"), "{text}");
+    }
+
+    #[test]
+    fn short_window_keeps_selection_visible() {
+        let last = items().len() - 1;
+        let out = draw(&Config::default(), last, 80, 12);
+        assert_eq!(out.len(), 12);
+        let text = to_plain(&out);
+        assert!(text.contains("▸ keep logs"), "{text}");
+        assert!(!text.contains("▸ theme"), "{text}");
+        let top = to_plain(&draw(&Config::default(), 0, 80, 12));
+        assert!(top.contains("▸ theme"), "{top}");
+    }
+
+    #[test]
+    fn too_small() {
+        let out = draw(&Config::default(), 0, 39, 10);
+        assert_eq!(to_plain(&out), "settings need 40×10");
+        assert_eq!(draw(&Config::default(), 0, 40, 9).len(), 1);
+    }
+
+    #[test]
+    fn error_and_note_show() {
+        let cfg = Config::default();
+        let out = lines(
+            &Screen {
+                cfg: &cfg,
+                sel: 0,
+                path: "p",
+                error: Some("expected `=` at line 3"),
+                note: Some("couldn't save: denied"),
+                preview: None,
+                color: false,
+            },
+            80,
+            20,
+        );
+        assert_eq!(out.len(), 20);
+        let rows: Vec<String> = out
+            .iter()
+            .map(|l| to_plain(std::slice::from_ref(l)))
+            .collect();
+        assert!(rows[1].contains("expected `=` at line 3"), "{rows:?}");
+        assert!(rows[19].contains("couldn't save: denied"), "{rows:?}");
+    }
+
+    #[test]
+    fn preview_only_when_wide() {
+        let cfg = Config::default();
+        let s = |preview| Screen {
+            cfg: &cfg,
+            sel: 0,
+            path: "p",
+            error: None,
+            note: None,
+            preview,
+            color: false,
+        };
+        let wide = lines(&s(Some(vec![Line::from("PREVIEW")])), 120, 20);
+        fits(&wide, 120);
+        assert!(to_plain(&wide).contains("PREVIEW"));
+        let narrow = lines(&s(Some(vec![Line::from("PREVIEW")])), 100, 20);
+        assert!(!to_plain(&narrow).contains("PREVIEW"));
+    }
+
+    #[test]
+    fn colour_rows_show_a_swatch() {
+        let mut cfg = Config::default();
+        cfg.colors.insert("good".into(), "red".into());
+        let text = to_plain(&draw(&cfg, 0, 100, 40));
+        assert!(text.contains("■ red"), "{text}");
+        assert!(text.contains("■ theme"), "{text}");
+    }
+
+    #[test]
+    fn settings_screen_snapshot() {
+        let cfg = Config::default();
+        let out = lines(
+            &Screen {
+                cfg: &cfg,
+                sel: 13,
+                path: "~/.config/ari/config.toml",
+                error: None,
+                note: None,
+                preview: Some(vec![
+                    Line::from("╭─ ARI ─ preview ─╮"),
+                    Line::from("│ ● ON TRACK      │"),
+                ]),
+                color: false,
+            },
+            120,
+            40,
+        );
+        insta::assert_snapshot!(to_plain(&out));
     }
 }
