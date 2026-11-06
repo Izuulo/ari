@@ -3,7 +3,9 @@
 # usage: scripts/scrub.sh <fixture-dir> <project-path>
 set -euo pipefail
 dir=$1 proj=$2
-export PROJ=$proj PROJ_ENC=${proj//\//-} HOME_ENC=${HOME//\//-} U=${USER:-$(id -un)}
+# Claude names project dirs by turning every non-alphanumeric character into '-'.
+enc() { printf %s "$1" | tr -c 'A-Za-z0-9' -; }
+export PROJ=$proj PROJ_ENC=$(enc "$proj") HOME_ENC=$(enc "$HOME") U=${USER:-$(id -un)}
 find "$dir" -type f \( -name '*.jsonl' -o -name '*.json' \) -print0 | xargs -0 perl -pi -e '
   s/\Q$ENV{PROJ}\E/\/home\/user\/proj/g;
   s/\Q$ENV{PROJ_ENC}\E/-home-user-proj/g;
