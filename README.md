@@ -135,14 +135,15 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 
 ## Config
 
-Press `s` in `ari watch` (panel, hub or `--all` list) for the settings screen: theme, colours, which features show, alerts. Every change saves to `~/.config/ari/config.toml` and shows at once, with a live preview of the panel beside the list when the window is 110 wide. Edits you make to the file by hand apply live too, and `ari doctor` points out anything it can't read.
+Press `s` in `ari watch` (panel, hub or `--all` list) for the settings screen: theme, colours, what the statusline and the panel show, alerts. Every change saves to `~/.config/ari/config.toml` and shows at once, with a live preview of your statusline row and panel beside the list when the window is 110 wide. Edits you make to the file by hand apply live too, and `ari doctor` points out anything it can't read.
 
 Every key is optional:
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
 theme = "default"           # default · soft · vivid · colorblind · mono
-hide = ["cost"]             # features to switch off (ids below)
+hide = ["cost"]             # statusline segments to drop: conflicts now tasks agents errors tests ctx 5h 7d cost tokens
+hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session turns
 face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 ascii = false               # ASCII-only glyphs everywhere
@@ -174,15 +175,6 @@ good = "#5fd787"            # roles: good warn bad accent highlight info muted b
 | `vivid` | the bright variants, for dark low-contrast terminals |
 | `colorblind` | blue for good, orange for bad, never red against green |
 | `mono` | no colour; dim and bold only |
-
-One `hide` id switches a feature off everywhere it appears:
-
-| id | Panel | Statusline |
-|---|---|---|
-| `tasks` | the task checklist bar | tasks |
-| `agents`, `errors` | their sections | their segments |
-| `usage`, `session`, `turns` | their sections | – |
-| `conflicts`, `now`, `tests`, `ctx`, `5h`, `7d`, `cost`, `tokens` | – | their segments |
 
 Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR` is respected; glyphs always carry the meaning, so nothing relies on color alone.
 

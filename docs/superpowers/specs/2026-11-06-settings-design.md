@@ -64,7 +64,9 @@ Themes, in cycle order:
 
 Numbers are 256-colour indexes. An unknown theme name means `default`; an unreadable colour means the theme's colour. Both are reported by `ari doctor`.
 
-### Feature ids (the `hide` list)
+### Feature ids (the `hide` and `hide_panel` lists)
+
+**Revised 2026-11-06 after the first build:** the owner wants to toggle the statusline on its own. `hide` keeps its v0.1.0 meaning (statusline segments: conflicts now tasks agents errors tests ctx 5h 7d cost tokens) and the new `hide_panel` lists panel sections (tasks agents errors usage session turns). The settings screen groups them as STATUSLINE (with row and width) and PANEL, and the preview shows the statusline row above the panel. The single-list table below is superseded.
 
 One id switches the same feature everywhere it appears.
 
