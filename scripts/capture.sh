@@ -3,6 +3,9 @@
 # usage: scripts/capture.sh <name> <prompt-file> [extra claude args...]
 # Runs `claude -p` (Haiku) in a throwaway project with every hook wired to `ari hook`,
 # then copies the raw hook log and transcripts into fixtures/<name>/ and scrubs them.
+# PERMIT_WAIT=<secs>: ask permission (default mode) and have a "user" approve each prompt
+# after that many seconds, so the fixture records a real NEEDS YOU wait. Pre-approve the
+# tools that shouldn't ask with --allowedTools.
 set -euo pipefail
 name=$1 prompt=$2; shift 2
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,17 +17,23 @@ mkdir -p "$proj" "$out"
 : > "$out/raw.jsonl"
 echo "project: $proj"
 
-python3 -I - "$bin" "$out/raw.jsonl" "$work/state" > "$work/settings.json" <<'PY'
+python3 -I - "$bin" "$out/raw.jsonl" "$work/state" "${PERMIT_WAIT:-}" > "$work/settings.json" <<'PY'
 import json, shlex, sys
-bin, raw, state = sys.argv[1:]
+bin, raw, state, wait = sys.argv[1:]
 cmd = f"ARI_RAW_LOG={shlex.quote(raw)} XDG_STATE_HOME={shlex.quote(state)} {shlex.quote(bin)} hook"
 events = ("SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure SubagentStart "
           "SubagentStop Notification PermissionRequest PreCompact PostCompact Stop StopFailure SessionEnd TaskCreated TaskCompleted").split()
-print(json.dumps({"hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 2}]}] for e in events}}))
+hooks = {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 2}]}] for e in events}
+if wait:
+    allow = json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
+    hooks["PermissionRequest"][0]["hooks"][0].update(
+        command=f"{cmd}; sleep {int(wait)}; echo {shlex.quote(allow)}", timeout=int(wait) + 5)
+print(json.dumps({"hooks": hooks}))
 PY
 
+mode=dontAsk; [ -n "${PERMIT_WAIT:-}" ] && mode=default
 (cd "$proj" && CLAUDE_CODE_ENABLE_TODO_TOOLS=1 claude -p "$(cat "$prompt")" \
-  --model haiku --settings "$work/settings.json" --permission-mode dontAsk "$@")
+  --model haiku --settings "$work/settings.json" --permission-mode "$mode" "$@")
 
 transcript=$(python3 -I -c 'import json,sys
 for l in open(sys.argv[1]):
