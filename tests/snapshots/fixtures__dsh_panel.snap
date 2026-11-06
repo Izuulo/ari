@@ -11,5 +11,5 @@ expression: out
 │ ✗ 10s  cargo test · test result: FAILED. 3 passed; … │
 ├─ session ────────────────────────────────────────────┤
 │ tests   ✗ 1/4                                        │
-│ time    18s · claude 100%                            │
+│ time    18s · model 100%                             │
 ╰──────────────────────────────────────────────────────╯

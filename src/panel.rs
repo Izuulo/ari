@@ -1397,7 +1397,14 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
         let pct = |ms: u64| (ms as f64 * 100.0 / total).round();
         let mut text = dur(wall);
         for (name, ms) in [
-            ("claude", sp.claude),
+            (
+                if x.app == crate::app::App::Claude {
+                    "claude"
+                } else {
+                    "model"
+                },
+                sp.claude,
+            ),
             ("tools", sp.tools),
             ("you", sp.waiting),
             ("idle", sp.idle),

@@ -590,10 +590,7 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
             cost: u.cost_usd.filter(|_| s.app == crate::app::App::Claude),
             age_ms: now.saturating_sub(s.last_ms),
             dir: s.dir.clone(),
-            // One header line, so only Claude Code's account shows; others' never mix in.
-            limits: (s.app == crate::app::App::Claude
-                && (u.five_h.is_some() || u.seven_d.is_some()))
-            .then_some((u.five_h, u.seven_d)),
+            limits: (u.five_h.is_some() || u.seven_d.is_some()).then_some((u.five_h, u.seven_d)),
         });
     }
     // Stable: equally urgent sessions keep most-recent-first.
@@ -615,10 +612,16 @@ fn list_lines(
     let dim = Style::new().add_modifier(Modifier::DIM);
     let bold = Style::new().add_modifier(Modifier::BOLD);
     // Rate limits are per account: show one session's once, not one per row.
-    let limits = entries
+    let mut recent: Vec<&Entry> = entries.iter().filter(|e| e.limits.is_some()).collect();
+    recent.sort_by_key(|e| e.age_ms);
+    let per_app = crate::hub::all::group_limits(recent.iter().map(|e| {
+        let (f, s) = e.limits.unwrap_or_default();
+        (e.app, f, s)
+    }));
+    // Claude Code only: the one-account line as always.
+    let limits = recent
         .iter()
-        .filter(|e| e.limits.is_some())
-        .min_by_key(|e| e.age_ms)
+        .find(|e| e.app == crate::app::App::Claude)
         .and_then(|e| e.limits);
     let total: f64 = entries.iter().filter_map(|e| e.cost).sum();
 
@@ -643,7 +646,9 @@ fn list_lines(
         ));
     }
     let mut acct = Vec::new();
-    if let Some((five, seven)) = limits {
+    if !per_app.is_empty() {
+        acct.extend(bar::app_limits(&per_app, now, cfg, false));
+    } else if let Some((five, seven)) = limits {
         for (name, l) in [("5h", five), ("7d", seven)] {
             if let Some(l) = l {
                 let reset = if l.resets_at > 0 {
@@ -1791,6 +1796,38 @@ mod key_tests {
         ));
         let head = panel::to_plain(&list_lines(&[old, fresh], None, &cfg, 0, 100)[..1]);
         assert!(head.contains("5h 77%") && !head.contains("11%"), "{head}");
+        // Another app's account is labelled, never merged under Claude's.
+        let codex = || {
+            let mut c = e("codex");
+            c.app = crate::app::App::Codex;
+            c.age_ms = 1;
+            c.limits = Some((
+                Some(usage::Limit {
+                    pct: 12.0,
+                    resets_at: 0,
+                }),
+                None,
+            ));
+            c
+        };
+        let (mut claude, mut old) = (e("claude"), e("old"));
+        claude.age_ms = 5;
+        claude.limits = Some((
+            Some(usage::Limit {
+                pct: 40.0,
+                resets_at: 0,
+            }),
+            None,
+        ));
+        old.limits = None;
+        let head = |v: &[Entry]| panel::to_plain(&list_lines(v, None, &cfg, 0, 100)[..1]);
+        let both = head(&[codex(), claude, old]);
+        assert!(both.contains("Claude 5h 40% · Codex 5h 12%"), "{both}");
+        let only = head(&[codex()]);
+        assert!(
+            only.contains("Codex 5h 12%") && !only.contains("Claude"),
+            "{only}"
+        );
         let once = list_lines(&es, None, &cfg, 0, 100);
         assert_eq!(once.len(), 4, "no hint without a selection");
         let ascii = config::Config {

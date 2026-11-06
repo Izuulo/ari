@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::sessions;
 use crate::state::{self, Agent, State};
 use crate::tokens::{self, TokenCache};
-use crate::usage::{self, Usage};
+use crate::usage::{self, Limit, Usage};
 use std::path::Path;
 
 /// One live session, ready to merge.
@@ -45,6 +45,27 @@ pub fn load(root: &Path, now: u64) -> Vec<Part> {
         .collect()
 }
 
+/// Per-app limits from sessions' (app, 5h, 7d), most recent first: each app's freshest,
+/// Claude first. Empty unless a non-Claude app has limits (then one account is the whole story).
+pub fn group_limits(
+    seen: impl IntoIterator<Item = (App, Option<Limit>, Option<Limit>)>,
+) -> Vec<(String, Option<Limit>, Option<Limit>)> {
+    let mut limits: Vec<(App, Option<Limit>, Option<Limit>)> = vec![];
+    for (app, f, s) in seen {
+        if (f.is_some() || s.is_some()) && !limits.iter().any(|l| l.0 == app) {
+            limits.push((app, f, s));
+        }
+    }
+    if limits.iter().all(|l| l.0 == App::Claude) {
+        return vec![];
+    }
+    limits.sort_by_key(|l| l.0 != App::Claude); // stable: Claude first
+    limits
+        .into_iter()
+        .map(|(a, f, s)| (a.label().to_string(), f, s))
+        .collect()
+}
+
 /// One state over all sessions: the root `main` is you, each session's lead becomes `<key>`
 /// under it, and every other agent `<key>/<id>`. `parts` are most recently active first.
 pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
@@ -64,11 +85,7 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         ..Default::default()
     };
     let mut tok = TokenCache::default();
-    let mut limits: Vec<(
-        App,
-        Option<crate::usage::Limit>,
-        Option<crate::usage::Limit>,
-    )> = vec![];
+    let mut seen: Vec<(App, Option<Limit>, Option<Limit>)> = vec![];
     // shortcut: another session is addressed by its name as ARI knows it; aliases miss.
     let names: Vec<(String, String)> = parts
         .iter()
@@ -173,27 +190,19 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         {
             *u.cost_usd.get_or_insert(0.0) += c;
         }
-        // Limits are per account: each app's most recent session has the freshest.
-        if (p.u.five_h.is_some() || p.u.seven_d.is_some())
-            && !limits.iter().any(|(a, ..)| *a == p.app)
-        {
-            limits.push((p.app, p.u.five_h, p.u.seven_d));
-        }
+        seen.push((p.app, p.u.five_h, p.u.seven_d));
         tok.agents.insert(key.clone(), p.tokens.main);
         for (a, l) in p.tokens.agents {
             tok.agents.insert(id(&a), l);
         }
     }
-    if let Some((_, five, seven)) = limits.iter().find(|l| l.0 == App::Claude) {
+    if let Some((_, five, seven)) = seen
+        .iter()
+        .find(|l| l.0 == App::Claude && (l.1.is_some() || l.2.is_some()))
+    {
         (u.five_h, u.seven_d) = (*five, *seven);
     }
-    if limits.iter().any(|l| l.0 != App::Claude) {
-        limits.sort_by_key(|l| l.0 != App::Claude); // stable: Claude first
-        u.app_limits = limits
-            .into_iter()
-            .map(|(a, f, s)| (a.label().to_string(), f, s))
-            .collect();
-    }
+    u.app_limits = group_limits(seen);
     let span = |t: u64| if t == 0 { now } else { t };
     (st.agents[0].started, st.agents[0].last_t) = (span(st.first_t), span(st.last_t));
     st.messages.make_contiguous().sort_by_key(|m| m.t);
