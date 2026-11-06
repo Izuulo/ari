@@ -1,0 +1,6 @@
+Do these steps in order, using the tools named:
+1. Use TaskCreate to create two tasks: "write notes" and "check notes".
+2. In one message, call the Agent tool twice to start two general-purpose subagents in the foreground. Set the Agent tool's `name` parameter on each call so they can message each other:
+   - name "writer": use Write to create notes.md with three lines about rain, then use SendMessage with to "checker" to say notes.md is ready, then finish.
+   - name "checker": read notes.md with Read (retry a few times if it is not there yet), then use SendMessage with to "writer" to say how many lines it has, and finish.
+3. When both have finished, mark both tasks completed with TaskUpdate and reply with one line.

@@ -17,6 +17,12 @@ fn basic_events() {
 }
 
 #[test]
+fn team_events() {
+    let lines: String = fixture("team").iter().map(event::to_line).collect();
+    insta::assert_snapshot!(lines);
+}
+
+#[test]
 fn basic_timeline() {
     insta::assert_snapshot!(replay::format(&fixture("basic")));
 }

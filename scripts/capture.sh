@@ -19,7 +19,7 @@ import json, shlex, sys
 bin, raw, state = sys.argv[1:]
 cmd = f"ARI_RAW_LOG={shlex.quote(raw)} XDG_STATE_HOME={shlex.quote(state)} {shlex.quote(bin)} hook"
 events = ("SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure SubagentStart "
-          "SubagentStop Notification PreCompact PostCompact Stop StopFailure SessionEnd TaskCreated TaskCompleted").split()
+          "SubagentStop Notification PermissionRequest PreCompact PostCompact Stop StopFailure SessionEnd TaskCreated TaskCompleted").split()
 print(json.dumps({"hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 2}]}] for e in events}}))
 PY
 
