@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-11-06
 
 - **`ari hub --all`** (or `x` in `ari watch --all`): one hub over every live session. Each session is a node under you with its agents folded in, messages between sessions draw as arcs, any agent waiting on you turns it `NEEDS YOU`, and each session's context is measured against its own window.
 - Errors from different scripts of one runner (`npm run build` vs `npm run lint`, `python -m pytest` vs `python -m mypy`) are tracked apart: one passing no longer marks the other fixed, and three different failures no longer read as STUCK.
