@@ -272,10 +272,16 @@ pub fn cached(dir: &Path) -> TokenCache {
 pub fn update(dir: &Path, st: &State, transcript: Option<&str>) -> TokenCache {
     let mut c = cached(dir);
     let before = c.clone();
+    let codex = crate::app::of(dir) == crate::app::App::Codex;
     if let Some(main) = transcript {
-        read_ledger(Path::new(main), &mut c.main);
+        if codex {
+            c.main = crate::codex::ledger(Path::new(main)).unwrap_or_default();
+        } else {
+            read_ledger(Path::new(main), &mut c.main);
+        }
     }
-    for a in st.agents.iter().filter(|a| a.id != "main") {
+    // shortcut: Codex subagents aren't counted separately until a real recording shows their logs.
+    for a in st.agents.iter().filter(|a| !codex && a.id != "main") {
         let path = a
             .transcript
             .clone()

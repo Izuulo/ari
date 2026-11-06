@@ -3,6 +3,7 @@ pub mod ascii;
 pub mod bar;
 pub mod burn;
 pub mod chain;
+pub mod codex;
 pub mod config;
 pub mod conflicts;
 pub mod demo;
