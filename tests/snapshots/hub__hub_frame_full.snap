@@ -1,0 +1,53 @@
+---
+source: tests/hub.rs
+expression: "show(&s, &x, now, HubView::default(), 168, 49)"
+---
+ ARI hub · Do these steps in order, using the tool…                                                                                                               13:04 
+ ✓ DONE │ ▰▰▰▰▰▰▰▰▰▰ 2/2 │ ✗ 0 │ ctx — │ 5h — │ 7d — │ 326k tok                                                                                                         
+╭─ graph ────────────────────────────────────────────────────────────────────── 3 agents · 1 link ─╮╭─ agents ─────────────────────────────────────────────────────────╮
+│                                       ┏━ ✓ main ━━━━━━━━━┓                                       ││ agent       model   state          context                   tok │
+│                                       ┃ haiku · ctx 17%  ┃                                       ││▸◆ main      haiku   ✓ done         ▰▰▱▱▱▱▱▱▱▱  17%          160k │
+│                                       ┃ —                ┃                                       ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
+│                                       ┗━━━━━━━━━┳━━━━━━━━┛                                       ││ └ writer    haiku   ✓ done 3s      ▰▱▱▱▱▱▱▱▱▱  11%           83k │
+│                                                 │                                                ││                                                                  │
+│                                           ╭─────┴─────────────────╮                              ││                                                                  │
+│                                 ↩ result  │             ↩ result  │                              ││                                                                  │
+│                           ╭─ ✓ checker ───┴──╮    ╭─ ✓ writer ────┴──╮                           ││                                                                  │
+│                           │ haiku · ctx 11%  │    │ haiku · ctx 11%  │                           ││                                                                  │
+│                           │ I read notes.md… │    │ The checker con… │                           ││                                                                  │
+│                           ╰─────────┰────────╯    ╰─────────┰────────╯                           ││                                                                  │
+│                                     ┃                       ┃                                    ││                                                                  │
+│                                     ┗━━━━━━━━━━━━━━━━━━━━━━━┛                                    ││                                                                  │
+│                                   ⇄ 2 · "notes.md has 3 lines."                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│ ── spawn   ━━ message   ● in flight   dim = finished                                             ││                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
+┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━ 22s ━┓                                                                                                                              
+┃ main · 7 calls · 160k tok              ┃                                                                                                                              
+┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k       ┃                                                                                                                              
+┃ filled by messages 7.4k                ┃                                                                                                                              
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
+┃ 19s ToolS ToolSearch             ✓ .0s ┃                                                                                                                              
+┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
+┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
+┃ 14s Agent general-purpose: Wri… ✓ 6.6s ┃                                                                                                                              
+┃ 13s Agent general-purpose: Che… ✓ 8.6s ┃                                                                                                                              
+┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
+┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
+┃                                        ┃                                                                                                                              
+┃                                        ┃                                                                                                                              
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
+┃ ✓ done                              2s ┃                                                                                                                              
+┃                                        ┃                                                                                                                              
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                                                                              
+╭─ messages ──────────────────────────────────────────────────────── 2 this session · newest last ─╮╭─ activity ─────────────────────────── last 10 min · 12 s a cell ─╮
+│   9s  writer    ━▸ checker   notes.md is ready in /home/user/proj. It has three lines about rai… ││ main                                                     ▆▄▄ ✓   │
+│   5s  checker   ━▸ writer    notes.md has 3 lines.                                               ││ checker                                                   █  ✓   │
+│                                                                                                  ││ writer                                                    ▆  ✓   │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││           −10m                   −5m                     now     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
+  ↑↓ select   ⏎ zoom   g graph   z show finished (2)   x back to panel   q quit                                                                                  168×49

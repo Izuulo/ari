@@ -7,7 +7,7 @@ use crate::panel::{self, View};
 use crate::state::State;
 use crate::tokens::{self, Ledger, TokenCache};
 use crate::usage::{Limit, Usage};
-use crate::{config, replay, watch};
+use crate::{config, hub, replay, watch};
 use ratatui::layout::Alignment;
 use std::time::Instant;
 
@@ -165,27 +165,36 @@ pub fn run(args: &[String]) -> ! {
     }
     let start = Instant::now();
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    let result = watch::run_tui(|view, _tab, w, h| {
+    let result = watch::run_tui(View::default(), |view, _tab, w, h| {
         let progress = (start.elapsed().as_millis() as f64 * speed) as u64;
         let (st, u, x, now) = frame_at(&events, progress);
-        let lines = panel::lines(
-            &st,
-            &u,
-            &x,
-            &cfg,
-            view,
-            now,
-            &panel::local_hhmm(now),
-            w,
-            h,
-            color,
-        );
-        (
-            lines,
-            progress < total || st.turn_active,
-            Alignment::Left,
-            None,
-        )
+        let clock = panel::local_hhmm(now);
+        let animating = progress < total || st.turn_active;
+        if let Some(hv) = view.hub.filter(|_| hub::fit(w, h) != hub::Fit::TooSmall) {
+            let i = hub::Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now,
+                clock: &clock,
+            };
+            let lines = hub::lines(&i, &hv, w, h, color);
+            let lines = if cfg.ascii {
+                crate::ascii::map_lines(lines)
+            } else {
+                lines
+            };
+            return (
+                lines,
+                animating,
+                Alignment::Left,
+                None,
+                Some(st.agents.len().max(1)),
+            );
+        }
+        let lines = panel::lines(&st, &u, &x, &cfg, view, now, &clock, w, h, color);
+        (lines, animating, Alignment::Left, None, None)
     });
     if let Err(e) = result {
         fail(&e.to_string());

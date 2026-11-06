@@ -51,7 +51,39 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 ╰──────────────────────────────────────────────────────╯
 ```
 
-Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session. `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
+Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
+
+### Every agent at once: the hub
+
+Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. This is the top of it, replaying the bundled `team` fixture (two named subagents passing a file):
+
+```
+ ARI hub · Do these steps in order, using the tool…                                                                                                               13:04
+ ✓ DONE │ ▰▰▰▰▰▰▰▰▰▰ 2/2 │ ✗ 0 │ ctx — │ 5h — │ 7d — │ 326k tok
+╭─ graph ────────────────────────────────────────────────────────────────────── 3 agents · 1 link ─╮╭─ agents ─────────────────────────────────────────────────────────╮
+│                                       ┏━ ✓ main ━━━━━━━━━┓                                       ││ agent       model   state          context                   tok │
+│                                       ┃ haiku · ctx 17%  ┃                                       ││▸◆ main      haiku   ✓ done         ▰▰▱▱▱▱▱▱▱▱  17%          160k │
+│                                       ┃ —                ┃                                       ││ ├ checker   haiku   ✓ done 4s      ▰▱▱▱▱▱▱▱▱▱  11%           82k │
+│                                       ┗━━━━━━━━━┳━━━━━━━━┛                                       ││ └ writer    haiku   ✓ done 3s      ▰▱▱▱▱▱▱▱▱▱  11%           83k │
+│                                                 │                                                ││                                                                  │
+│                                           ╭─────┴─────────────────╮                              ││                                                                  │
+│                                 ↩ result  │             ↩ result  │                              ││                                                                  │
+│                           ╭─ ✓ checker ───┴──╮    ╭─ ✓ writer ────┴──╮                           ││                                                                  │
+│                           │ haiku · ctx 11%  │    │ haiku · ctx 11%  │                           ││                                                                  │
+│                           │ I read notes.md… │    │ The checker con… │                           ││                                                                  │
+│                           ╰─────────┰────────╯    ╰─────────┰────────╯                           ││                                                                  │
+│                                     ┃                       ┃                                    ││                                                                  │
+│                                     ┗━━━━━━━━━━━━━━━━━━━━━━━┛                                    ││                                                                  │
+│                                   ⇄ 2 · "notes.md has 3 lines."                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│                                                                                                  ││                                                                  │
+│ ── spawn   ━━ message   ● in flight   dim = finished                                             ││                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
+┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━ 22s ━┓
+```
+
+`↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, `esc` goes back one level and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call.
 
 ### What a session got done: `ari recap`
 

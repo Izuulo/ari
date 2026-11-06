@@ -9,9 +9,14 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 10;
+const CACHE_VERSION: u32 = 11;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
+const RECENT_CALLS: usize = 40;
+pub const LANE_MS: u64 = 12_000;
+pub const LANES: usize = 50;
+const MESSAGES: usize = 60;
+const SPAWNS: usize = 16;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 /// Bookkeeping tools that repeat by design.
 const NOT_LOOPS: [&str; 6] = [
@@ -82,6 +87,10 @@ pub struct State {
     pub permission_mode: Option<String>,
     /// Set by a resumed session's start, cleared at the main agent's Stop.
     pub resume: Option<Resume>,
+    /// Messages between agents (SendMessage), oldest first.
+    pub messages: VecDeque<Msg>,
+    /// Agent tool calls whose subagent hasn't shown up yet.
+    pub spawns: VecDeque<Spawn>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -198,6 +207,8 @@ pub struct Task {
     pub id: String,
     pub subject: String,
     pub status: String,
+    pub owner: Option<String>,
+    pub blocked: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -215,6 +226,72 @@ pub struct Agent {
     pub ended_t: Option<u64>,
     /// When the tool it's running now started; `None` between tools.
     pub running_since: Option<u64>,
+    /// The name its spawn gave it (SendMessage addresses agents by it).
+    pub name: Option<String>,
+    /// Id of the agent that spawned it.
+    pub parent: Option<String>,
+    pub prompt: Option<String>,
+    /// Its last tool calls, oldest first.
+    pub recent: VecDeque<CallRec>,
+    /// A permission prompt it's waiting on: (since, action).
+    pub waiting: Option<(u64, String)>,
+    /// Tool calls per `LANE_MS` bucket: (bucket, count), oldest first.
+    pub lane: VecDeque<(u64, u16)>,
+    /// Files it edited, by path as shown.
+    pub files: BTreeMap<String, FileRec>,
+}
+
+impl Agent {
+    pub fn label(&self) -> String {
+        if self.id == "main" {
+            "main".into()
+        } else {
+            self.name.clone().unwrap_or_else(|| self.kind.clone())
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct CallRec {
+    pub t: u64,
+    /// tool_use_id, to pair a result with its call when calls overlap.
+    pub id: Option<String>,
+    pub tool: String,
+    pub act: String,
+    pub ok: Option<bool>,
+    pub dur: Option<u64>,
+    /// The failure's first line.
+    pub msg: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Msg {
+    pub t: u64,
+    /// Agent ids (`main` for the lead); `to` stays as written when no agent has that name.
+    pub from: String,
+    pub to: String,
+    pub text: String,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Spawn {
+    /// The Agent call's tool_use_id.
+    pub id: String,
+    pub by: String,
+    pub name: Option<String>,
+    pub kind: String,
+    pub prompt: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct FileRec {
+    pub edits: u32,
+    pub added: u32,
+    pub removed: u32,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -317,6 +394,18 @@ impl State {
             let a = self.agent_mut(aid, ev);
             a.last_t = ev.t;
         }
+        if matches!(
+            ev.e.as_str(),
+            "PreToolUse"
+                | "PostToolUse"
+                | "PostToolUseFailure"
+                | "Stop"
+                | "SubagentStop"
+                | "StopFailure"
+        ) && let Some(a) = self.agents.iter_mut().find(|a| a.id == aid)
+        {
+            a.waiting = None;
+        }
         match ev.e.as_str() {
             "UserPromptSubmit" => {
                 if let Some(since) = self.time.idle_since.take() {
@@ -324,6 +413,9 @@ impl State {
                 }
                 let msg = ev.msg.as_deref().unwrap_or("");
                 self.needs_you = None;
+                for a in &mut self.agents {
+                    a.waiting = None;
+                }
                 self.start_turn();
                 if !crate::event::is_synthetic(msg) {
                     // An Esc interrupt fires no Stop; the next prompt ends that turn.
@@ -355,6 +447,55 @@ impl State {
                 a.calls += 1;
                 a.running_since = Some(ev.t);
                 a.act = ev.act.clone();
+                a.recent.push_back(CallRec {
+                    t: ev.t,
+                    id: ev.id.clone(),
+                    tool: ev.tool.clone().unwrap_or_default(),
+                    act: ev.act.clone().unwrap_or_default(),
+                    ..Default::default()
+                });
+                if a.recent.len() > RECENT_CALLS {
+                    a.recent.pop_front();
+                }
+                let b = ev.t / LANE_MS;
+                match a.lane.back_mut() {
+                    Some((lb, n)) if *lb == b => *n = n.saturating_add(1),
+                    _ => a.lane.push_back((b, 1)),
+                }
+                while a
+                    .lane
+                    .front()
+                    .is_some_and(|(lb, _)| *lb + LANES as u64 <= b)
+                {
+                    a.lane.pop_front();
+                }
+                match ev.tool.as_deref() {
+                    Some("Agent") => {
+                        self.spawns.push_back(Spawn {
+                            id: ev.id.clone().unwrap_or_default(),
+                            by: aid.into(),
+                            name: ev.name.clone(),
+                            kind: ev.kind.clone().unwrap_or_default(),
+                            prompt: ev.msg.clone(),
+                        });
+                        if self.spawns.len() > SPAWNS {
+                            self.spawns.pop_front();
+                        }
+                    }
+                    Some("SendMessage") if ev.to.is_some() => {
+                        let to = self.resolve(ev.to.as_deref().unwrap_or(""));
+                        self.messages.push_back(Msg {
+                            t: ev.t,
+                            from: aid.into(),
+                            to,
+                            text: ev.msg.clone().unwrap_or_default(),
+                        });
+                        if self.messages.len() > MESSAGES {
+                            self.messages.pop_front();
+                        }
+                    }
+                    _ => {}
+                }
                 self.calls.push_back(Call {
                     agent: aid.into(),
                     tool: ev.tool.clone().unwrap_or_default(),
@@ -389,7 +530,34 @@ impl State {
                         self.test_runs.pop_front();
                     }
                 }
-                self.agent_mut(aid, ev).running_since = None;
+                let a = self.agent_mut(aid, ev);
+                a.running_since = None;
+                let tool = ev.tool.as_deref().unwrap_or("");
+                // Parallel calls of one tool: match by tool_use_id, else the oldest still open.
+                let k = a
+                    .recent
+                    .iter()
+                    .position(|r| r.ok.is_none() && r.id.is_some() && r.id == ev.id)
+                    .or_else(|| {
+                        a.recent
+                            .iter()
+                            .position(|r| r.ok.is_none() && r.tool == tool)
+                    });
+                if let Some(r) = k.map(|k| &mut a.recent[k]) {
+                    r.ok = ev.ok;
+                    r.dur = ev.dur;
+                    r.msg = ev.msg.clone().filter(|_| ev.ok == Some(false));
+                }
+                if let (Some((added, removed)), Some(act)) = (ev.lines, &ev.act) {
+                    let path = act.strip_prefix("editing ").unwrap_or(act);
+                    let f = a.files.entry(path.to_string()).or_default();
+                    f.edits += 1;
+                    f.added += added;
+                    f.removed += removed;
+                }
+                if tool == "Agent" {
+                    self.spawns.retain(|s| Some(&s.id) != ev.id.as_ref());
+                }
                 self.tool_result(ev, aid);
                 self.update_tasks(ev);
             }
@@ -406,6 +574,10 @@ impl State {
                 a.transcript = ev.path.clone();
                 a.act = None;
                 a.running_since = None;
+            }
+            "PermissionRequest" => {
+                let a = self.agent_mut(aid, ev);
+                a.waiting = Some((ev.t, ev.act.clone().unwrap_or_default()));
             }
             "Notification" => {
                 if ev
@@ -521,11 +693,21 @@ impl State {
         let i = match self.agents.iter().position(|a| a.id == id) {
             Some(i) => i,
             None => {
+                // A new agent claims the oldest pending spawn of its type, else the oldest.
+                let claim = self
+                    .spawns
+                    .iter()
+                    .position(|s| Some(&s.kind) == ev.at.as_ref())
+                    .or_else(|| (!self.spawns.is_empty()).then_some(0))
+                    .and_then(|k| self.spawns.remove(k));
                 self.agents.push(Agent {
                     id: id.into(),
                     kind: ev.at.clone().unwrap_or_else(|| "agent".into()),
                     started: ev.t,
                     last_t: ev.t,
+                    name: claim.as_ref().and_then(|c| c.name.clone()),
+                    parent: claim.as_ref().map(|c| c.by.clone()),
+                    prompt: claim.and_then(|c| c.prompt),
                     ..Default::default()
                 });
                 self.agents.len() - 1
@@ -538,6 +720,28 @@ impl State {
             a.kind = at.clone();
         }
         a
+    }
+
+    /// A SendMessage recipient as an agent id; unknown names stay as written.
+    fn resolve(&self, to: &str) -> String {
+        match to {
+            "team-lead" | "main" | "lead" => "main".into(),
+            _ => self
+                .agent_by_name(to)
+                .map_or_else(|| to.into(), |a| a.id.clone()),
+        }
+    }
+
+    pub fn agent_by_name(&self, name: &str) -> Option<&Agent> {
+        self.agents.iter().find(|a| a.name.as_deref() == Some(name))
+    }
+
+    /// The agent with the oldest open permission wait.
+    pub fn waiting(&self) -> Option<&Agent> {
+        self.agents
+            .iter()
+            .filter(|a| a.waiting.is_some())
+            .min_by_key(|a| a.waiting.as_ref().map(|w| w.0))
     }
 
     fn agent_label(&self, id: &str) -> String {
@@ -625,6 +829,7 @@ impl State {
                     id: format!("todo-{i}"),
                     subject: t.c.clone(),
                     status: t.s.clone(),
+                    ..Default::default()
                 })
                 .collect();
         }
@@ -640,6 +845,7 @@ impl State {
                     id: t.id.clone(),
                     subject: format!("task #{}", t.id),
                     status: "pending".into(),
+                    ..Default::default()
                 });
                 self.tasks.last_mut().unwrap()
             }
@@ -649,6 +855,12 @@ impl State {
         }
         if let Some(s) = &t.status {
             task.status = s.clone();
+        }
+        if t.owner.is_some() {
+            task.owner.clone_from(&t.owner);
+        }
+        if !t.blocked.is_empty() {
+            task.blocked.clone_from(&t.blocked);
         }
     }
 
@@ -705,7 +917,7 @@ impl State {
     }
 
     pub fn verdict_with(&self, _now: u64, repeats: u8) -> Verdict {
-        if self.needs_you.is_some() {
+        if self.needs_you.is_some() || self.waiting().is_some() {
             return Verdict::NeedsYou;
         }
         if self.turn_failed {
@@ -979,6 +1191,231 @@ mod tests {
     use super::*;
     use crate::event::{TaskRef, Todo};
 
+    fn at(t: u64, e: &str, a: Option<&str>) -> Event {
+        Event {
+            t,
+            e: e.into(),
+            a: a.map(String::from),
+            ..Default::default()
+        }
+    }
+    fn spawn(t: u64, id: &str, name: Option<&str>, kind: &str) -> Event {
+        Event {
+            tool: Some("Agent".into()),
+            id: Some(id.into()),
+            name: name.map(String::from),
+            kind: Some(kind.into()),
+            msg: Some(format!("do {id}")),
+            ..at(t, "PreToolUse", None)
+        }
+    }
+    fn start(t: u64, a: &str, kind: &str) -> Event {
+        Event {
+            at: Some(kind.into()),
+            ..at(t, "SubagentStart", Some(a))
+        }
+    }
+    fn send(t: u64, from: Option<&str>, to: &str, text: &str) -> Event {
+        Event {
+            tool: Some("SendMessage".into()),
+            to: Some(to.into()),
+            msg: Some(text.into()),
+            ..at(t, "PreToolUse", from)
+        }
+    }
+    fn agent<'a>(s: &'a State, id: &str) -> &'a Agent {
+        s.agents.iter().find(|a| a.id == id).unwrap()
+    }
+
+    #[test]
+    fn spawn_claims_name_parent_and_prompt() {
+        let s = run(&[
+            spawn(1, "tu1", Some("impl"), "Explore"),
+            start(2, "a1", "Explore"),
+        ]);
+        let a = agent(&s, "a1");
+        assert_eq!(a.name.as_deref(), Some("impl"));
+        assert_eq!(a.parent.as_deref(), Some("main"));
+        assert_eq!(a.prompt.as_deref(), Some("do tu1"));
+        assert!(s.spawns.is_empty());
+        assert_eq!(a.label(), "impl");
+        assert_eq!(s.agents[0].label(), "main");
+    }
+
+    #[test]
+    fn spawn_matches_by_type_then_oldest() {
+        let s = run(&[
+            spawn(1, "tu1", Some("p"), "Plan"),
+            spawn(2, "tu2", Some("e"), "Explore"),
+            start(3, "a1", "Explore"),
+            start(4, "a2", "Other"),
+        ]);
+        assert_eq!(agent(&s, "a1").name.as_deref(), Some("e"));
+        assert_eq!(agent(&s, "a2").name.as_deref(), Some("p"));
+        // A woken agent starts again under its id and claims nothing.
+        let mut s = s;
+        s.apply(&spawn(5, "tu3", Some("x"), "Explore"));
+        s.apply(&start(6, "a1", "Explore"));
+        assert_eq!(agent(&s, "a1").name.as_deref(), Some("e"));
+        assert_eq!(s.spawns.len(), 1);
+        let unnamed = run(&[spawn(1, "tu1", None, "Explore"), start(2, "a1", "Explore")]);
+        assert_eq!(agent(&unnamed, "a1").label(), "Explore");
+    }
+
+    #[test]
+    fn send_message_resolves_names() {
+        let s = run(&[
+            spawn(1, "tu1", Some("impl"), "general-purpose"),
+            start(2, "a1", "general-purpose"),
+            spawn(3, "tu2", Some("tester"), "general-purpose"),
+            start(4, "a2", "general-purpose"),
+            send(5, Some("a2"), "impl", "2 failing"),
+            send(6, Some("a1"), "team-lead", "done"),
+            send(7, None, "ghost", "hi"),
+        ]);
+        let m: Vec<_> = s
+            .messages
+            .iter()
+            .map(|m| (m.from.as_str(), m.to.as_str(), m.text.as_str()))
+            .collect();
+        assert_eq!(
+            m,
+            [
+                ("a2", "a1", "2 failing"),
+                ("a1", "main", "done"),
+                ("main", "ghost", "hi")
+            ]
+        );
+        assert_eq!(s.agent_by_name("tester").map(|a| a.id.as_str()), Some("a2"));
+    }
+
+    #[test]
+    fn recent_calls_record_result_and_cap() {
+        let pre = tool("PreToolUse", "cargo test", None);
+        let fail = Event {
+            dur: Some(300),
+            msg: Some("exit 1".into()),
+            ..tool("PostToolUseFailure", "cargo test", Some(false))
+        };
+        let s = run(&[pre.clone(), fail]);
+        let r = s.agents[0].recent.back().unwrap();
+        assert_eq!(
+            (r.ok, r.dur, r.msg.as_deref()),
+            (Some(false), Some(300), Some("exit 1"))
+        );
+        assert_eq!(r.tool, "Bash");
+        let s = run(&vec![pre; 45]);
+        assert_eq!(s.agents[0].recent.len(), 40);
+    }
+
+    #[test]
+    fn permission_wait_is_per_agent() {
+        let wait = Event {
+            tool: Some("Bash".into()),
+            act: Some("$ curl -s x".into()),
+            ..at(3, "PermissionRequest", Some("a1"))
+        };
+        let mut s = run(&[
+            at(1, "UserPromptSubmit", None),
+            start(2, "a1", "general-purpose"),
+            start(2, "a2", "general-purpose"),
+            wait,
+        ]);
+        assert_eq!(s.verdict(4), Verdict::NeedsYou);
+        assert_eq!(s.waiting().map(|a| a.id.as_str()), Some("a1"));
+        assert_eq!(agent(&s, "a1").waiting, Some((3, "$ curl -s x".into())));
+        s.apply(&Event {
+            tool: Some("Read".into()),
+            ..at(5, "PreToolUse", Some("a2"))
+        });
+        assert_eq!(s.verdict(6), Verdict::NeedsYou);
+        s.apply(&Event {
+            tool: Some("Bash".into()),
+            ok: Some(true),
+            ..at(7, "PostToolUse", Some("a1"))
+        });
+        assert_eq!(s.verdict(8), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn parallel_calls_match_by_tool_use_id() {
+        let call = |e: &str, id: &str, ok: Option<bool>| Event {
+            tool: Some("Read".into()),
+            id: Some(id.into()),
+            act: Some(format!("reading {id}")),
+            ok,
+            msg: (ok == Some(false)).then(|| format!("{id} failed")),
+            ..at(1, e, None)
+        };
+        let s = run(&[
+            call("PreToolUse", "a", None),
+            call("PreToolUse", "b", None),
+            call("PreToolUse", "c", None),
+            call("PostToolUseFailure", "a", Some(false)),
+            call("PostToolUse", "b", Some(true)),
+        ]);
+        let r: Vec<_> = s.agents[0]
+            .recent
+            .iter()
+            .map(|r| (r.act.as_str(), r.ok, r.msg.as_deref()))
+            .collect();
+        assert_eq!(
+            r,
+            [
+                ("reading a", Some(false), Some("a failed")),
+                ("reading b", Some(true), None),
+                ("reading c", None, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn lanes_bucket_by_12s() {
+        let p = |t| Event {
+            tool: Some("Read".into()),
+            ..at(t, "PreToolUse", None)
+        };
+        let s = run(&[p(0), p(5_000), p(13_000)]);
+        assert_eq!(s.agents[0].lane, [(0, 2), (1, 1)]);
+        let s = run(&(0..60).map(|i| p(i * 12_000)).collect::<Vec<_>>());
+        assert_eq!(s.agents[0].lane.len(), 50);
+    }
+
+    #[test]
+    fn files_count_edits_and_lines() {
+        let e = Event {
+            tool: Some("Edit".into()),
+            act: Some("editing src/a.rs".into()),
+            ok: Some(true),
+            lines: Some((3, 2)),
+            ..at(1, "PostToolUse", None)
+        };
+        let s = run(&[e.clone(), e]);
+        assert_eq!(
+            s.agents[0].files["src/a.rs"],
+            FileRec {
+                edits: 2,
+                added: 6,
+                removed: 4
+            }
+        );
+    }
+
+    #[test]
+    fn task_owner_and_blocked_kept() {
+        let s = run(&[Event {
+            task: Some(TaskRef {
+                id: "4".into(),
+                owner: Some("impl".into()),
+                blocked: vec!["3".into()],
+                ..Default::default()
+            }),
+            ..at(1, "TaskCreated", None)
+        }]);
+        assert_eq!(s.tasks[0].owner.as_deref(), Some("impl"));
+        assert_eq!(s.tasks[0].blocked, ["3"]);
+    }
+
     fn ev(e: &str) -> Event {
         Event {
             t: 1_000,
@@ -1043,6 +1480,7 @@ mod tests {
                 id: id.into(),
                 subject: subject.map(Into::into),
                 status: status.map(Into::into),
+                ..Default::default()
             }),
             ..ev("TaskCreated")
         }
@@ -1527,6 +1965,7 @@ mod tests {
                 id: "1".into(),
                 subject: None,
                 status: Some("in_progress".into()),
+                ..Default::default()
             }),
             ..ev("PostToolUse")
         });

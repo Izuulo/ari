@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The hub**: `x` in `ari watch` (or `ari hub`) takes the whole terminal. It shows a graph of spawns and messages between agents, a table with each agent's own context window, a watch window per running agent, the message log and activity lanes. `⏎` zooms into one agent (timeline, what filled its context, files, tasks, errors) and `g` shows the graph full size with the task list. Needs 120×30; `--ascii` works too.
+- A new `PermissionRequest` hook records which agent is waiting on you and for what; any waiting agent makes the verdict `NEEDS YOU`, even while others keep working.
+- The hook also records subagent names and spawn prompts, `SendMessage` recipients and text, and lines in and out per file edit.
+
 - Clearer panel (from a UI audit): error rows name the real command (not a leading `cd`) and show `exit N` when the output names no problem; fixed errors fold into one count line (`e` lists them, `passed on retry`); the session section is three lines, cost first; unknown meters are left out; the pace warning leads the usage section; the session title sits after the verdict (no `milestone:`); the header shows the folder without `cd`; permission modes read `auto mode`, `plan mode`…; the face is off by default; task bars use the same `▰▱` cells as usage; stale agents show `?`; untracked sessions say `– not tracked`; agent summaries drop Markdown and stop after a sentence; the session list puts what a session is doing on its own line when narrow; the live panel lists its keys.
 
 - Sessions without hook events say `no hooks yet` (or `WORKING` while their transcript is moving) instead of a misleading `IDLE`.

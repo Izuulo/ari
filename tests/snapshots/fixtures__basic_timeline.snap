@@ -35,7 +35,7 @@ expression: "replay::format(&fixture(\"basic\"))"
  +17.5s  main       ✓ PostToolUse        task #2 completed
  +17.7s  main       ▶ PreToolUse         updating plan
  +17.7s  main       ✓ PostToolUse        task #3 in_progress
- +18.6s  main       ▶ PreToolUse         agent Explore: List files and read hello.py
+ +18.6s  main       ▶ PreToolUse         agent Explore: List files and read hello.py · Explore · In the current working directory (/home/user/proj), list the files, then read hello.py. Report back in exactly one sentence describing the files present and wh…
  +18.7s  main       ✓ PostToolUse        agent Explore: List files and read hello.py
  +18.7s  Explore    · SubagentStart
  +21.1s  main       · Stop               1 background running · The Explore subagent is still running, so I can't mark "explore files" completed or reply "done" yet. Progress so far:

@@ -1,5 +1,6 @@
 //! `ari watch`: the full panel in a terminal pane.
 
+use crate::hub::{self, Fit, HubView, Screen};
 use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
@@ -116,7 +117,11 @@ impl App {
     }
 
     fn animating(&self, now: u64) -> bool {
-        self.mode == Mode::All || self.st.turn_active || self.st.running_agents(now) > 0
+        self.mode == Mode::All
+            || self.st.turn_active
+            || self.st.running_agents(now) > 0
+            // A message in flight on the hub's graph.
+            || self.st.messages.back().is_some_and(|m| now.saturating_sub(m.t) < 2000)
     }
 
     fn cycle(&mut self) {
@@ -161,7 +166,7 @@ impl App {
                         plan: state::plan_file(&st),
                         ..Default::default()
                     };
-                    return (self.panel(&dir, &st, &usage, x, width, height, now), None);
+                    return self.view_lines(&dir, &st, &usage, x, width, height, now);
                 }
                 self.pinned = None; // gone: back to the list, tui_loop clears `open`
             }
@@ -173,16 +178,63 @@ impl App {
         let Some(dir) = &self.dir else {
             return (waiting(&self.mode), None);
         };
-        let lines = self.panel(
-            dir,
+        let dir = dir.clone();
+        self.view_lines(
+            &dir,
             &self.st,
             &self.usage,
             self.x.clone(),
             width,
             height,
             now,
-        );
-        (lines, None)
+        )
+    }
+
+    /// The hub when it's open and fits, else the panel (with a note when the hub doesn't fit).
+    /// The count is the hub's agents while the hub draws.
+    #[allow(clippy::too_many_arguments)]
+    fn view_lines(
+        &self,
+        dir: &Path,
+        st: &State,
+        usage: &Usage,
+        mut x: bar::Extras,
+        width: u16,
+        height: u16,
+        now: u64,
+    ) -> (Vec<Line<'static>>, Option<usize>) {
+        let Some(hv) = self.view.hub else {
+            return (
+                self.panel(dir, st, usage, x, width, height, now, None),
+                None,
+            );
+        };
+        if hub::fit(width, height) == Fit::TooSmall {
+            let note = format!("hub needs 120×30 · this window is {width}×{height} · x panel");
+            return (
+                self.panel(dir, st, usage, x, width, height, now, Some(note)),
+                None,
+            );
+        }
+        x.conflicts = crate::conflicts::cached(&self.root, dir, now);
+        x.transcript_age_ms =
+            tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
+        let clock = panel::local_hhmm(now);
+        let i = hub::Input {
+            st,
+            u: usage,
+            x: &x,
+            cfg: &self.cfg,
+            now,
+            clock: &clock,
+        };
+        let lines = hub::lines(&i, &hv, width, height, self.color);
+        let lines = if self.cfg.ascii {
+            crate::ascii::map_lines(lines)
+        } else {
+            lines
+        };
+        (lines, Some(st.agents.len().max(1)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -195,6 +247,7 @@ impl App {
         width: u16,
         height: u16,
         now: u64,
+        note: Option<String>,
     ) -> Vec<Line<'static>> {
         x.conflicts = crate::conflicts::cached(&self.root, dir, now);
         x.transcript_age_ms =
@@ -206,7 +259,9 @@ impl App {
             } else {
                 "tab next session"
             };
-            let text = format!("e errors · a agents · r recap · {back} · q quit");
+            let text = note.unwrap_or_else(|| {
+                format!("e errors · a agents · r recap · x hub · {back} · q quit")
+            });
             let text = crate::event::truncate(&text, width as usize);
             let text = if self.cfg.ascii {
                 crate::ascii::map(&text)
@@ -505,6 +560,7 @@ fn fail(msg: &str) -> ! {
 pub fn run(args: &[String]) -> ! {
     let mut mode = None;
     let mut once = false;
+    let mut start_hub = false;
     let mut ascii = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -512,6 +568,7 @@ pub fn run(args: &[String]) -> ! {
             "--all" => mode = Some(Mode::All),
             "--once" => once = true,
             "--ascii" => ascii = true,
+            "--hub" => start_hub = true,
             "--session" => {
                 let id = it.next().unwrap_or_else(|| fail("--session needs an id"));
                 if !paths::valid_session_id(id) {
@@ -520,7 +577,7 @@ pub fn run(args: &[String]) -> ! {
                 mode = Some(Mode::Fixed(id.clone()));
             }
             other => fail(&format!(
-                "unknown option {other} (try --session <id>, --all, --once, --ascii)"
+                "unknown option {other} (try --session <id>, --all, --once, --ascii, --hub)"
             )),
         }
     }
@@ -536,7 +593,10 @@ pub fn run(args: &[String]) -> ! {
             c.ascii |= ascii;
             c
         },
-        view: View::default(),
+        view: View {
+            hub: start_hub.then(HubView::default),
+            ..Default::default()
+        },
         dir: None,
         st: State::default(),
         usage: Usage::default(),
@@ -553,16 +613,24 @@ pub fn run(args: &[String]) -> ! {
     app.refresh();
 
     if once || !std::io::stdout().is_terminal() {
-        let width = std::env::var("COLUMNS")
-            .ok()
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(80);
-        println!("{}", panel::to_plain(&app.lines(width, u16::MAX)));
+        let env = |k: &str, d: u16| {
+            std::env::var(k)
+                .ok()
+                .and_then(|c| c.parse().ok())
+                .unwrap_or(d)
+        };
+        let (width, height) = if start_hub {
+            (env("COLUMNS", 168), env("LINES", 49))
+        } else {
+            (env("COLUMNS", 80), u16::MAX)
+        };
+        println!("{}", panel::to_plain(&app.lines(width, height)));
         std::process::exit(0)
     }
 
     app.interactive = true;
-    let result = run_tui(|view, tab, w, h| {
+    let first = app.view;
+    let result = run_tui(first, |view, tab, w, h| {
         if tab {
             app.cycle();
         }
@@ -580,8 +648,14 @@ pub fn run(args: &[String]) -> ! {
         } else {
             Alignment::Left
         };
-        let (lines, list_len) = app.frame_lines(w, h);
-        (lines, app.animating(now), align, list_len)
+        let (lines, agents) = app.frame_lines(w, h);
+        // The `--all` list's length rides in the same slot; the hub's count is separate.
+        let (list_len, agents) = if app.mode == Mode::All && !app.view.open {
+            (agents, None)
+        } else {
+            (None, agents)
+        };
+        (lines, app.animating(now), align, list_len, agents)
     });
     if let Err(e) = result {
         fail(&e.to_string());
@@ -589,8 +663,53 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
-/// Apply a key to the view; true means quit. `list_len` is `Some` while the `--all` list shows.
-fn key(view: &mut View, code: KeyCode, list_len: Option<usize>) -> bool {
+/// Apply a key to the view; true means quit. `list_len` is `Some` while the `--all` list shows,
+/// `agents` while the hub draws.
+fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<usize>) -> bool {
+    // The `--all` list keeps its keys; the hub's apply only while it draws (`agents` is Some).
+    if let Some(h) = view.hub.as_mut()
+        && list_len.is_none()
+    {
+        let Some(n) = agents.map(|n| n.max(1)) else {
+            match code {
+                KeyCode::Char('q') => return true,
+                KeyCode::Char('x') => view.hub = None,
+                _ => {}
+            }
+            return false;
+        };
+        match code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Char('x') => view.hub = None,
+            KeyCode::Esc if h.screen == Screen::Hub => view.hub = None,
+            KeyCode::Esc | KeyCode::Char('h') => {
+                h.screen = Screen::Hub;
+                h.scroll = 0;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                h.sel = h.sel.saturating_sub(1);
+                h.scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                h.sel = (h.sel + 1).min(n - 1);
+                h.scroll = 0;
+            }
+            KeyCode::Enter => {
+                h.screen = Screen::Zoom;
+                h.scroll = 0;
+            }
+            KeyCode::Char('g') => h.screen = Screen::Graph,
+            KeyCode::Char('z') => h.show_done ^= true,
+            KeyCode::PageUp => h.scroll += 10,
+            KeyCode::PageDown => h.scroll = h.scroll.saturating_sub(10),
+            _ => {}
+        }
+        return false;
+    }
+    if code == KeyCode::Char('x') && list_len.is_none() {
+        view.hub = Some(HubView::default());
+        return false;
+    }
     match (code, list_len) {
         (KeyCode::Char('q'), _) => return true,
         (KeyCode::Esc, _) if view.open => view.open = false,
@@ -609,31 +728,45 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>) -> bool {
     false
 }
 
-/// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment, and
-/// `Some(entries)` while the selectable `--all` list is drawn.
-pub type Frame = (Vec<Line<'static>>, bool, Alignment, Option<usize>);
+/// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment,
+/// `Some(entries)` while the selectable `--all` list is drawn, and `Some(agents)` while the hub is.
+pub type Frame = (
+    Vec<Line<'static>>,
+    bool,
+    Alignment,
+    Option<usize>,
+    Option<usize>,
+);
 
 /// Own the terminal (alternate screen, raw mode, restored on exit or panic) and redraw
 /// until `q`. `frame(view, tab_pressed, width, height)` produces each frame.
-pub fn run_tui(mut frame: impl FnMut(View, bool, u16, u16) -> Frame) -> std::io::Result<()> {
+pub fn run_tui(
+    view: View,
+    mut frame: impl FnMut(View, bool, u16, u16) -> Frame,
+) -> std::io::Result<()> {
     let mut term = ratatui::init();
-    let result = tui_loop(&mut term, &mut frame);
+    let result = tui_loop(&mut term, view, &mut frame);
     ratatui::restore();
     result
 }
 
 fn tui_loop(
     term: &mut ratatui::DefaultTerminal,
+    mut view: View,
     frame: &mut impl FnMut(View, bool, u16, u16) -> Frame,
 ) -> std::io::Result<()> {
-    let mut view = View::default();
     let mut tab = false;
     let mut list_len;
+    let mut hub_agents;
     loop {
         let size = term.size()?;
-        let (lines, animating, align, n) =
+        let (lines, animating, align, n, agents) =
             frame(view, std::mem::take(&mut tab), size.width, size.height);
         list_len = n;
+        hub_agents = agents;
+        if let (Some(h), Some(a)) = (view.hub.as_mut(), agents) {
+            h.sel = h.sel.min(a.saturating_sub(1));
+        }
         if let Some(n) = n {
             view.sel = view.sel.min(n.saturating_sub(1));
             view.open = false; // a list frame means nothing is open (or it vanished)
@@ -650,7 +783,7 @@ fn tui_loop(
             }
             if k.code == KeyCode::Tab {
                 tab = true;
-            } else if key(&mut view, k.code, list_len) {
+            } else if key(&mut view, k.code, list_len, hub_agents) {
                 return Ok(());
             }
         }
@@ -665,6 +798,228 @@ fn recap_due(built: Option<Instant>, dirty: bool) -> bool {
 #[cfg(test)]
 mod key_tests {
     use super::*;
+    use crate::hub::{HubView, Screen};
+
+    fn hub_view(screen: Screen, sel: usize) -> View {
+        View {
+            hub: Some(HubView {
+                screen,
+                sel,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn x_toggles_hub() {
+        let mut v = View::default();
+        assert!(!key(&mut v, KeyCode::Char('x'), None, None));
+        assert_eq!(v.hub, Some(HubView::default()));
+        key(&mut v, KeyCode::Char('x'), None, Some(3));
+        assert_eq!(v.hub, None);
+        key(&mut v, KeyCode::Char('x'), Some(4), None);
+        assert_eq!(v.hub, None, "the --all list keeps x to itself");
+    }
+
+    #[test]
+    fn esc_walks_back() {
+        let mut v = hub_view(Screen::Zoom, 1);
+        assert!(!key(&mut v, KeyCode::Esc, None, Some(3)));
+        assert_eq!(v.hub.map(|h| h.screen), Some(Screen::Hub));
+        assert!(!key(&mut v, KeyCode::Esc, None, Some(3)));
+        assert_eq!(v.hub, None);
+        assert!(
+            key(&mut v, KeyCode::Esc, None, None),
+            "esc on the panel quits"
+        );
+    }
+
+    #[test]
+    fn list_keys_work_with_hub_flag() {
+        let mut v = hub_view(Screen::Hub, 0);
+        key(&mut v, KeyCode::Down, Some(3), None);
+        assert_eq!(v.sel, 1, "the --all list still navigates");
+        key(&mut v, KeyCode::Enter, Some(3), None);
+        assert!(v.open);
+    }
+
+    #[test]
+    fn hidden_hub_ignores_keys() {
+        // `agents` is None while the too-small notice shows the panel.
+        let mut v = hub_view(Screen::Zoom, 2);
+        for k in [
+            KeyCode::Down,
+            KeyCode::Up,
+            KeyCode::Enter,
+            KeyCode::Char('g'),
+            KeyCode::PageUp,
+        ] {
+            key(&mut v, k, None, None);
+        }
+        assert_eq!(v, hub_view(Screen::Zoom, 2));
+        key(&mut v, KeyCode::Char('x'), None, None);
+        assert_eq!(v.hub, None);
+    }
+
+    #[test]
+    fn hub_selection_clamps() {
+        let mut v = hub_view(Screen::Hub, 2);
+        key(&mut v, KeyCode::Down, None, Some(3));
+        assert_eq!(v.hub.unwrap().sel, 2);
+        key(&mut v, KeyCode::Up, None, Some(3));
+        assert_eq!(v.hub.unwrap().sel, 1);
+        v.hub.as_mut().unwrap().scroll = 5;
+        key(&mut v, KeyCode::Enter, None, Some(3));
+        assert_eq!(
+            (v.hub.unwrap().screen, v.hub.unwrap().scroll),
+            (Screen::Zoom, 0)
+        );
+        key(&mut v, KeyCode::PageUp, None, Some(3));
+        assert_eq!(v.hub.unwrap().scroll, 10);
+        key(&mut v, KeyCode::Char('g'), None, Some(3));
+        assert_eq!(v.hub.unwrap().screen, Screen::Graph);
+        key(&mut v, KeyCode::Char('z'), None, Some(3));
+        assert!(v.hub.unwrap().show_done);
+        assert!(key(&mut v, KeyCode::Char('q'), None, Some(3)));
+    }
+
+    fn app_on(root: &Path, id: &str, events: &[String]) -> App {
+        let d = root.join("sessions").join(id);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("events.jsonl"), events.join("\n") + "\n").unwrap();
+        std::fs::write(d.join("usage.json"), format!(r#"{{"session_id":"{id}"}}"#)).unwrap();
+        let mut app = App {
+            root: root.to_path_buf(),
+            mode: Mode::Fixed(id.into()),
+            cfg: config::Config::default(),
+            view: View::default(),
+            dir: None,
+            st: State::default(),
+            usage: Usage::default(),
+            x: bar::Extras::default(),
+            mtimes: (None, None),
+            picked_at: None,
+            recap_built: None,
+            recap_dirty: false,
+            last_verdict: None,
+            color: false,
+            interactive: true,
+            pinned: None,
+        };
+        app.refresh();
+        app
+    }
+
+    #[test]
+    fn too_small_keeps_hub_screen() {
+        let root = std::env::temp_dir().join(format!("ari-hub-small-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let now = hook::now_ms();
+        let mut app = app_on(
+            &root,
+            "dddd",
+            &[format!(
+                r#"{{"t":{now},"e":"UserPromptSubmit","msg":"go"}}"#
+            )],
+        );
+        app.view = hub_view(Screen::Zoom, 2);
+        let (small, n) = app.frame_lines(100, 40);
+        let (big, m) = app.frame_lines(168, 49);
+        let _ = std::fs::remove_dir_all(&root);
+        let small = panel::to_plain(&small);
+        assert!(
+            small.contains("hub needs 120×30 · this window is 100×40 · x panel"),
+            "{small}"
+        );
+        assert_eq!(n, None);
+        assert_eq!(app.view, hub_view(Screen::Zoom, 2));
+        assert!(panel::to_plain(&big).contains("ARI hub"));
+        assert_eq!(m, Some(1));
+    }
+
+    #[test]
+    fn hub_strip_matches_statusline_without_hooks() {
+        let root = std::env::temp_dir().join(format!("ari-hub-nohooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("eeee");
+        std::fs::create_dir_all(&d).unwrap();
+        let t = d.join("t.jsonl");
+        std::fs::write(&t, "{}\n").unwrap();
+        let mut app = app_on(&root, "eeee", &[]);
+        // After app_on, which writes a bare usage.json.
+        let u = format!(
+            r#"{{"session_id":"eeee","transcript_path":"{}"}}"#,
+            t.display()
+        );
+        std::fs::write(d.join("usage.json"), u).unwrap();
+        app.mtimes = (None, None);
+        app.refresh();
+        app.view = hub_view(Screen::Hub, 0);
+        let out = panel::to_plain(&app.frame_lines(168, 49).0);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(out.lines().nth(1).unwrap().contains("WORKING"), "{out}");
+    }
+
+    #[test]
+    fn ascii_hub_is_ascii() {
+        use crate::state::{Agent, Msg};
+        let mut st = State::default();
+        st.agents.push(Agent {
+            id: "main".into(),
+            kind: "main".into(),
+            ..Default::default()
+        });
+        for (n, id) in ["a1", "a2", "a3", "a4", "a5", "a6"].iter().enumerate() {
+            st.agents.push(Agent {
+                id: (*id).into(),
+                kind: "Explore".into(),
+                parent: Some("main".into()),
+                started: n as u64,
+                ..Default::default()
+            });
+        }
+        st.agents[1].waiting = Some((1, "$ curl x".into()));
+        st.agents[3].done = true;
+        st.turn_active = true;
+        st.messages.push_back(Msg {
+            t: 99_500,
+            from: "a1".into(),
+            to: "a2".into(),
+            text: "hi".into(),
+        });
+        st.messages.push_back(Msg {
+            t: 99_000,
+            from: "main".into(),
+            to: "a3".into(),
+            text: "ok".into(),
+        });
+        let (u, x) = (Usage::default(), bar::Extras::default());
+        let cfg = config::Config {
+            ascii: true,
+            ..Default::default()
+        };
+        for screen in [Screen::Hub, Screen::Graph, Screen::Zoom] {
+            let i = crate::hub::Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now: 100_000,
+                clock: "12:00",
+            };
+            let v = HubView {
+                screen,
+                sel: 1,
+                ..Default::default()
+            };
+            let out = panel::to_plain(&crate::ascii::map_lines(crate::hub::lines(
+                &i, &v, 168, 49, false,
+            )));
+            let bad: String = out.chars().filter(|c| !c.is_ascii()).collect();
+            assert!(bad.is_empty(), "{screen:?}: {bad:?}");
+        }
+    }
 
     #[test]
     fn all_list_puts_needs_you_first_and_limits_in_the_header() {
@@ -740,7 +1095,7 @@ mod key_tests {
         std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
         std::fs::write(d.join("usage.json"), r#"{"session_id":"cccc"}"#).unwrap();
         let c = tokens::TokenCache {
-            v: 3,
+            v: tokens::CACHE_VERSION,
             main: tokens::Ledger {
                 away: Some("Next, wire the desktop".into()),
                 ..Default::default()
@@ -777,40 +1132,43 @@ mod key_tests {
     #[test]
     fn recap_key_and_escape() {
         let mut v = View::default();
-        assert!(!key(&mut v, KeyCode::Char('r'), None));
+        assert!(!key(&mut v, KeyCode::Char('r'), None, None));
         assert!(v.recap);
         assert!(
-            !key(&mut v, KeyCode::Esc, None),
+            !key(&mut v, KeyCode::Esc, None, None),
             "esc closes the recap first"
         );
         assert!(!v.recap);
-        assert!(key(&mut v, KeyCode::Esc, None), "then quits");
-        assert!(key(&mut v, KeyCode::Char('q'), None));
+        assert!(key(&mut v, KeyCode::Esc, None, None), "then quits");
+        assert!(key(&mut v, KeyCode::Char('q'), None, None));
     }
 
     #[test]
     fn list_keys_clamp_open_and_escape() {
         let mut v = View::default();
         for _ in 0..3 {
-            key(&mut v, KeyCode::Down, Some(2));
+            key(&mut v, KeyCode::Down, Some(2), None);
         }
         assert_eq!(v.sel, 1);
-        key(&mut v, KeyCode::Char('k'), Some(2));
+        key(&mut v, KeyCode::Char('k'), Some(2), None);
         assert_eq!(v.sel, 0);
-        key(&mut v, KeyCode::Up, Some(2));
+        key(&mut v, KeyCode::Up, Some(2), None);
         assert_eq!(v.sel, 0);
         let mut e = View::default();
-        key(&mut e, KeyCode::Enter, Some(0));
-        key(&mut e, KeyCode::Down, Some(0));
+        key(&mut e, KeyCode::Enter, Some(0), None);
+        key(&mut e, KeyCode::Down, Some(0), None);
         assert!(!e.open && e.sel == 0);
-        key(&mut v, KeyCode::Enter, Some(2));
+        key(&mut v, KeyCode::Enter, Some(2), None);
         assert!(v.open);
         assert!(
-            !key(&mut v, KeyCode::Esc, Some(2)),
+            !key(&mut v, KeyCode::Esc, Some(2), None),
             "esc closes the session"
         );
         assert!(!v.open);
-        assert!(key(&mut v, KeyCode::Esc, Some(2)), "esc in the list quits");
+        assert!(
+            key(&mut v, KeyCode::Esc, Some(2), None),
+            "esc in the list quits"
+        );
     }
 
     #[test]

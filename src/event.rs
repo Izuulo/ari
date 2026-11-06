@@ -61,6 +61,15 @@ pub struct Event {
     /// Permission mode (`plan`, `auto`, ...) the hook payload carried.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pm: Option<String>,
+    /// Agent: the name the spawn gave the subagent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// SendMessage: the recipient's name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Edit/Write/MultiEdit that succeeded: (lines in, lines out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<(u32, u32)>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -71,6 +80,11 @@ pub struct TaskRef {
     pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Task ids this one waits on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -104,9 +118,38 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
     }
     let line = |k: &str| s(k).map(|v| truncate(first_line(v), 160));
     match ev.e.as_str() {
+        "PreToolUse" => match ev.tool.as_deref() {
+            Some("Agent") => {
+                let f = |k: &str| {
+                    input
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                };
+                ev.name = f("name").map(|v| truncate(v, 40));
+                ev.kind = Some(f("subagent_type").unwrap_or("general-purpose").into());
+                ev.msg = f("prompt").map(|v| truncate(first_line(v), 160));
+            }
+            Some("SendMessage") => {
+                ev.to = input
+                    .get("to")
+                    .and_then(Value::as_str)
+                    .map(|v| truncate(v, 40));
+                ev.msg = Some(match input.get("message") {
+                    Some(Value::String(m)) => truncate(first_line(m), 160),
+                    Some(m) => m
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map_or_else(|| "(protocol message)".into(), |t| truncate(t, 40)),
+                    None => "(protocol message)".into(),
+                });
+            }
+            _ => {}
+        },
         "PostToolUse" => {
             ev.ok = Some(true);
             let resp = raw.get("tool_response").unwrap_or(&null);
+            ev.lines = edit_lines(ev.tool.as_deref().unwrap_or(""), input);
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
             (ev.tests, ev.partial) = split_run(test_run(
@@ -178,6 +221,7 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                 id,
                 subject: s("task_subject").map(|v| truncate(v, 120)),
                 status: (ev.e == "TaskCompleted").then(|| "completed".into()),
+                ..Default::default()
             });
         }
         _ => {}
@@ -271,6 +315,7 @@ fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
                     id: id.into(),
                     subject: str_at(input, "subject").map(|v| truncate(&v, 120)),
                     status: Some("pending".into()),
+                    ..Default::default()
                 });
         }
         Some("TaskUpdate") => {
@@ -278,6 +323,18 @@ fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
                 id,
                 subject: str_at(input, "subject").map(|v| truncate(&v, 120)),
                 status: str_at(input, "status"),
+                owner: str_at(input, "owner").map(|v| truncate(&v, 40)),
+                blocked: input
+                    .get("addBlockedBy")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .take(20)
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
         }
         Some("TodoWrite") => {
@@ -292,6 +349,25 @@ fn task_tool(ev: &mut Event, input: &Value, resp: &Value) {
             });
         }
         _ => {}
+    }
+}
+
+/// Lines in and out of a file edit, from its input strings (not a diff).
+fn edit_lines(tool: &str, input: &Value) -> Option<(u32, u32)> {
+    let count = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(Value::as_str)
+            .map_or(0, |s| s.lines().count() as u32)
+    };
+    match tool {
+        "Edit" => Some((count(input, "new_string"), count(input, "old_string"))),
+        "Write" => Some((count(input, "content"), 0)),
+        "MultiEdit" => input.get("edits").and_then(Value::as_array).map(|es| {
+            es.iter().fold((0, 0), |(a, r), e| {
+                (a + count(e, "new_string"), r + count(e, "old_string"))
+            })
+        }),
+        _ => None,
     }
 }
 
@@ -312,6 +388,7 @@ fn action(tool: &str, input: &Value, cwd: &str) -> String {
                 f("description")
             )
         }
+        "SendMessage" => format!("message {}", f("to")),
         "WebFetch" => format!("fetch {}", f("url")),
         "WebSearch" => format!("search {}", f("query")),
         "TaskCreate" | "TaskUpdate" | "TodoWrite" => "updating plan".into(),
@@ -469,6 +546,94 @@ mod tests {
 
     fn n(v: Value) -> Event {
         normalize(&v, 1).unwrap()
+    }
+
+    fn pre(tool: &str, input: Value) -> Event {
+        n(json!({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input}))
+    }
+
+    fn post(tool: &str, input: Value) -> Event {
+        n(json!({"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": input}))
+    }
+
+    #[test]
+    fn agent_spawn_keeps_name_type_and_prompt() {
+        let ev = pre(
+            "Agent",
+            json!({"name": "impl", "subagent_type": "Explore", "prompt": "fix it\nmore"}),
+        );
+        assert_eq!(ev.name.as_deref(), Some("impl"));
+        assert_eq!(ev.kind.as_deref(), Some("Explore"));
+        assert_eq!(ev.msg.as_deref(), Some("fix it"));
+    }
+
+    #[test]
+    fn agent_spawn_defaults_type() {
+        let ev = pre("Agent", json!({"prompt": "go"}));
+        assert_eq!(ev.kind.as_deref(), Some("general-purpose"));
+        assert_eq!(ev.name, None);
+    }
+
+    #[test]
+    fn send_message_keeps_recipient_and_text() {
+        let ev = pre(
+            "SendMessage",
+            json!({"to": "tester", "message": "2 failing\nmore"}),
+        );
+        assert_eq!(ev.to.as_deref(), Some("tester"));
+        assert_eq!(ev.msg.as_deref(), Some("2 failing"));
+    }
+
+    #[test]
+    fn send_message_protocol_object() {
+        let ev = pre(
+            "SendMessage",
+            json!({"to": "a", "message": {"type": "shutdown_request"}}),
+        );
+        assert_eq!(ev.msg.as_deref(), Some("shutdown_request"));
+        let ev = pre("SendMessage", json!({"to": "a", "message": {}}));
+        assert_eq!(ev.msg.as_deref(), Some("(protocol message)"));
+    }
+
+    #[test]
+    fn edit_lines_counted_on_success() {
+        let edit = json!({"file_path": "/p/a", "old_string": "a\nb", "new_string": "a\nb\nc"});
+        assert_eq!(post("Edit", edit.clone()).lines, Some((3, 2)));
+        assert_eq!(
+            post("Write", json!({"file_path": "/p/a", "content": "x\ny"})).lines,
+            Some((2, 0))
+        );
+        let multi = json!({"file_path": "/p/a", "edits": [
+            {"old_string": "a", "new_string": "a\nb"}, {"old_string": "c", "new_string": "d"}]});
+        assert_eq!(post("MultiEdit", multi).lines, Some((3, 2)));
+        assert_eq!(post("Read", json!({"file_path": "/p/a"})).lines, None);
+        let fail = n(
+            json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Edit",
+            "tool_input": edit, "error": "x"}),
+        );
+        assert_eq!(fail.lines, None);
+    }
+
+    #[test]
+    fn task_update_owner_and_blocked() {
+        let ev = post(
+            "TaskUpdate",
+            json!({"taskId": "4", "owner": "impl", "addBlockedBy": ["3"]}),
+        );
+        let t = ev.task.unwrap();
+        assert_eq!(t.owner.as_deref(), Some("impl"));
+        assert_eq!(t.blocked, ["3"]);
+    }
+
+    #[test]
+    fn permission_request_normalizes_tool() {
+        let ev = n(
+            json!({"hook_event_name": "PermissionRequest", "agent_id": "a1",
+            "tool_name": "Bash", "tool_input": {"command": "curl -s x"}}),
+        );
+        assert_eq!(ev.e, "PermissionRequest");
+        assert_eq!(ev.a.as_deref(), Some("a1"));
+        assert_eq!(ev.act.as_deref(), Some("$ curl -s x"));
     }
 
     #[test]
@@ -646,7 +811,8 @@ mod tests {
             Some(TaskRef {
                 id: "1".into(),
                 subject: Some("write script".into()),
-                status: None
+                status: None,
+                ..Default::default()
             })
         );
         let done = n(
@@ -663,7 +829,8 @@ mod tests {
             Some(TaskRef {
                 id: "1".into(),
                 subject: None,
-                status: Some("in_progress".into())
+                status: Some("in_progress".into()),
+                ..Default::default()
             })
         );
         assert_eq!(upd.act.as_deref(), Some("updating plan"));

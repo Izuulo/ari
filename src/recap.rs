@@ -584,6 +584,7 @@ mod tests {
                 id: id.into(),
                 subject: Some(format!("task {id}")),
                 status: Some("completed".into()),
+                ..Default::default()
             }),
             ..ev(t, "TaskCompleted")
         };

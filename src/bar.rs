@@ -383,6 +383,7 @@ mod tests {
                 id: i.to_string(),
                 subject: format!("t{i}"),
                 status: s.to_string(),
+                ..Default::default()
             });
         }
         st.errors.push(ErrorRec {

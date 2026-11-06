@@ -18,6 +18,8 @@ pub struct View {
     /// `ari watch --all`: the highlighted row, and whether its session is open.
     pub sel: usize,
     pub open: bool,
+    /// The hub (`x`) instead of the panel.
+    pub hub: Option<crate::hub::HubView>,
 }
 
 type Row = Vec<Span<'static>>;
@@ -1517,6 +1519,7 @@ mod tests {
                     format!("t{i}")
                 },
                 status: s.to_string(),
+                ..Default::default()
             });
         }
         st.errors = vec![
