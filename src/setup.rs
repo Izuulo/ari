@@ -80,7 +80,10 @@ pub fn unchain(cfg: &Config, original: &Value) -> Option<Config> {
     if let Some(cmd) = original.get("command").and_then(Value::as_str) {
         c.chain.commands.retain(|x| x != cmd);
     }
-    if c.hide == CHAINED_HIDE || c.hide == ["cost", "tokens", "time", "cache"] {
+    // `plan` writes `hide` only while chaining, so only a removed chain takes it along.
+    if c.chain.commands.len() < cfg.chain.commands.len()
+        && (c.hide == CHAINED_HIDE || c.hide == ["cost", "tokens", "time", "cache"])
+    {
         c.hide.clear();
     }
     (c != *cfg).then_some(c)
@@ -313,6 +316,13 @@ mod tests {
             .to_vec();
         assert!(unchain(&legacy, &p.original).unwrap().hide.is_empty());
         assert_eq!(unchain(&Config::default(), &Value::Null), None);
+        // Setup only writes `hide` while chaining; a hide the user chose without a chain stays.
+        let own = Config {
+            hide: CHAINED_HIDE.map(String::from).to_vec(),
+            ..Config::default()
+        };
+        assert_eq!(unchain(&own, &Value::Null), None);
+        assert_eq!(unchain(&own, &p.original), None);
     }
 
     #[test]
