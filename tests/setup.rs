@@ -88,6 +88,22 @@ fn setup_then_uninstall_restores_exactly() {
 
     ari(&d, &["uninstall", "--yes"]);
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), ORIGINAL);
+    let config =
+        ari_cli::config::parse(&std::fs::read_to_string(d.join("config/ari/config.toml")).unwrap());
+    assert!(config.chain.commands.is_empty() && config.hide.is_empty());
+}
+
+#[test]
+fn uninstall_leaves_a_broken_config_alone() {
+    let d = tmp("broken-config");
+    let settings = d.join("claude/settings.json");
+    std::fs::write(&settings, ORIGINAL).unwrap();
+    ari(&d, &["setup", "--yes"]);
+    let cfg = d.join("config/ari/config.toml");
+    std::fs::write(&cfg, "face = [[[").unwrap();
+    ari(&d, &["uninstall", "--yes"]);
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), ORIGINAL);
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), "face = [[[");
 }
 
 #[test]
