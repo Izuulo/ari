@@ -412,7 +412,11 @@ fn tile(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, more: usize)
         let tx = rput(buf, xr, cy, &d, dim());
         rput(
             buf,
-            tx.saturating_sub(if d.is_empty() { 0 } else { 1 }),
+            if d.is_empty() {
+                xr
+            } else {
+                tx.saturating_sub(2)
+            },
             cy,
             res,
             rs,

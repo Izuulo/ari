@@ -29,13 +29,13 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 ┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k       ┃                                                                                                                              
 ┃ filled by messages 7.4k                ┃                                                                                                                              
 ┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
-┃ 19s ToolS ToolSearch              ✓.0s ┃                                                                                                                              
-┃ 17s TaskC plan                    ✓.0s ┃                                                                                                                              
-┃ 17s TaskC plan                    ✓.0s ┃                                                                                                                              
-┃ 14s Agent general-purpose: Wri…  ✓8.6s ┃                                                                                                                              
-┃ 13s Agent general-purpose: Che…  ✓6.6s ┃                                                                                                                              
-┃  2s TaskU plan                    ✓.0s ┃                                                                                                                              
-┃  2s TaskU plan                    ✓.0s ┃                                                                                                                              
+┃ 19s ToolS ToolSearch             ✓ .0s ┃                                                                                                                              
+┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
+┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
+┃ 14s Agent general-purpose: Wri… ✓ 8.6s ┃                                                                                                                              
+┃ 13s Agent general-purpose: Che… ✓ 6.6s ┃                                                                                                                              
+┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
+┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
 ┃                                        ┃                                                                                                                              
 ┃                                        ┃                                                                                                                              
 ┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
