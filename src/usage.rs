@@ -64,6 +64,15 @@ pub struct Limit {
     pub resets_at: u64,
 }
 
+/// A session dir's `usage.json` (the last statusline payload); defaults when missing or broken.
+pub fn load(dir: &std::path::Path) -> Usage {
+    std::fs::read(dir.join("usage.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .map(|v| from_value(&v))
+        .unwrap_or_default()
+}
+
 pub fn from_value(v: &Value) -> Usage {
     let s = |p: &str| v.pointer(p).and_then(Value::as_str).map(String::from);
     let f = |p: &str| v.pointer(p).and_then(Value::as_f64);
@@ -129,6 +138,19 @@ pub fn from_value(v: &Value) -> Usage {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn load_reads_usage_json_or_defaults() {
+        let d = std::env::temp_dir().join(format!("ari-usage-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(load(&d), Usage::default());
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("usage.json"), r#"{"session_id":"s1"}"#).unwrap();
+        assert_eq!(load(&d).session_id.as_deref(), Some("s1"));
+        std::fs::write(d.join("usage.json"), "not json").unwrap();
+        assert_eq!(load(&d), Usage::default());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn full_payload() {

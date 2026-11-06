@@ -72,11 +72,7 @@ fn fold(events: &[Event]) -> State {
 /// Replay the session up to the window start and to now, and report the difference.
 pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
     let events = crate::replay::load(dir).unwrap_or_default();
-    let usage = std::fs::read(dir.join("usage.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .map(|v| crate::usage::from_value(&v))
-        .unwrap_or_default();
+    let usage = crate::usage::load(dir);
     let cwd = crate::sessions::cwd_of(dir).unwrap_or_default();
     let first = events.first().map_or(now, |e| e.t);
     let from = match since {

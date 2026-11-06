@@ -61,14 +61,6 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-fn load_usage(dir: &Path) -> Usage {
-    std::fs::read(dir.join("usage.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .map(|v| usage::from_value(&v))
-        .unwrap_or_default()
-}
-
 impl App {
     fn derive_cfg(&mut self) {
         self.cfg = self.file.clone();
@@ -165,7 +157,7 @@ impl App {
         if changed {
             self.mtimes = now;
             self.st = state::load_session(dir);
-            self.usage = load_usage(dir);
+            self.usage = usage::load(dir);
             self.x.tokens = Some(tokens::update(
                 dir,
                 &self.st,
@@ -302,7 +294,7 @@ impl App {
             if let Some(dir) = self.pinned.clone() {
                 if dir.is_dir() {
                     let st = state::load_session(&dir);
-                    let usage = load_usage(&dir);
+                    let usage = usage::load(&dir);
                     let x = bar::Extras {
                         tokens: Some(tokens::cached(&dir)),
                         samples: burn::recent(&dir),
@@ -478,7 +470,7 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
         .into_iter()
         .filter(|s| sessions::is_live(s, now))
     {
-        let u = load_usage(&s.dir);
+        let u = usage::load(&s.dir);
         let st = state::load_session(&s.dir);
         let x = bar::Extras {
             transcript_age_ms: tokens::transcript_for(&s.dir, &u)
