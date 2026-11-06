@@ -39,9 +39,54 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     })
 }
 
+/// Complete lines `path` gained past `offset`. `true` when the file got shorter than `offset`:
+/// the caller starts over and the lines are read from 0. `None` when nothing changed or the file
+/// can't be read; a partial last line waits for the next call.
+pub fn new_lines(path: &Path, offset: u64) -> Option<(bool, Vec<u8>)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let restart = len < offset;
+    let from = if restart { 0 } else { offset };
+    if len == from && !restart {
+        return None;
+    }
+    let mut buf = Vec::new();
+    f.seek(SeekFrom::Start(from)).ok()?;
+    f.read_to_end(&mut buf).ok()?;
+    buf.truncate(buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1));
+    (restart || !buf.is_empty()).then_some((restart, buf))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_lines_reads_complete_lines_and_restarts() {
+        let p = std::env::temp_dir().join(format!("ari-newlines-{}", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(new_lines(&p, 0), None, "missing file");
+        std::fs::write(&p, "a\nb").unwrap();
+        assert_eq!(new_lines(&p, 0), Some((false, b"a\n".to_vec())));
+        assert_eq!(new_lines(&p, 2), None, "partial line waits");
+        std::fs::write(&p, "a\nb\n").unwrap();
+        assert_eq!(new_lines(&p, 2), Some((false, b"b\n".to_vec())));
+        assert_eq!(new_lines(&p, 4), None, "unchanged");
+        std::fs::write(&p, "x\n").unwrap();
+        assert_eq!(
+            new_lines(&p, 4),
+            Some((true, b"x\n".to_vec())),
+            "shorter: start over"
+        );
+        std::fs::write(&p, "").unwrap();
+        assert_eq!(
+            new_lines(&p, 2),
+            Some((true, vec![])),
+            "emptied: still a restart"
+        );
+        let _ = std::fs::remove_file(&p);
+    }
 
     #[test]
     fn session_ids() {

@@ -3,7 +3,6 @@
 use crate::event::Event;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub const STALE_MS: u64 = 300_000;
@@ -1070,33 +1069,26 @@ pub fn load_session(dir: &Path) -> State {
             offset: 0,
             state: State::default(),
         });
-    let Ok(mut f) = std::fs::File::open(dir.join("events.jsonl")) else {
+    let Some((restart, bytes)) = crate::paths::new_lines(&dir.join("events.jsonl"), cache.offset)
+    else {
         return cache.state;
     };
-    let len = f.metadata().map_or(0, |m| m.len());
-    if len < cache.offset {
+    if restart {
         cache = Cache {
             v: CACHE_VERSION,
             offset: 0,
             state: State::default(),
         };
     }
-    if len == cache.offset {
+    if bytes.is_empty() {
         return cache.state;
     }
-    let mut buf = Vec::new();
-    if f.seek(SeekFrom::Start(cache.offset)).is_err() || f.read_to_end(&mut buf).is_err() {
-        return cache.state;
-    }
-    let Some(end) = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1) else {
-        return cache.state;
-    };
-    for line in buf[..end].split(|b| *b == b'\n') {
+    for line in bytes.split(|b| *b == b'\n') {
         if let Ok(ev) = serde_json::from_slice::<Event>(line) {
             cache.state.apply(&ev);
         }
     }
-    cache.offset += end as u64;
+    cache.offset += bytes.len() as u64;
     if let Ok(bytes) = serde_json::to_vec(&cache) {
         let _ = crate::paths::write_atomic(&cache_path, &bytes);
     }
