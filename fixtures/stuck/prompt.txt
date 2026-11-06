@@ -1,0 +1,6 @@
+Do these steps in order, using the tools named:
+1. Use TaskCreate to create four tasks: "scaffold", "fix tests", "survey", "summarize".
+2. Mark "scaffold" in_progress. Use Write to create calc.py with a function add(a, b) that returns a - b (a deliberate bug), and test_calc.py that imports add, asserts add(2, 3) == 5, then prints "ok". Mark "scaffold" completed.
+3. Mark "fix tests" in_progress. Run `python3 test_calc.py` with Bash. It will fail. Run that exact same command two more times, one call at a time and without changing any file, to rule out a flaky test. Then fix calc.py with Edit and run `python3 test_calc.py` again until it prints ok. Mark "fix tests" completed.
+4. Mark "survey" in_progress. In one message, launch two Explore subagents in parallel with the Agent tool: one reads calc.py and describes it in one sentence, the other reads test_calc.py and describes it in one sentence. Wait for both reports. Mark "survey" completed.
+5. Mark "summarize" in_progress, reply with a two-line summary, then mark "summarize" completed.
