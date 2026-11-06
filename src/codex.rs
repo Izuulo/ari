@@ -32,7 +32,12 @@ pub fn read_tail(path: &Path) -> Option<Tail> {
     }
     let mut t = Tail::default();
     let mut seen = false;
-    for v in lines.filter_map(|l| serde_json::from_slice::<Value>(l).ok()) {
+    let has = |l: &[u8], k: &[u8]| l.windows(k.len()).any(|w| w == k);
+    let wanted = |l: &&[u8]| has(l, b"token_count") || has(l, b"turn_context");
+    for v in lines
+        .filter(wanted)
+        .filter_map(|l| serde_json::from_slice::<Value>(l).ok())
+    {
         let p = &v["payload"];
         match (v["type"].as_str(), p["type"].as_str()) {
             (Some("turn_context"), _) => {
@@ -182,6 +187,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(crate::usage::load(&d), Usage::default());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn tokens_update_keeps_totals_without_token_count() {
+        let d = tmp("keep");
+        let meta = serde_json::json!({"agent":"codex","transcript":fixture()});
+        std::fs::write(d.join("meta.json"), meta.to_string()).unwrap();
+        crate::tokens::update(&d, &Default::default(), fixture().to_str());
+        let fresh = d.join("fresh.jsonl");
+        std::fs::write(&fresh, "{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        let c = crate::tokens::update(&d, &Default::default(), fresh.to_str());
+        assert_eq!(c.main.output, 5000);
         let _ = std::fs::remove_dir_all(&d);
     }
 

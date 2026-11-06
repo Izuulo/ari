@@ -275,7 +275,10 @@ pub fn update(dir: &Path, st: &State, transcript: Option<&str>) -> TokenCache {
     let codex = crate::app::of(dir) == crate::app::App::Codex;
     if let Some(main) = transcript {
         if codex {
-            c.main = crate::codex::ledger(Path::new(main)).unwrap_or_default();
+            // Keep the last good totals when the tail has no token_count.
+            if let Some(l) = crate::codex::ledger(Path::new(main)) {
+                c.main = l;
+            }
         } else {
             read_ledger(Path::new(main), &mut c.main);
         }
