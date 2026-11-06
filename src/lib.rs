@@ -17,6 +17,7 @@ pub mod sessions;
 pub mod setup;
 pub mod state;
 pub mod statusline;
+pub mod theme;
 pub mod tokens;
 pub mod usage;
 pub mod watch;

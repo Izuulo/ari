@@ -57,7 +57,12 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
         .and_then(|c| c.parse().ok())
         .unwrap_or(0);
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
-    bar::render(&st, &u, &x, cfg, now, width, color)
+    let row = bar::render(&st, &u, &x, cfg, now, width, color);
+    if color {
+        crate::theme::ansi(&row, &crate::theme::Palette::new(cfg))
+    } else {
+        row
+    }
 }
 
 fn session_dir(u: &usage::Usage) -> Option<std::path::PathBuf> {

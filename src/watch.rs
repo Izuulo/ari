@@ -5,7 +5,7 @@ use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
 use crate::usage::{self, Usage};
-use crate::{bar, burn, config, hook, paths, state, tokens};
+use crate::{bar, burn, config, hook, paths, state, theme, tokens};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
@@ -143,7 +143,8 @@ impl App {
     }
 
     fn lines(&mut self, width: u16, height: u16) -> Vec<Line<'static>> {
-        self.frame_lines(width, height).0
+        let lines = self.frame_lines(width, height).0;
+        theme::lines(lines, &theme::Palette::new(&self.cfg))
     }
 
     /// The frame's lines, and the entry count while the `--all` list is what's drawn.
@@ -649,6 +650,7 @@ pub fn run(args: &[String]) -> ! {
             Alignment::Left
         };
         let (lines, agents) = app.frame_lines(w, h);
+        let lines = theme::lines(lines, &theme::Palette::new(&app.cfg));
         // The `--all` list's length rides in the same slot; the hub's count is separate.
         let (list_len, agents) = if app.mode == Mode::All && !app.view.open {
             (agents, None)
