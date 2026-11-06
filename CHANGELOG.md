@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Errors from different scripts of one runner (`npm run build` vs `npm run lint`, `python -m pytest` vs `python -m mypy`) are tracked apart: one passing no longer marks the other fixed, and three different failures no longer read as STUCK.
+
 ## 0.2.0 - 2026-11-06
 
 - **Settings**: `s` in `ari watch` opens a settings screen with a live preview: five colour themes (`default`, `soft`, `vivid`, `colorblind`, `mono`) plus per-colour overrides, separate on/off switches for every statusline segment (`hide`) and every panel section (`hide_panel`, the task checklist is one), a live preview of both, alerts and log retention. Changes save to `config.toml` at once; hand edits to the file apply live. A config.toml ARI can't read is reported (settings screen, `ari doctor`) and never overwritten.

@@ -1191,6 +1191,43 @@ mod tests {
     use super::*;
     use crate::event::{TaskRef, Todo};
 
+    #[test]
+    fn a_passing_script_does_not_fix_a_different_failing_one() {
+        use serde_json::json;
+        let ev = |t, v: serde_json::Value| crate::event::normalize(&v, t).unwrap();
+        let bash = |cmd: &str| json!({ "command": cmd });
+        let mut st = State::default();
+        st.apply(&ev(
+            1,
+            json!({"hook_event_name": "UserPromptSubmit", "prompt": "build"}),
+        ));
+        st.apply(&ev(
+            2,
+            json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": bash("npm run build"), "error": "Exit code 1\nerror TS2304"}),
+        ));
+        st.apply(&ev(
+            3,
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": bash("npm run lint")}),
+        ));
+        assert_eq!(
+            st.errors[0].resolved_t, None,
+            "lint passing doesn't fix the build"
+        );
+        // Different scripts failing once each is not "the same command failing again".
+        for (t, cmd) in [(5, "npm run test"), (6, "npm run lint")] {
+            st.apply(&ev(
+                t,
+                json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+                "tool_input": bash(cmd), "error": "Exit code 1\nfailed"}),
+            ));
+        }
+        assert_eq!(st.stuck_reason(3), None);
+        st.apply(&ev(7, json!({"hook_event_name": "Stop"})));
+        assert_eq!(st.open_errors(), 3);
+    }
+
     fn at(t: u64, e: &str, a: Option<&str>) -> Event {
         Event {
             t,

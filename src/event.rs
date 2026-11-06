@@ -399,8 +399,8 @@ fn action(tool: &str, input: &Value, cwd: &str) -> String {
     }
 }
 
-/// Error signature: Bash → first two tokens of the first command that isn't a `cd`;
-/// file tools → path; else the tool.
+/// Error signature: Bash → first two words of the first command that isn't a `cd`, plus the
+/// script after a runner word (`npm run build`, `python -m pytest`); file tools → path; else the tool.
 fn signature(tool: &str, input: &Value) -> String {
     let f = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
     match tool {
@@ -411,7 +411,14 @@ fn signature(tool: &str, input: &Value) -> String {
                 .map(str::trim)
                 .find(|c| !c.is_empty() && *c != "cd" && !c.starts_with("cd "))
                 .unwrap_or(line);
-            let toks: Vec<&str> = cmd.split_whitespace().take(2).collect();
+            let mut words = cmd.split_whitespace();
+            let mut toks: Vec<&str> = words.by_ref().take(2).collect();
+            if toks
+                .get(1)
+                .is_some_and(|w| ["run", "exec", "-m", "x"].contains(w))
+            {
+                toks.extend(words.find(|w| !w.starts_with('-')));
+            }
             format!("{tool}:{}", toks.join(" "))
         }
         "Edit" | "Write" | "MultiEdit" | "Read" => format!("{tool}:{}", f("file_path")),
@@ -730,6 +737,27 @@ mod tests {
         );
         assert_eq!(ev.tests, Some((70, 0)));
         assert!(!ev.partial);
+    }
+
+    #[test]
+    fn signature_keeps_the_script_after_a_runner() {
+        let sig = |cmd: &str| signature("Bash", &json!({ "command": cmd }));
+        assert_eq!(sig("npm run build"), "Bash:npm run build");
+        assert_ne!(sig("npm run build"), sig("npm run lint"));
+        assert_eq!(sig("npm run build -- --watch"), "Bash:npm run build");
+        assert_eq!(sig("python -m pytest -x"), "Bash:python -m pytest");
+        assert_eq!(sig("uv run --frozen pytest"), "Bash:uv run pytest");
+        assert_eq!(sig("pnpm exec tsc"), "Bash:pnpm exec tsc");
+        assert_eq!(
+            sig("cd /p && npm run build 2>&1 | tail"),
+            "Bash:npm run build"
+        );
+        assert_eq!(sig("npm run"), "Bash:npm run");
+        assert_eq!(
+            sig("cargo test foo"),
+            "Bash:cargo test",
+            "non-runners keep two words"
+        );
     }
 
     #[test]
