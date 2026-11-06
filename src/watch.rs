@@ -740,7 +740,7 @@ mod key_tests {
         std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
         std::fs::write(d.join("usage.json"), r#"{"session_id":"cccc"}"#).unwrap();
         let c = tokens::TokenCache {
-            v: 3,
+            v: tokens::CACHE_VERSION,
             main: tokens::Ledger {
                 away: Some("Next, wire the desktop".into()),
                 ..Default::default()
