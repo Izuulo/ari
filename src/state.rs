@@ -1043,6 +1043,7 @@ mod tests {
                 id: id.into(),
                 subject: subject.map(Into::into),
                 status: status.map(Into::into),
+                ..Default::default()
             }),
             ..ev("TaskCreated")
         }
@@ -1527,6 +1528,7 @@ mod tests {
                 id: "1".into(),
                 subject: None,
                 status: Some("in_progress".into()),
+                ..Default::default()
             }),
             ..ev("PostToolUse")
         });

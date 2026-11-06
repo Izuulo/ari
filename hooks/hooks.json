@@ -165,6 +165,17 @@
           }
         ]
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v ari >/dev/null 2>&1 && ari hook || true",
+            "timeout": 1
+          }
+        ]
+      }
     ]
   }
 }
