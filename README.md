@@ -1,10 +1,24 @@
+<div align="center">
+
 # ARI
 
-**Stop asking Claude how it's going.**
+### Stop asking Claude how it's going.
 
-![ARI replaying a Claude Code session: a test fails, gets fixed, two subagents finish, and the verdict turns to DONE](docs/demo.gif)
+**All Relevant Information**: a zero-token status panel for Claude Code.
 
-ARI (All Relevant Information) is a zero-token status panel for Claude Code. It watches your session through hooks and the statusline and answers *how far along are we, and is anything wrong?* at a glance, so you never have to interrupt a long run to ask.
+[![CI](https://github.com/Izuulo/ari/actions/workflows/ci.yml/badge.svg)](https://github.com/Izuulo/ari/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Izuulo/ari?color=blue)](https://github.com/Izuulo/ari/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)
+
+[Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
+
+<img src="docs/demo.gif" alt="ARI replaying a Claude Code session: a test fails, gets fixed, two subagents finish, and the verdict turns to DONE" width="760">
+
+</div>
+
+ARI watches your session through hooks and the statusline and answers *how far along are we, and is anything wrong?* at a glance, so you never have to interrupt a long run to ask. Nothing is ever sent to the model, and nothing leaves your machine.
 
 ## Install
 
@@ -80,7 +94,6 @@ Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole termin
 │                                                                                                  ││                                                                  │
 │ ── spawn   ━━ message   ● in flight   dim = finished                                             ││                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
-┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━ 22s ━┓
 ```
 
 `↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, `esc` goes back one level and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call.
@@ -127,12 +140,29 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 | **Stuck detection** | Notices loops and repeated failures and says which command |
 | **Errors tracked to resolution** | A failure is marked fixed, with who fixed it, when the same command later succeeds |
 | **Per-agent view** | What each subagent is doing right now, its tool calls and token spend |
+| **The hub** | Who spawned whom, who messages whom, and each agent's own context window, full screen |
+| **Permission waits** | Which agent is waiting on you, for what call and how long; ARI never answers for you |
 | **Cache savings** | Hit rate, roughly what caching saved, and an alert when the cache suddenly stops hitting |
 | **Rate-limit foresight** | Warns when you'll hit the 5-hour limit before it resets |
 | **Plays nice** | Chains your existing statusline instead of replacing it; `ari uninstall` restores it byte for byte |
 | **Zero tokens** | Nothing is ever injected into Claude's context |
 
 Progress comes only from Claude Code's own task list. When there isn't one, a Markdown plan the session wrote with `- [ ]` checkboxes stands in (its checked boxes are the progress); otherwise the statusline leaves progress out and the panel says `no plan yet`, rather than guess. On newer models the task tools are off unless you start Claude Code with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `ari setup [--yes] [--dry-run]` | Add ARI's row to your statusline, chaining the one you have |
+| `ari uninstall [--yes] [--purge]` | Restore your original statusline byte for byte |
+| `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
+| `ari hub [--session <id>] [--ascii]` | The hub: every agent, its messages and context |
+| `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
+| `ari demo [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed |
+| `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |
+| `ari replay <dir>` | Print a recorded session as a timeline |
+
+`ari hook` and `ari statusline` are the entry points Claude Code calls; you never run them yourself. In Claude Code, `/ari:setup` and `/ari:doctor` do the same as their CLI twins.
 
 ## Config
 
@@ -182,4 +212,4 @@ Issues and PRs welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Design notes liv
 
 ## License
 
-MIT
+[MIT](LICENSE)
