@@ -3,6 +3,7 @@
 
 #![allow(dead_code)] // shortcut: helpers for panes from later tasks; removed once all panes land.
 
+mod agents;
 mod graph;
 
 use crate::bar::{self, Extras};
@@ -251,6 +252,19 @@ pub(crate) fn glyph(i: &Input, a: &Agent) -> (String, Style) {
     }
 }
 
+/// Tool names colored by kind, as in the watch windows.
+pub(crate) fn tool_style(tool: &str) -> Style {
+    match tool {
+        "Read" => Style::new().fg(Color::Blue),
+        "Edit" | "Write" | "MultiEdit" => ok(),
+        "Bash" => warn(),
+        "Grep" | "Glob" => agent(),
+        "Agent" => lead(),
+        "SendMessage" => msg(),
+        _ => dim(),
+    }
+}
+
 /// Border and name color: lead, waiting, retrying, finished, running.
 pub(crate) fn node_style(i: &Input, a: &Agent) -> Style {
     if a.id == "main" {
@@ -403,45 +417,8 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
     graph::draw(buf, a.graph, i, sel, false, f == Fit::Full);
-    frame(
-        buf,
-        a.table,
-        vec![Span::styled("agents", bold())],
-        vec![],
-        faint(),
-        false,
-    );
-    let shown: Vec<&Agent> = order(i.st)
-        .into_iter()
-        .map(|k| &i.st.agents[k])
-        .filter(|a| v.show_done || !a.done)
-        .collect();
-    let across = if f == Fit::Full { 4 } else { 2 };
-    let tw = a.tiles.width / across;
-    for (n, ag) in shown.iter().take(across as usize).enumerate() {
-        let n = n as u16;
-        let r = Rect::new(
-            n * tw,
-            a.tiles.y,
-            if n + 1 == across {
-                a.tiles.width - n * tw
-            } else {
-                tw
-            },
-            a.tiles.height,
-        );
-        frame(
-            buf,
-            r,
-            vec![Span::styled(
-                ag.label(),
-                agent().add_modifier(Modifier::BOLD),
-            )],
-            vec![],
-            agent(),
-            false,
-        );
-    }
+    agents::table(buf, a.table, i, v.sel);
+    agents::tiles(buf, a.tiles, i, v, if f == Fit::Full { 4 } else { 2 });
     frame(
         buf,
         a.messages,
