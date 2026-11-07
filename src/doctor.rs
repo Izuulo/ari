@@ -1,5 +1,6 @@
 //! `ari doctor`: is everything wired? Read-only; every problem comes with a fix.
 
+use crate::app::App;
 use crate::chain::{self, Outcome};
 use crate::{config, paths, sessions, setup};
 use serde_json::Value;
@@ -49,12 +50,7 @@ fn age(ms: u64) -> String {
 }
 
 fn binary() -> Check {
-    let found = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|d| d.join("ari"))
-            .find(|p| p.is_file())
-    });
-    match found {
+    match setup::which("ari") {
         Some(p) => {
             let version = std::process::Command::new(&p)
                 .arg("--version")
@@ -130,6 +126,71 @@ fn statusline(settings: &Value) -> Check {
             "ari setup (keeps your current statusline)",
         ),
         None => problem("statusline", "not set", "ari setup"),
+    }
+}
+
+fn codex() -> Check {
+    let path = setup::codex_home().unwrap_or_default().join("hooks.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if setup::all_commands(&text)
+        .iter()
+        .any(|c| c.contains("ari hook --agent codex"))
+    {
+        pass(
+            "codex",
+            "wired (approve with /hooks if events don't arrive)",
+        )
+    } else {
+        problem(
+            "codex",
+            format!("ARI's hooks are not in {}", path.display()),
+            "ari setup",
+        )
+    }
+}
+
+fn dsh() -> Check {
+    let patch = setup::dsh_home()
+        .unwrap_or_default()
+        .join("cordis.patch.yml");
+    let target = match setup::dsh_bridge(&std::fs::read_to_string(&patch).unwrap_or_default()) {
+        Ok(Some(p)) => PathBuf::from(p),
+        Ok(None) => {
+            return problem(
+                "dsh",
+                "its Claude Code hooks bridge isn't mounted, so dsh sends ARI nothing",
+                "ari setup",
+            );
+        }
+        Err(e) => {
+            return problem(
+                "dsh",
+                e,
+                "make the bridge's configPath an absolute path, then run ari setup",
+            );
+        }
+    };
+    let text = std::fs::read_to_string(&target).unwrap_or_default();
+    let shown = target.display();
+    if setup::all_commands(&text)
+        .iter()
+        .any(|c| c.contains("ari hook --agent dsh"))
+    {
+        pass("dsh", format!("wired via {shown}"))
+    } else if setup::plain_ari_hook(&text) {
+        problem(
+            "dsh",
+            format!("{shown} runs plain `ari hook`, so dsh sessions show as Claude Code"),
+            "change it to `ari hook --agent dsh` there (ari setup leaves that file alone)",
+        )
+    } else if setup::claude_settings(&target) {
+        problem(
+            "dsh",
+            format!("the bridge reads {shown}, a Claude Code settings file ARI won't add to"),
+            "point the bridge's configPath at a hooks.json of its own, then run ari setup",
+        )
+    } else {
+        problem("dsh", format!("{shown} doesn't run ARI"), "ari setup")
     }
 }
 
@@ -345,6 +406,13 @@ pub fn checks(now_ms: u64) -> Vec<Check> {
     let claude = claude_dir().unwrap_or_default();
     let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
     let mut out = vec![binary(), plugin(&claude, &settings), statusline(&settings)];
+    for app in setup::found() {
+        match app {
+            App::Codex => out.push(codex()),
+            App::Dsh => out.push(dsh()),
+            App::Claude => {}
+        }
+    }
     let exists = config::path().is_some_and(|p| p.exists());
     let loaded = config::load_checked();
     out.push(config_status(exists, loaded.clone()));

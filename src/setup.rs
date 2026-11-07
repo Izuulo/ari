@@ -312,7 +312,7 @@ fn setup_codex(dry: bool, yes: bool) -> Result<(), String> {
 }
 
 /// Claude Code's own settings files: dsh hooks put there would fire in Claude Code too.
-fn claude_settings(p: &Path) -> bool {
+pub fn claude_settings(p: &Path) -> bool {
     p.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.starts_with("settings") && n.ends_with(".json"))
