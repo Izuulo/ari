@@ -44,6 +44,8 @@ pub struct HubView {
     pub show_done: bool,
     /// Zoom timeline lines scrolled up from the bottom.
     pub scroll: usize,
+    /// `a`: every live session merged, in place of the watched one.
+    pub all: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -489,10 +491,25 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("g", "graph".into()),
         ("z", format!("show finished ({done})")),
         ("c", "clear finished".into()),
+        (
+            "a",
+            if v.all {
+                "this session"
+            } else {
+                "all sessions"
+            }
+            .into(),
+        ),
         ("x", "back to panel".into()),
         ("s", "settings".into()),
         ("q", "quit".into()),
     ];
+    // `ari hub --all` is merged already: nothing for `a` to switch to.
+    let merged = !v.all && i.u.project.as_deref() == Some("all sessions");
+    let keys: Vec<_> = keys
+        .into_iter()
+        .filter(|k| !(merged && k.0 == "a"))
+        .collect();
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());

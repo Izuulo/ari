@@ -320,6 +320,9 @@ impl App {
             return (self.settings_lines(sel, width, height), None);
         }
         let now = hook::now_ms();
+        if self.view.hub.is_some_and(|h| h.all) {
+            return self.all_hub_lines(width, height, now);
+        }
         if self.mode == Mode::All {
             if !self.view.open {
                 self.pinned = None;
@@ -368,7 +371,12 @@ impl App {
         now: u64,
     ) -> (Vec<Line<'static>>, Option<usize>) {
         if hub::fit(width, height) == Fit::TooSmall {
-            let note = format!("hub needs 120×30 · this window is {width}×{height} · x list");
+            let back = if self.mode == Mode::All {
+                "list"
+            } else {
+                "panel"
+            };
+            let note = format!("hub needs 120×30 · this window is {width}×{height} · x {back}");
             let dim = Style::new().add_modifier(Modifier::DIM);
             let line = Line::from(Span::styled(
                 crate::event::truncate(&note, width as usize),
@@ -967,6 +975,13 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
                 h.scroll = 0;
             }
             KeyCode::Char('g') => h.screen = Screen::Graph,
+            KeyCode::Char('a') => {
+                *h = HubView {
+                    all: !h.all,
+                    show_done: h.show_done,
+                    ..Default::default()
+                }
+            }
             KeyCode::Char('z') => h.show_done ^= true,
             KeyCode::Char('c') => view.cleared = hook::now_ms(),
             KeyCode::PageUp => h.scroll += 10,
@@ -1176,6 +1191,22 @@ mod key_tests {
             key(&mut v, KeyCode::Esc, None, None),
             "esc on the panel quits"
         );
+    }
+
+    #[test]
+    fn a_toggles_all_sessions_hub() {
+        let mut v = hub_view(Screen::Zoom, 2);
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        let h = v.hub.unwrap();
+        assert!(h.all);
+        assert_eq!(
+            (h.screen, h.sel),
+            (Screen::Hub, 0),
+            "the agent list changed"
+        );
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        assert!(!v.hub.unwrap().all);
+        assert!(!v.expand_agents, "a in the hub isn't the panel's a");
     }
 
     #[test]
