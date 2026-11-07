@@ -74,6 +74,8 @@ pub struct Config {
     pub hide_panel: Vec<String>,
     pub face: bool,
     pub bell: bool,
+    /// Hide finished subagents as soon as they finish (`ari watch`).
+    pub auto_clear: bool,
     pub ascii: bool,
     pub max_width: usize,
     pub retention_days: u64,
@@ -128,6 +130,7 @@ impl Default for Config {
             hide_panel: Vec::new(),
             face: false,
             bell: false,
+            auto_clear: false,
             ascii: false,
             max_width: 0,
             retention_days: 7,

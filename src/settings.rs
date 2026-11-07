@@ -35,7 +35,7 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 36] = [
+const ITEMS: [(&str, &str, &str); 37] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
@@ -66,6 +66,7 @@ const ITEMS: [(&str, &str, &str); 36] = [
     ("PANEL", "hide_panel.usage", "usage · context, limits"),
     ("PANEL", "hide_panel.session", "session · cost, time"),
     ("PANEL", "hide_panel.turns", "turns · recent turns"),
+    ("PANEL", "auto_clear", "auto-clear done agents"),
     ("ALERTS", "bell", "bell"),
     ("ALERTS", "ctx_warn", "context warn"),
     ("ALERTS", "ctx_crit", "context critical"),
@@ -120,6 +121,7 @@ pub fn value(cfg: &Config, key: &str) -> String {
         "face" => on(cfg.face),
         "ascii" => on(cfg.ascii),
         "bell" => on(cfg.bell),
+        "auto_clear" => on(cfg.auto_clear),
         "position" => match cfg.position {
             Position::Top => "top".into(),
             Position::Bottom => "bottom".into(),
@@ -180,6 +182,7 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         "face" => cfg.face ^= true,
         "ascii" => cfg.ascii ^= true,
         "bell" => cfg.bell ^= true,
+        "auto_clear" => cfg.auto_clear ^= true,
         "position" => {
             cfg.position = match cfg.position {
                 Position::Top => Position::Bottom,
@@ -335,6 +338,7 @@ pub fn reset(cfg: &mut Config, key: &str) {
         "face" => cfg.face = def.face,
         "ascii" => cfg.ascii = def.ascii,
         "bell" => cfg.bell = def.bell,
+        "auto_clear" => cfg.auto_clear = def.auto_clear,
         "position" => cfg.position = def.position,
         "max_width" => cfg.max_width = def.max_width,
         "ctx_warn" => t.ctx_warn = dt.ctx_warn,
@@ -354,7 +358,7 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 36);
+        assert_eq!(it.len(), 37);
         for r in ROLES {
             assert!(it.iter().any(|i| i.key == format!("color.{r}")), "{r}");
         }
@@ -545,6 +549,7 @@ mod tests {
             "color.bad",
             "hide.agents",
             "bell",
+            "auto_clear",
             "face",
             "ctx_warn",
         ] {
@@ -556,6 +561,7 @@ mod tests {
             "color.bad",
             "hide.agents",
             "bell",
+            "auto_clear",
             "face",
             "ctx_warn",
         ] {
