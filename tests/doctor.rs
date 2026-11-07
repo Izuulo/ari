@@ -110,10 +110,8 @@ fn codex_wired_or_not() {
             .contains("✓ codex      wired (approve with /hooks if events don't arrive)"),
         "{text}"
     );
-    assert!(
-        !text.contains(" dsh "),
-        "dsh not found, so no dsh check: {text}"
-    );
+    let l = line(&text, "dsh");
+    assert!(l.contains("not found") && !l.contains('✗'), "{text}");
 }
 
 #[test]
@@ -147,4 +145,40 @@ fn dsh_wired_or_not() {
     );
     let (_, text) = doctor(&d, true);
     assert!(line(&text, "dsh").contains("plain `ari hook`"), "{text}");
+}
+
+#[test]
+fn dsh_only_machine_wired_is_all_good() {
+    let d = tmp("dsh-only");
+    std::fs::remove_dir_all(d.join("claude")).unwrap();
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    let ari_hooks = d.join("config/ari/dsh-hooks.json");
+    write(ari_hooks.clone(), &ari_cli::setup::dsh_hooks());
+    write(
+        d.join(".dsh/cordis.patch.yml"),
+        &ari_cli::setup::dsh_add(None, &ari_hooks.display().to_string()).unwrap(),
+    );
+    write(
+        d.join("state/ari/sessions/s1/events.jsonl"),
+        "{\"t\":1,\"e\":\"Stop\"}\n",
+    );
+    let (out, text) = doctor(&d, true);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("All good."), "{text}");
+    let names: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .collect();
+    assert!(
+        !names.contains(&"plugin") && !names.contains(&"statusline"),
+        "{text}"
+    );
+    assert!(line(&text, "claude").contains("not found"), "{text}");
+    assert!(line(&text, "codex").contains("not found"), "{text}");
+
+    // No events yet: the hint names dsh, not Claude Code.
+    std::fs::remove_dir_all(d.join("state")).unwrap();
+    let (_, text) = doctor(&d, true);
+    assert!(!text.contains("Claude Code session"), "{text}");
+    assert!(text.contains("DeepSeek"), "{text}");
 }

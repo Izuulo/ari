@@ -10,6 +10,8 @@ use std::time::Duration;
 pub struct Check {
     pub name: &'static str,
     pub ok: bool,
+    /// Neutral: nothing to check (an app that isn't installed).
+    pub info: bool,
     pub detail: String,
     pub fix: Option<String>,
 }
@@ -18,8 +20,16 @@ fn pass(name: &'static str, detail: impl Into<String>) -> Check {
     Check {
         name,
         ok: true,
+        info: false,
         detail: detail.into(),
         fix: None,
+    }
+}
+
+fn info(name: &'static str, detail: impl Into<String>) -> Check {
+    Check {
+        info: true,
+        ..pass(name, detail)
     }
 }
 
@@ -27,6 +37,7 @@ fn problem(name: &'static str, detail: impl Into<String>, fix: impl Into<String>
     Check {
         name,
         ok: false,
+        info: false,
         detail: detail.into(),
         fix: Some(fix.into()),
     }
@@ -234,7 +245,7 @@ fn chain_checks(cfg: &config::Config) -> Vec<Check> {
         .collect()
 }
 
-fn hooks(now_ms: u64) -> Check {
+fn hooks(now_ms: u64, apps: &[App]) -> Check {
     let newest = paths::state_root()
         .map(|r| sessions::list(&r))
         .and_then(|l| {
@@ -248,11 +259,20 @@ fn hooks(now_ms: u64) -> Check {
             "hooks",
             format!("last event {}", age(now_ms.saturating_sub(t))),
         ),
-        None => problem(
-            "hooks",
-            "no hook events recorded yet",
-            "start a new Claude Code session (or run /reload-plugins in one)",
-        ),
+        None => {
+            let names: Vec<&str> = apps.iter().map(|a| a.label()).collect();
+            let fix = match names.as_slice() {
+                [] => "install Claude Code, Codex or DeepSeek Harness, then run ari setup".into(),
+                [one] => format!("start a new {one} session"),
+                [rest @ .., last] => format!("start a new {} or {last} session", rest.join(", ")),
+            };
+            let reload = if apps.contains(&App::Claude) {
+                " (or run /reload-plugins in Claude Code)"
+            } else {
+                ""
+            };
+            problem("hooks", "no hook events recorded yet", fix + reload)
+        }
     }
 }
 
@@ -403,21 +423,29 @@ fn config_status(exists: bool, loaded: Result<config::Config, String>) -> Check 
 }
 
 pub fn checks(now_ms: u64) -> Vec<Check> {
-    let claude = claude_dir().unwrap_or_default();
-    let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
-    let mut out = vec![binary(), plugin(&claude, &settings), statusline(&settings)];
-    for app in setup::found() {
+    let apps = setup::found();
+    let mut out = vec![binary()];
+    // One line per app; one that isn't installed is neutral, never a problem.
+    for app in [App::Claude, App::Codex, App::Dsh] {
+        if !apps.contains(&app) {
+            out.push(info(app.as_str(), format!("{} not found", app.label())));
+            continue;
+        }
         match app {
+            App::Claude => {
+                let claude = claude_dir().unwrap_or_default();
+                let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
+                out.extend([plugin(&claude, &settings), statusline(&settings)]);
+            }
             App::Codex => out.push(codex()),
             App::Dsh => out.push(dsh()),
-            App::Claude => {}
         }
     }
     let exists = config::path().is_some_and(|p| p.exists());
     let loaded = config::load_checked();
     out.push(config_status(exists, loaded.clone()));
     out.extend(chain_checks(&loaded.unwrap_or_default()));
-    out.push(hooks(now_ms));
+    out.push(hooks(now_ms, &apps));
     out.push(hook_failures(now_ms));
     out
 }
@@ -428,7 +456,11 @@ pub fn run(_args: &[String]) -> ! {
     for c in &checks {
         println!(
             "  {} {:<10} {}",
-            if c.ok { '✓' } else { '✗' },
+            match (c.info, c.ok) {
+                (true, _) => '·',
+                (_, true) => '✓',
+                _ => '✗',
+            },
             c.name,
             c.detail
         );
