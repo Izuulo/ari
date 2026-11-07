@@ -35,7 +35,7 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 37] = [
+const ITEMS: [(&str, &str, &str); 38] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
@@ -66,6 +66,7 @@ const ITEMS: [(&str, &str, &str); 37] = [
     ("PANEL", "hide_panel.usage", "usage · context, limits"),
     ("PANEL", "hide_panel.session", "session · cost, time"),
     ("PANEL", "hide_panel.turns", "turns · recent turns"),
+    ("PANEL", "hide_panel.git", "git · commits, PRs"),
     ("PANEL", "auto_clear", "auto-clear done agents"),
     ("ALERTS", "bell", "bell"),
     ("ALERTS", "ctx_warn", "context warn"),
@@ -358,7 +359,7 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 37);
+        assert_eq!(it.len(), 38);
         for r in ROLES {
             assert!(it.iter().any(|i| i.key == format!("color.{r}")), "{r}");
         }

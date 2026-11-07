@@ -9,6 +9,7 @@ pub mod conflicts;
 pub mod demo;
 pub mod doctor;
 pub mod event;
+pub mod git;
 pub mod hook;
 pub mod hub;
 pub mod panel;

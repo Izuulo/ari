@@ -46,6 +46,8 @@ struct App {
     st: State,
     usage: Usage,
     x: bar::Extras,
+    /// The session repo's git section, refreshed off-thread.
+    git: crate::git::Watcher,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
     /// When the recap view was last built, and whether events arrived since.
@@ -182,6 +184,8 @@ impl App {
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
             self.x.plan = state::plan_file(&self.st);
         }
+        self.git.poll(self.usage.dir.as_deref());
+        self.x.git = self.git.git.clone();
     }
 
     fn animating(&self, now: u64) -> bool {
@@ -837,6 +841,7 @@ pub fn run(args: &[String]) -> ! {
         st: State::default(),
         usage: Usage::default(),
         x: bar::Extras::default(),
+        git: Default::default(),
         mtimes: (None, None),
         picked_at: None,
         recap_built: None,
@@ -860,6 +865,8 @@ pub fn run(args: &[String]) -> ! {
         } else {
             (env("COLUMNS", 80), u16::MAX)
         };
+        // No later frame picks up the background fetch, so wait for it here.
+        app.x.git = app.usage.dir.as_deref().and_then(crate::git::fetch);
         println!("{}", panel::to_plain(&app.lines(width, height)));
         std::process::exit(0)
     }
@@ -1241,6 +1248,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1721,6 +1729,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1798,6 +1807,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,

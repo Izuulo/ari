@@ -271,6 +271,10 @@ pub fn lines(
             title: Some("turns"),
             rows: turns(st, x, &rc, now),
         },
+        Section {
+            title: Some("git"),
+            rows: git(x, &rc, now),
+        },
     ];
     // A section with nothing to say, or switched off in config, is left out.
     sections.retain(|s| {
@@ -633,7 +637,7 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
             secs.retain(|s| s.title != Some("turns"));
         }
     }
-    for title in ["session", "usage"] {
+    for title in ["git", "session", "usage"] {
         if total(secs) > height {
             secs.retain(|s| s.title != Some(title));
         }
@@ -1421,6 +1425,54 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
     rows
 }
 
+/// Branch and working tree, then recent commits and PRs, each led by its age.
+fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
+    let Some(g) = &x.git else { return vec![] };
+    let mut head = g.branch.clone();
+    if g.ahead > 0 {
+        head += &format!(" ↑{}", g.ahead);
+    }
+    if g.behind > 0 {
+        head += &format!(" ↓{}", g.behind);
+    }
+    let tree = match g.dirty {
+        0 => "clean".to_string(),
+        n => format!("{n} changed"),
+    };
+    let mut rows = vec![vec![
+        c.dim("branch  "),
+        c.span(head, Style::new().add_modifier(Modifier::BOLD)),
+        c.dim(format!(" · {tree}")),
+    ]];
+    let ago = |t: u64| c.dim(format!("{:>3}  ", age(now.saturating_sub(t))));
+    for k in &g.commits {
+        rows.push(vec![
+            ago(k.t),
+            c.dim(format!("{} ", k.hash)),
+            Span::raw(k.subject.clone()),
+        ]);
+    }
+    for p in &g.prs {
+        let (state, color) = match (p.state.as_str(), p.draft) {
+            ("OPEN", true) => ("draft ", Color::DarkGray),
+            ("OPEN", _) => ("open  ", Color::Green),
+            ("MERGED", _) => ("merged", Color::Magenta),
+            _ => ("closed", Color::Red),
+        };
+        let t = crate::git::parse_utc(&p.updated).unwrap_or(now);
+        rows.push(vec![
+            ago(t),
+            c.span(
+                format!("#{} ", p.number),
+                Style::new().add_modifier(Modifier::BOLD),
+            ),
+            c.span(format!("{state} "), Style::new().fg(color)),
+            Span::raw(p.title.clone()),
+        ]);
+    }
+    rows
+}
+
 pub fn to_plain(lines: &[Line]) -> String {
     lines
         .iter()
@@ -2081,6 +2133,36 @@ mod tests {
         let out = render(&st, &u, View::default(), 70, 60);
         assert!(out.contains("claude 61% · tools 22%"), "{out}");
         assert!(!out.contains("other"), "{out}");
+    }
+
+    #[test]
+    fn git_section() {
+        let (st, _) = multi();
+        let mut x = Extras::default();
+        assert!(!render_x(&st, &x, 80, 60).contains("─ git"));
+        x.git = Some(crate::git::Git {
+            branch: "main".into(),
+            ahead: 2,
+            dirty: 3,
+            commits: vec![crate::git::Commit {
+                hash: "1ec1c52".into(),
+                subject: "Merge pull request #38".into(),
+                t: NOW - 7_200_000,
+            }],
+            prs: vec![crate::git::Pr {
+                number: 39,
+                title: "git section".into(),
+                state: "OPEN".into(),
+                draft: false,
+                updated: "1970-01-01T00:00:00Z".into(),
+            }],
+            ..Default::default()
+        });
+        let out = render_x(&st, &x, 80, 60);
+        assert!(out.contains("─ git"), "{out}");
+        assert!(out.contains("branch  main ↑2 · 3 changed"), "{out}");
+        assert!(out.contains(" 2h  1ec1c52 Merge pull request #38"), "{out}");
+        assert!(out.contains("#39 open   git section"), "{out}");
     }
 
     #[test]
