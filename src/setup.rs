@@ -411,6 +411,120 @@ pub fn codex_remove(existing: &str) -> Option<String> {
     remove_hooks(existing, App::Codex)
 }
 
+// dsh reads the home-level patch `$DSH_HOME/cordis.patch.yml` (a YAML list of rows) after every
+// profile layer (deepseek-harness apps/cli/README.md "Profiles"); ARI adds one delimited `insert`.
+const BRIDGE: &str = "@deepseek-ai/dsh-hooks-claude-code";
+const BEGIN: &str = "# >>> ari: added by `ari setup`, removed by `ari uninstall`";
+const END: &str = "# <<< ari";
+const WAS_EMPTY: &str = "# (this file was `[]`)";
+
+fn is_code(l: &str) -> bool {
+    let t = l.trim();
+    !t.is_empty() && !t.starts_with('#')
+}
+
+/// ARI's Claude-shaped hooks file that dsh's bridge runs.
+pub fn dsh_hooks() -> String {
+    add_hooks(None, App::Dsh).unwrap_or_default()
+}
+
+/// The `configPath` of the row in a dsh patch that mounts the Claude Code hooks bridge (ARI's own
+/// or the user's). `Ok(None)`: no such row. `Err`: a path ARI can't follow (relative paths resolve
+/// from wherever dsh was launched).
+// shortcut: reads the first `configPath:` after the bridge's name as text, not YAML; upgrade if
+// people write the row some other way.
+pub fn dsh_bridge(patch: &str) -> Result<Option<String>, String> {
+    let mut lines = patch.lines().filter(|l| is_code(l));
+    if !lines.any(|l| l.contains(BRIDGE)) {
+        return Ok(None);
+    }
+    let raw = lines
+        .find_map(|l| l.split_once("configPath:").map(|(_, v)| v.trim()))
+        .ok_or("the dsh hooks bridge has no configPath ARI can read")?;
+    let path = if let Some(q) = raw.strip_prefix('\'') {
+        let mut out = String::new();
+        let mut it = q.chars().peekable();
+        while let Some(c) = it.next() {
+            match c {
+                '\'' if it.peek() == Some(&'\'') => {
+                    it.next();
+                    out.push('\'');
+                }
+                '\'' => break,
+                c => out.push(c),
+            }
+        }
+        out
+    } else if let Some(q) = raw.strip_prefix('"') {
+        q.split('"').next().unwrap_or_default().to_string()
+    } else {
+        let plain = raw.split(" #").next().unwrap_or_default();
+        plain
+            .split([',', '}'])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    if path.starts_with('/') {
+        Ok(Some(path))
+    } else {
+        Err(format!(
+            "the dsh hooks bridge reads configPath {raw}; ARI only follows an absolute path"
+        ))
+    }
+}
+
+/// The patch with a row mounting the bridge on `ari_hooks_path`, in ARI's delimited block.
+/// A patch that already mounts the bridge comes back unchanged: ARI's entries go into that
+/// row's file instead. A patch that isn't a plain YAML list is `Err`.
+pub fn dsh_add(patch: Option<&str>, ari_hooks_path: &str) -> Result<String, String> {
+    let text = patch.unwrap_or("");
+    if dsh_bridge(text)?.is_some() {
+        return Ok(text.to_string());
+    }
+    let code: Vec<&str> = text.lines().filter(|l| is_code(l)).collect();
+    let was_empty = code.len() == 1 && code[0].trim() == "[]";
+    if !was_empty && code.iter().any(|l| !l.starts_with(['-', ' '])) {
+        return Err(
+            "not a YAML list of rows ARI can add to; fix it first, ARI won't touch it".into(),
+        );
+    }
+    let mut out = String::new();
+    for l in text.lines().filter(|l| !(was_empty && l.trim() == "[]")) {
+        out += l;
+        out.push('\n');
+    }
+    out += BEGIN;
+    out.push('\n');
+    if was_empty {
+        out += WAS_EMPTY;
+        out.push('\n');
+    }
+    out += &format!(
+        "- insert:\n    - id: ari-hooks\n      name: '{BRIDGE}'\n      config:\n        configPath: '{}'\n{END}\n",
+        ari_hooks_path.replace('\'', "''")
+    );
+    Ok(out)
+}
+
+/// The patch without ARI's block; `""` when nothing else was in it. `None` when it had none.
+pub fn dsh_remove(patch: &str) -> Option<String> {
+    let lines: Vec<&str> = patch.lines().collect();
+    let b = lines.iter().position(|l| *l == BEGIN)?;
+    let e = b + lines[b..].iter().position(|l| *l == END)?;
+    let mut kept = [&lines[..b], &lines[e + 1..]].concat();
+    if lines[b..e].contains(&WAS_EMPTY) {
+        kept.insert(b, "[]");
+    }
+    let s = kept.join("\n");
+    Some(if s.trim().is_empty() {
+        String::new()
+    } else {
+        s + "\n"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

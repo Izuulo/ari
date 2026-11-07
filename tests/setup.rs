@@ -157,7 +157,10 @@ fn purge_removes_state_and_config() {
 
 // ── Codex and DeepSeek Harness ──────────────────────────────────────────────
 
-use ari_cli::setup::{codex_add, codex_remove};
+use ari_cli::app::App;
+use ari_cli::setup::{
+    add_hooks, codex_add, codex_remove, dsh_add, dsh_bridge, dsh_hooks, dsh_remove, remove_hooks,
+};
 use serde_json::{Value, json};
 
 const CODEX_EVENTS: [&str; 11] = [
@@ -169,6 +172,15 @@ const CODEX_EVENTS: [&str; 11] = [
     "PermissionRequest",
     "PreCompact",
     "PostCompact",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+];
+const DSH_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
     "Stop",
     "SubagentStart",
     "SubagentStop",
@@ -271,4 +283,103 @@ fn codex_remove_only_ours() {
     );
     assert_eq!(codex_remove(USER_CODEX), None);
     assert_eq!(codex_remove("{ broken"), None);
+}
+
+const USER_PATCH: &str = "# my tweaks\n- id: system-prompt\n  config:\n    personaPrefix: hi\n";
+
+#[test]
+fn dsh_add_points_bridge_at_ari_file() {
+    let path = "/h/.config/ari/dsh-hooks.json";
+    for before in [
+        None,
+        Some(USER_PATCH),
+        Some("[]\n"),
+        Some("# only [] here\n[]\n"),
+    ] {
+        let out = dsh_add(before, path).unwrap();
+        assert!(
+            out.starts_with(before.unwrap_or("").trim_end_matches("[]\n")),
+            "{out}"
+        );
+        assert!(out.contains("- insert:\n"), "{out}");
+        assert!(
+            out.contains("name: '@deepseek-ai/dsh-hooks-claude-code'"),
+            "{out}"
+        );
+        assert!(
+            out.contains("configPath: '/h/.config/ari/dsh-hooks.json'"),
+            "{out}"
+        );
+        assert!(!out.contains("[]\n"), "{out}");
+        assert_eq!(dsh_bridge(&out), Ok(Some(path.to_string())));
+        assert_eq!(dsh_add(Some(&out), path).unwrap(), out, "idempotent");
+    }
+    assert_eq!(dsh_bridge(USER_PATCH), Ok(None));
+    // A quote in the path stays one YAML scalar.
+    let odd = dsh_add(None, "/h/it's/x.json").unwrap();
+    assert_eq!(dsh_bridge(&odd), Ok(Some("/h/it's/x.json".to_string())));
+    // Not a block list ARI can safely extend: refused.
+    for bad in ["foo: bar\n", "[ {id: x} ]\n"] {
+        assert!(dsh_add(Some(bad), path).is_err(), "{bad}");
+    }
+
+    let hooks = v(&dsh_hooks());
+    let mut got = ours(&hooks["hooks"], "dsh");
+    let mut want = DSH_EVENTS.map(String::from).to_vec();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want);
+    assert_eq!(entries(&hooks["hooks"]).len(), 7);
+}
+
+#[test]
+fn dsh_add_merges_into_existing_bridge_config() {
+    let patch = "- insert:\n    - id: my-hooks\n      name: '@deepseek-ai/dsh-hooks-claude-code'\n      config:\n        configPath: \"/u/.claude/hooks.json\" # mine\n";
+    assert_eq!(
+        dsh_bridge(patch),
+        Ok(Some("/u/.claude/hooks.json".to_string()))
+    );
+    // The patch already has a bridge: it stays as it is, and ARI goes into that file.
+    assert_eq!(dsh_add(Some(patch), "/h/ari.json").unwrap(), patch);
+
+    let user = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#;
+    let merged = v(&add_hooks(Some(user), App::Dsh).unwrap());
+    assert_eq!(entries(&merged["hooks"]).len(), 8);
+    assert_eq!(merged["hooks"]["Stop"][0], v(user)["hooks"]["Stop"][0]);
+    assert_eq!(
+        v(&remove_hooks(&merged.to_string(), App::Dsh).unwrap()),
+        v(user)
+    );
+
+    // A bare event map (hooks.json style) gains entries at its root, not under a new `hooks`
+    // key that would hide the user's own.
+    let bare = r#"{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}"#;
+    let merged = v(&add_hooks(Some(bare), App::Dsh).unwrap());
+    assert!(merged.get("hooks").is_none(), "{merged}");
+    assert_eq!(ours(&merged, "dsh").len(), 7);
+    assert_eq!(
+        v(&remove_hooks(&merged.to_string(), App::Dsh).unwrap()),
+        v(bare)
+    );
+
+    // A configPath ARI can't follow is an error, never a guess.
+    for p in ["./hooks.json", "!!js process.cwd()", "~/h.json"] {
+        let patch = format!(
+            "- name: '@deepseek-ai/dsh-hooks-claude-code'\n  config:\n    configPath: {p}\n"
+        );
+        assert!(dsh_bridge(&patch).is_err(), "{p}");
+        assert!(dsh_add(Some(&patch), "/h/ari.json").is_err(), "{p}");
+    }
+}
+
+#[test]
+fn dsh_remove_restores() {
+    let path = "/h/ari.json";
+    for before in [USER_PATCH, "[]\n", "# c\n[]\n", "- id: x\n  config: {}"] {
+        let added = dsh_add(Some(before), path).unwrap();
+        let back = dsh_remove(&added).unwrap();
+        assert_eq!(back.trim_end(), before.trim_end(), "{added}");
+    }
+    assert_eq!(dsh_remove(&dsh_add(None, path).unwrap()).unwrap(), "");
+    assert_eq!(dsh_remove(USER_PATCH), None);
 }
