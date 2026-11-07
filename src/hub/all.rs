@@ -36,7 +36,7 @@ pub fn load(root: &Path, now: u64) -> Vec<Part> {
             Part {
                 st: state::load_session(&s.dir),
                 app: s.app,
-                tokens: tokens::cached(&s.dir),
+                tokens: tokens::cached_fresh(&s.dir, &u),
                 key,
                 name,
                 u,
@@ -235,6 +235,24 @@ mod tests {
     }
     fn agent<'a>(st: &'a State, id: &str) -> &'a Agent {
         st.agents.iter().find(|a| a.id == id).unwrap()
+    }
+
+    #[test]
+    fn codex_session_gets_tokens_from_its_rollout() {
+        let root = std::env::temp_dir().join(format!("ari-allcodex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("cccccccc");
+        std::fs::create_dir_all(&d).unwrap();
+        let rollout = d.join("rollout.jsonl");
+        let fx =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/codex/rollout.jsonl");
+        std::fs::write(&rollout, std::fs::read(fx).unwrap()).unwrap(); // copy keeps the old mtime
+        let meta = serde_json::json!({"agent": "codex", "transcript": rollout});
+        std::fs::write(d.join("meta.json"), meta.to_string()).unwrap();
+        let parts = load(&root, crate::hook::now_ms());
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].tokens.main.input + parts[0].tokens.main.output > 0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

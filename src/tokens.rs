@@ -268,6 +268,19 @@ pub fn cached(dir: &Path) -> TokenCache {
         })
 }
 
+/// The cache, with a Codex session's main ledger read fresh from its rollout (tokens.json is
+/// only refreshed by single-session watch); for views that don't refresh it themselves.
+pub fn cached_fresh(dir: &Path, u: &crate::usage::Usage) -> TokenCache {
+    let mut c = cached(dir);
+    if crate::app::of(dir) == crate::app::App::Codex
+        && let Some(t) = transcript_for(dir, u)
+        && let Some(l) = crate::codex::ledger(Path::new(&t))
+    {
+        c.main = l;
+    }
+    c
+}
+
 /// Bring `tokens.json` up to date with the main and subagent transcripts.
 pub fn update(dir: &Path, st: &State, transcript: Option<&str>) -> TokenCache {
     let mut c = cached(dir);

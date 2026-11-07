@@ -221,7 +221,15 @@ impl App {
             lines
         } else {
             let single = self.dir.is_some() && self.mode != Mode::All;
-            let p = palette(&self.cfg, single.then_some(self.session_app));
+            let pinned = self.pinned.as_deref().map(app::of);
+            let p = palette(
+                &self.cfg,
+                if single {
+                    Some(self.session_app)
+                } else {
+                    pinned
+                },
+            );
             theme::lines(lines, &p)
         }
     }
@@ -311,9 +319,10 @@ impl App {
                     let st = state::load_session(&dir);
                     let usage = usage::load(&dir);
                     let x = bar::Extras {
-                        tokens: Some(tokens::cached(&dir)),
+                        tokens: Some(tokens::cached_fresh(&dir, &usage)),
                         samples: burn::recent(&dir),
                         plan: state::plan_file(&st),
+                        app: app::of(&dir),
                         ..Default::default()
                     };
                     return self.view_lines(&dir, &st, &usage, x, width, height, now);
@@ -1745,6 +1754,57 @@ mod key_tests {
         std::fs::remove_dir_all(&open_id).unwrap();
         let (_, n) = app.frame_lines(100, 40);
         assert_eq!((n, app.pinned.is_none()), (Some(1), true));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pinned_codex_session_shows_its_app() {
+        let root = std::env::temp_dir().join(format!("ari-pin-app-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("cccc");
+        std::fs::create_dir_all(&d).unwrap();
+        let now = hook::now_ms();
+        let evs = [
+            format!(r#"{{"t":{},"e":"SessionStart"}}"#, now - 60_000),
+            format!(
+                r#"{{"t":{},"e":"UserPromptSubmit","msg":"go"}}"#,
+                now - 50_000
+            ),
+        ];
+        std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
+        std::fs::write(d.join("meta.json"), r#"{"agent":"codex"}"#).unwrap();
+        let mut app = App {
+            root: root.clone(),
+            mode: Mode::All,
+            cfg: config::Config::default(),
+            file: config::Config::default(),
+            ascii_flag: false,
+            cfg_path: None,
+            cfg_mtime: None,
+            cfg_error: None,
+            settings_note: None,
+            view: View::default(),
+            dir: None,
+            session_app: Default::default(),
+            st: State::default(),
+            usage: Usage::default(),
+            x: bar::Extras::default(),
+            mtimes: (None, None),
+            picked_at: None,
+            recap_built: None,
+            recap_dirty: false,
+            last_verdict: None,
+            color: false,
+            interactive: true,
+            pinned: None,
+        };
+        app.view.open = true;
+        let text = panel::to_plain(&app.frame_lines(100, 40).0);
+        assert!(text.contains("Codex"), "{text}");
+        assert_eq!(
+            app.pinned.as_deref().map(app::of),
+            Some(crate::app::App::Codex)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
