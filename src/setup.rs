@@ -1,5 +1,6 @@
 //! `ari setup` / `ari uninstall`: wire ARI into Claude Code's statusLine and back out, exactly.
 
+use crate::app::App;
 use crate::config::{self, Config};
 use crate::paths;
 use serde_json::{Map, Value, json};
@@ -270,6 +271,144 @@ pub fn run_uninstall(args: &[String]) -> ! {
         println!("Deleted ARI state and config.");
     }
     std::process::exit(0)
+}
+
+// ── Codex and DeepSeek Harness hook files ───────────────────────────────────
+
+/// Codex `hooks.json` events (codex-rs/protocol/src/hooks.rs `HookEventsToml`).
+const CODEX_EVENTS: [&str; 11] = [
+    "SessionStart",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PermissionRequest",
+    "PreCompact",
+    "PostCompact",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+];
+/// The events dsh's Claude Code hooks bridge fires.
+const DSH_EVENTS: [&str; 7] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+];
+
+fn hook_cmd(app: App) -> String {
+    format!(
+        "command -v ari >/dev/null 2>&1 && ari hook --agent {} || true",
+        app.as_str()
+    )
+}
+
+/// The event map: `hooks` of a settings-style file, or the root of a bare event map.
+fn event_map(root: &mut Map<String, Value>) -> Result<&mut Map<String, Value>, String> {
+    let bare = !root.contains_key("hooks")
+        && root
+            .keys()
+            .any(|k| CODEX_EVENTS.contains(&k.as_str()) || k == "Notification");
+    if bare {
+        return Ok(root);
+    }
+    root.entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("`hooks` is not a JSON object".into())
+}
+
+fn commands(groups: &Value) -> impl Iterator<Item = &str> {
+    groups
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| g.get("hooks")?.as_array())
+        .flatten()
+        .filter_map(|h| h.get("command")?.as_str())
+}
+
+/// Every hook command in a hooks file (settings-style or bare).
+pub fn all_commands(text: &str) -> Vec<String> {
+    let Ok(Value::Object(mut root)) = serde_json::from_str::<Value>(text) else {
+        return vec![];
+    };
+    let Ok(map) = event_map(&mut root) else {
+        return vec![];
+    };
+    map.values().flat_map(commands).map(String::from).collect()
+}
+
+/// `existing` with ARI's entry for `app` under each of its events (missing or empty: a new
+/// file). Events that already run ARI are left alone. A file that isn't a hooks object is `Err`.
+pub fn add_hooks(existing: Option<&str>, app: App) -> Result<String, String> {
+    let text = existing.filter(|t| !t.trim().is_empty()).unwrap_or("{}");
+    let mut root = match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(m)) => m,
+        _ => return Err("not a JSON object; fix it first, ARI won't touch it".into()),
+    };
+    let cmd = hook_cmd(app);
+    let map = event_map(&mut root)?;
+    let events: &[&str] = if app == App::Codex {
+        &CODEX_EVENTS
+    } else {
+        &DSH_EVENTS
+    };
+    for e in events {
+        let groups = map.entry(*e).or_insert_with(|| json!([]));
+        if commands(groups).any(|c| c == cmd) {
+            continue;
+        }
+        groups
+            .as_array_mut()
+            .ok_or(format!(
+                "`{e}` is not a list; fix it first, ARI won't touch it"
+            ))?
+            .push(json!({"hooks": [{"type": "command", "command": cmd, "timeout": 1}]}));
+    }
+    Ok(serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| e.to_string())? + "\n")
+}
+
+/// `existing` without commands that run `ari hook --agent <app>`; groups and events left empty
+/// by that go too. `None` when there was nothing to remove (or the file doesn't parse).
+pub fn remove_hooks(existing: &str, app: App) -> Option<String> {
+    let mark = format!("ari hook --agent {}", app.as_str());
+    let Ok(Value::Object(mut root)) = serde_json::from_str::<Value>(existing) else {
+        return None;
+    };
+    let map = event_map(&mut root).ok()?;
+    let mut removed = false;
+    map.retain(|_, groups| {
+        let Some(list) = groups.as_array_mut() else {
+            return true;
+        };
+        let before = list.len();
+        list.retain_mut(|g| {
+            let Some(hs) = g.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+            let n = hs.len();
+            hs.retain(|h| !h["command"].as_str().is_some_and(|c| c.contains(&mark)));
+            removed |= hs.len() < n;
+            !(hs.is_empty() && n > 0)
+        });
+        !(list.is_empty() && before > 0)
+    });
+    removed.then(|| serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default() + "\n")
+}
+
+/// ARI's entries merged into a Codex `hooks.json`.
+pub fn codex_add(existing: Option<&str>) -> Result<String, String> {
+    add_hooks(existing, App::Codex)
+}
+
+/// A Codex `hooks.json` without ARI's commands; `None` when none were there.
+pub fn codex_remove(existing: &str) -> Option<String> {
+    remove_hooks(existing, App::Codex)
 }
 
 #[cfg(test)]

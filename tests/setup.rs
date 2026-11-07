@@ -8,16 +8,31 @@ fn tmp(name: &str) -> PathBuf {
     d
 }
 
-fn ari(d: &Path, args: &[&str]) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_ari"))
-        .args(args)
-        .env("CLAUDE_CONFIG_DIR", d.join("claude"))
+/// `ari` with HOME, PATH and every app's home inside `d`, so the real ~/.codex, ~/.dsh and
+/// ~/.claude are never found or written.
+fn isolated(d: &Path, args: &[&str]) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_ari"));
+    c.args(args)
+        .env("HOME", d)
+        .env("PATH", "/usr/bin:/bin")
+        .env_remove("CODEX_HOME")
+        .env_remove("DSH_HOME")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .env("XDG_CONFIG_HOME", d.join("config"))
-        .env("XDG_STATE_HOME", d.join("state"))
-        .output()
-        .unwrap();
+        .env("XDG_STATE_HOME", d.join("state"));
+    c
+}
+
+fn run(mut c: Command) -> String {
+    let out = c.output().unwrap();
     assert!(out.status.success(), "{out:?}");
     String::from_utf8(out.stdout).unwrap()
+}
+
+fn ari(d: &Path, args: &[&str]) -> String {
+    let mut c = isolated(d, args);
+    c.env("CLAUDE_CONFIG_DIR", d.join("claude"));
+    run(c)
 }
 
 const ORIGINAL: &str = r#"{
@@ -123,10 +138,8 @@ fn refuses_broken_settings() {
     let d = tmp("broken");
     let settings = d.join("claude/settings.json");
     std::fs::write(&settings, "{ not json").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_ari"))
-        .args(["setup", "--yes"])
+    let out = isolated(&d, &["setup", "--yes"])
         .env("CLAUDE_CONFIG_DIR", d.join("claude"))
-        .env("XDG_CONFIG_HOME", d.join("config"))
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -140,4 +153,122 @@ fn purge_removes_state_and_config() {
     std::fs::create_dir_all(d.join("state/ari/sessions/s1")).unwrap();
     ari(&d, &["uninstall", "--yes", "--purge"]);
     assert!(!d.join("state/ari").exists() && !d.join("config/ari").exists());
+}
+
+// ── Codex and DeepSeek Harness ──────────────────────────────────────────────
+
+use ari_cli::setup::{codex_add, codex_remove};
+use serde_json::{Value, json};
+
+const CODEX_EVENTS: [&str; 11] = [
+    "SessionStart",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PermissionRequest",
+    "PreCompact",
+    "PostCompact",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+];
+
+const USER_CODEX: &str = r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "~/guard.sh", "timeout": 5 }]
+      }
+    ]
+  }
+}"#;
+
+fn v(s: &str) -> Value {
+    serde_json::from_str(s).unwrap()
+}
+
+fn entry(agent: &str) -> Value {
+    json!({
+        "type": "command",
+        "command": format!("command -v ari >/dev/null 2>&1 && ari hook --agent {agent} || true"),
+        "timeout": 1
+    })
+}
+
+/// Every hook entry under `map`, by event.
+fn entries(map: &Value) -> Vec<(String, Value)> {
+    let mut out = vec![];
+    for (event, groups) in map.as_object().unwrap() {
+        for g in groups.as_array().unwrap() {
+            for h in g["hooks"].as_array().unwrap() {
+                out.push((event.clone(), h.clone()));
+            }
+        }
+    }
+    out
+}
+
+fn ours(map: &Value, agent: &str) -> Vec<String> {
+    entries(map)
+        .into_iter()
+        .filter(|(_, h)| *h == entry(agent))
+        .map(|(e, _)| e)
+        .collect()
+}
+
+#[test]
+fn codex_add_keeps_user_hooks() {
+    let out = v(&codex_add(Some(USER_CODEX)).unwrap());
+    let hooks = &out["hooks"];
+    assert_eq!(
+        hooks["PreToolUse"][0],
+        v(USER_CODEX)["hooks"]["PreToolUse"][0]
+    );
+    let mut got = ours(hooks, "codex");
+    let mut want = CODEX_EVENTS.map(String::from).to_vec();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want);
+    assert_eq!(entries(hooks).len(), 12);
+    // A missing or empty file starts fresh.
+    for fresh in [None, Some(""), Some(" \n")] {
+        assert_eq!(
+            ours(&v(&codex_add(fresh).unwrap())["hooks"], "codex").len(),
+            11
+        );
+    }
+}
+
+#[test]
+fn codex_add_is_idempotent() {
+    for x in [None, Some(USER_CODEX)] {
+        let once = codex_add(x).unwrap();
+        assert_eq!(codex_add(Some(&once)).unwrap(), once);
+    }
+}
+
+#[test]
+fn codex_add_refuses_broken_json() {
+    for bad in [
+        "{ nope",
+        "[]",
+        r#"{"hooks":[]}"#,
+        r#"{"hooks":{"Stop":{}}}"#,
+    ] {
+        assert!(codex_add(Some(bad)).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn codex_remove_only_ours() {
+    let added = codex_add(Some(USER_CODEX)).unwrap();
+    assert_eq!(v(&codex_remove(&added).unwrap()), v(USER_CODEX));
+    assert_eq!(
+        v(&codex_remove(&codex_add(None).unwrap()).unwrap()),
+        json!({"hooks": {}})
+    );
+    assert_eq!(codex_remove(USER_CODEX), None);
+    assert_eq!(codex_remove("{ broken"), None);
 }
