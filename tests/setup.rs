@@ -373,6 +373,30 @@ fn dsh_add_merges_into_existing_bridge_config() {
 }
 
 #[test]
+fn dsh_bridge_reads_only_its_own_row() {
+    // The bridge row has no configPath; the next plugin's must not be taken for it.
+    let next = "- insert:\n    - id: mine\n      name: '@deepseek-ai/dsh-hooks-claude-code'\n      config:\n        projectDir: /p\n    - id: other\n      name: some-plugin\n      config:\n        configPath: /other.json\n";
+    assert!(dsh_bridge(next).is_err(), "{:?}", dsh_bridge(next));
+    assert!(dsh_add(Some(next), "/h/ari.json").is_err());
+    let top = "- name: '@deepseek-ai/dsh-hooks-claude-code'\n  config: {}\n- name: other\n  config:\n    configPath: /other.json\n";
+    assert!(dsh_bridge(top).is_err(), "{:?}", dsh_bridge(top));
+
+    // `config` before `name` in the same row.
+    let before = "- insert:\n    - id: mine\n      config:\n        configPath: /u/h.json\n      name: '@deepseek-ai/dsh-hooks-claude-code'\n- id: system-prompt\n  config:\n    configPath: /nope.json\n";
+    assert_eq!(dsh_bridge(before), Ok(Some("/u/h.json".to_string())));
+    // One-line flow row.
+    let flow = "- {name: '@deepseek-ai/dsh-hooks-claude-code', config: {configPath: /f.json}}\n";
+    assert_eq!(dsh_bridge(flow), Ok(Some("/f.json".to_string())));
+}
+
+#[test]
+fn dsh_add_refuses_an_indented_list() {
+    // ARI's row starts at column 0; added after an indented list it would break dsh's boot.
+    let err = dsh_add(Some("  - id: x\n    config: {}\n"), "/h/ari.json").unwrap_err();
+    assert!(err.contains("column 0"), "{err}");
+}
+
+#[test]
 fn dsh_remove_restores() {
     let path = "/h/ari.json";
     for before in [USER_PATCH, "[]\n", "# c\n[]\n", "- id: x\n  config: {}"] {

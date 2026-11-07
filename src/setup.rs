@@ -720,14 +720,26 @@ pub fn dsh_hooks() -> String {
 /// The `configPath` of the row in a dsh patch that mounts the Claude Code hooks bridge (ARI's own
 /// or the user's). `Ok(None)`: no such row. `Err`: a path ARI can't follow (relative paths resolve
 /// from wherever dsh was launched).
-// shortcut: reads the first `configPath:` after the bridge's name as text, not YAML; upgrade if
-// people write the row some other way.
+// shortcut: reads the bridge's row as text, not YAML (the first `configPath:` between the row's
+// `-` and the next line at that indent or less); upgrade if people write the row some other way.
 pub fn dsh_bridge(patch: &str) -> Result<Option<String>, String> {
-    let mut lines = patch.lines().filter(|l| is_code(l));
-    if !lines.any(|l| l.contains(BRIDGE)) {
+    let indent = |l: &str| l.len() - l.trim_start_matches(' ').len();
+    let dash = |l: &str| l.trim_start() == "-" || l.trim_start().starts_with("- ");
+    let code: Vec<&str> = patch.lines().filter(|l| is_code(l)).collect();
+    let Some(n) = code.iter().position(|l| l.contains(BRIDGE)) else {
         return Ok(None);
-    }
-    let raw = lines
+    };
+    // The row's keys sit at `key`; the row starts at the nearest `-` left of them.
+    let key = indent(code[n]) + if dash(code[n]) { 2 } else { 0 };
+    let start = (0..=n)
+        .rev()
+        .find(|&i| dash(code[i]) && indent(code[i]) < key)
+        .unwrap_or(n);
+    let end = (start + 1..code.len())
+        .find(|&i| indent(code[i]) <= indent(code[start]))
+        .unwrap_or(code.len());
+    let raw = code[start..end]
+        .iter()
         .find_map(|l| l.split_once("configPath:").map(|(_, v)| v.trim()))
         .ok_or("the dsh hooks bridge has no configPath ARI can read")?;
     let path = if let Some(q) = raw.strip_prefix('\'') {
@@ -774,6 +786,12 @@ pub fn dsh_add(patch: Option<&str>, ari_hooks_path: &str) -> Result<String, Stri
     }
     let code: Vec<&str> = text.lines().filter(|l| is_code(l)).collect();
     let was_empty = code.len() == 1 && code[0].trim() == "[]";
+    if !was_empty && code.first().is_some_and(|l| !l.starts_with('-')) {
+        return Err(
+            "its list doesn't start at column 0, so ARI's row would break it; ARI won't touch it"
+                .into(),
+        );
+    }
     if !was_empty && code.iter().any(|l| !l.starts_with(['-', ' '])) {
         return Err(
             "not a YAML list of rows ARI can add to; fix it first, ARI won't touch it".into(),
