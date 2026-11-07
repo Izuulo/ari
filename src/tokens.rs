@@ -185,6 +185,7 @@ impl Ledger {
 
 /// `claude-opus-5-5-20261001` → `opus-5-5`; other providers' names pass through.
 pub fn short_model(id: &str) -> String {
+    let id = id.split_once('[').map_or(id, |(head, _)| head); // `[1m]` context suffix
     let id = id.strip_prefix("claude-").unwrap_or(id);
     match id.rsplit_once('-') {
         Some((head, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => {
@@ -267,14 +268,36 @@ pub fn cached(dir: &Path) -> TokenCache {
         })
 }
 
+/// The cache, with a Codex session's main ledger read fresh from its rollout (tokens.json is
+/// only refreshed by single-session watch); for views that don't refresh it themselves.
+pub fn cached_fresh(dir: &Path, u: &crate::usage::Usage) -> TokenCache {
+    let mut c = cached(dir);
+    if crate::app::of(dir) == crate::app::App::Codex
+        && let Some(t) = transcript_for(dir, u)
+        && let Some(l) = crate::codex::ledger(Path::new(&t))
+    {
+        c.main = l;
+    }
+    c
+}
+
 /// Bring `tokens.json` up to date with the main and subagent transcripts.
 pub fn update(dir: &Path, st: &State, transcript: Option<&str>) -> TokenCache {
     let mut c = cached(dir);
     let before = c.clone();
+    let codex = crate::app::of(dir) == crate::app::App::Codex;
     if let Some(main) = transcript {
-        read_ledger(Path::new(main), &mut c.main);
+        if codex {
+            // Keep the last good totals when the tail has no token_count.
+            if let Some(l) = crate::codex::ledger(Path::new(main)) {
+                c.main = l;
+            }
+        } else {
+            read_ledger(Path::new(main), &mut c.main);
+        }
     }
-    for a in st.agents.iter().filter(|a| a.id != "main") {
+    // shortcut: Codex subagents aren't counted separately until a real recording shows their logs.
+    for a in st.agents.iter().filter(|a| !codex && a.id != "main") {
         let path = a
             .transcript
             .clone()
@@ -355,6 +378,12 @@ pub fn savings(l: &Ledger, cost_usd: Option<f64>, prices: &BTreeMap<String, Pric
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn short_model_keeps_other_providers_and_drops_suffix() {
+        assert_eq!(super::short_model("gpt-5.5-codex"), "gpt-5.5-codex");
+        assert_eq!(super::short_model("deepseek-v4-pro[1m]"), "deepseek-v4-pro");
+    }
+
     #[test]
     fn away_summary_keeps_the_last_first_line() {
         let l = ledger_from(

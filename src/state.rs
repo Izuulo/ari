@@ -213,6 +213,9 @@ pub struct Task {
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Agent {
+    /// Hub `--all`: the app of the session this node belongs to.
+    #[serde(skip)]
+    pub app: crate::app::App,
     pub id: String,
     pub kind: String,
     pub started: u64,

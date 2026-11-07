@@ -58,6 +58,7 @@ fn hub_all_frame() {
         key: key.into(),
         name: name.into(),
         st: s.clone(),
+        app: Default::default(),
         u: Usage::default(),
         tokens: tokens.clone(),
     };
@@ -112,4 +113,59 @@ fn zoom_screen_full() {
         ..Default::default()
     };
     insta::assert_snapshot!(show(&s, &x, now, v, 168, 49));
+}
+
+fn lim(pct: f64) -> Option<ari_cli::usage::Limit> {
+    Some(ari_cli::usage::Limit { pct, resets_at: 0 })
+}
+
+fn bare(key: &str, app: ari_cli::app::App, u: Usage, ctx: u64) -> Part {
+    let mut tokens = tokens::TokenCache::default();
+    tokens.main.input = ctx;
+    Part {
+        key: key.into(),
+        name: key.into(),
+        st: State::default(),
+        app,
+        u,
+        tokens,
+    }
+}
+
+#[test]
+fn merge_keeps_accounts_apart() {
+    use ari_cli::app::App;
+    // Most recent first: the Codex part is newer than the Claude one.
+    let codex = Usage {
+        five_h: lim(12.0),
+        ..Default::default()
+    };
+    let claude = Usage {
+        five_h: lim(40.0),
+        ..Default::default()
+    };
+    let parts = vec![
+        bare("cccccccc", App::Codex, codex, 1),
+        bare("aaaaaaaa", App::Claude, claude, 1),
+    ];
+    let (_, u, _) = merge(parts, 0);
+    assert_eq!(u.five_h.unwrap().pct, 40.0);
+    let labels: Vec<_> = u.app_limits.iter().map(|l| l.0.as_str()).collect();
+    assert_eq!(labels, ["Claude Code", "Codex"]);
+}
+
+#[test]
+fn merge_cost_is_claude_only() {
+    use ari_cli::app::App;
+    let cost = |c| Usage {
+        cost_usd: Some(c),
+        ..Default::default()
+    };
+    let parts = vec![
+        bare("aaaaaaaa", App::Claude, cost(1.0), 100),
+        bare("cccccccc", App::Codex, cost(9.0), 200),
+    ];
+    let (_, u, t) = merge(parts, 0);
+    assert_eq!(u.cost_usd, Some(1.0));
+    assert_eq!(t.total().input, 300);
 }

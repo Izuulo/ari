@@ -32,6 +32,9 @@ pub struct Usage {
     pub worktree: Option<String>,
     /// Prompt-cache state; absent on older Claude Code.
     pub cache: Option<CacheState>,
+    /// Hub `--all` only: (app label, 5h, 7d) per app, when apps' accounts mix.
+    #[serde(skip)]
+    pub app_limits: Vec<(String, Option<Limit>, Option<Limit>)>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -66,9 +69,17 @@ pub struct Limit {
 
 /// A session dir's `usage.json` (the last statusline payload); defaults when missing or broken.
 pub fn load(dir: &std::path::Path) -> Usage {
-    std::fs::read(dir.join("usage.json"))
+    let Ok(b) = std::fs::read(dir.join("usage.json")) else {
+        // Codex has no statusline: its numbers come from the rollout log.
+        return match crate::app::of(dir) {
+            crate::app::App::Codex => crate::tokens::transcript_for(dir, &Usage::default())
+                .map(|t| crate::codex::usage(std::path::Path::new(&t)))
+                .unwrap_or_default(),
+            _ => Usage::default(),
+        };
+    };
+    serde_json::from_slice(&b)
         .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
         .map(|v| from_value(&v))
         .unwrap_or_default()
 }
@@ -87,6 +98,7 @@ pub fn from_value(v: &Value) -> Usage {
         .or_else(|| s("/workspace/current_dir"))
         .or_else(|| s("/cwd"));
     Usage {
+        app_limits: Vec::new(),
         session_id: s("/session_id"),
         transcript_path: s("/transcript_path"),
         model: s("/model/display_name").or_else(|| s("/model/id")),

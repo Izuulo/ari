@@ -194,3 +194,74 @@ fn team_links() {
         .collect();
     assert_eq!(m, [(w.clone(), c.clone()), (c, w)]);
 }
+
+/// Codex and dsh tool calls read like Claude's: failures count, edits name their file.
+#[test]
+fn codex_and_dsh_replay() {
+    use ari_cli::state::State;
+    for (name, edit) in [("codex", "editing src/a.rs"), ("dsh", "editing b.rs")] {
+        let mut s = State::default();
+        let mut act = None;
+        for ev in &fixture(name) {
+            s.apply(ev);
+            if ev.e == "PreToolUse" && ev.tool.as_deref() == Some("Edit") {
+                act = s.agents[0].act.clone();
+            }
+        }
+        assert_eq!(act.as_deref(), Some(edit), "{name}");
+        assert_eq!(s.open_errors(), 1, "{name}");
+        let calls = &s.agents[0].recent;
+        assert!(calls.iter().any(|c| c.ok == Some(true)), "{name}");
+    }
+}
+
+/// A session dir for a replayed non-Claude fixture, as the panel would read it.
+fn app_panel(name: &str, agent: &str, transcript: Option<&str>) -> String {
+    use ari_cli::{bar::Extras, config::Config, panel, state::State, usage};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let dir = std::env::temp_dir().join(format!("ari-app-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let transcript = transcript.map(|t| root.join(t).to_string_lossy().into_owned());
+    let meta = serde_json::json!({"agent": agent, "cwd": "/p", "transcript": transcript});
+    std::fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+    let events = fixture(name);
+    let mut s = State::default();
+    for ev in &events {
+        s.apply(ev);
+    }
+    let x = Extras {
+        app: ari_cli::app::of(&dir),
+        ..Default::default()
+    };
+    let lines = panel::lines(
+        &s,
+        &usage::load(&dir),
+        &x,
+        &Config::default(),
+        panel::View::default(),
+        events.last().unwrap().t,
+        "12:00",
+        56,
+        60,
+        false,
+    );
+    panel::to_plain(&lines)
+}
+
+#[test]
+fn codex_panel() {
+    let out = app_panel("codex", "codex", Some("codex/rollout.jsonl"));
+    assert!(out.contains("Codex") && out.contains("ctx"), "{out}");
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn dsh_panel() {
+    let out = app_panel("dsh", "dsh", None);
+    assert!(out.contains("DeepSeek"), "{out}");
+    for gone in ["ctx", "5h", "7d", "cost"] {
+        assert!(!out.contains(gone), "{gone}: {out}");
+    }
+    insta::assert_snapshot!(out);
+}

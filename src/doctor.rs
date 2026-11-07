@@ -1,5 +1,6 @@
 //! `ari doctor`: is everything wired? Read-only; every problem comes with a fix.
 
+use crate::app::App;
 use crate::chain::{self, Outcome};
 use crate::{config, paths, sessions, setup};
 use serde_json::Value;
@@ -9,6 +10,8 @@ use std::time::Duration;
 pub struct Check {
     pub name: &'static str,
     pub ok: bool,
+    /// Neutral: nothing to check (an app that isn't installed).
+    pub info: bool,
     pub detail: String,
     pub fix: Option<String>,
 }
@@ -17,8 +20,16 @@ fn pass(name: &'static str, detail: impl Into<String>) -> Check {
     Check {
         name,
         ok: true,
+        info: false,
         detail: detail.into(),
         fix: None,
+    }
+}
+
+fn info(name: &'static str, detail: impl Into<String>) -> Check {
+    Check {
+        info: true,
+        ..pass(name, detail)
     }
 }
 
@@ -26,6 +37,7 @@ fn problem(name: &'static str, detail: impl Into<String>, fix: impl Into<String>
     Check {
         name,
         ok: false,
+        info: false,
         detail: detail.into(),
         fix: Some(fix.into()),
     }
@@ -49,12 +61,7 @@ fn age(ms: u64) -> String {
 }
 
 fn binary() -> Check {
-    let found = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|d| d.join("ari"))
-            .find(|p| p.is_file())
-    });
-    match found {
+    match setup::which("ari") {
         Some(p) => {
             let version = std::process::Command::new(&p)
                 .arg("--version")
@@ -133,6 +140,71 @@ fn statusline(settings: &Value) -> Check {
     }
 }
 
+fn codex() -> Check {
+    let path = setup::codex_home().unwrap_or_default().join("hooks.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if setup::all_commands(&text)
+        .iter()
+        .any(|c| c.contains("ari hook --agent codex"))
+    {
+        pass(
+            "codex",
+            "wired (approve with /hooks if events don't arrive)",
+        )
+    } else {
+        problem(
+            "codex",
+            format!("ARI's hooks are not in {}", path.display()),
+            "ari setup",
+        )
+    }
+}
+
+fn dsh() -> Check {
+    let patch = setup::dsh_home()
+        .unwrap_or_default()
+        .join("cordis.patch.yml");
+    let target = match setup::dsh_bridge(&std::fs::read_to_string(&patch).unwrap_or_default()) {
+        Ok(Some(p)) => PathBuf::from(p),
+        Ok(None) => {
+            return problem(
+                "dsh",
+                "its Claude Code hooks bridge isn't mounted, so dsh sends ARI nothing",
+                "ari setup",
+            );
+        }
+        Err(e) => {
+            return problem(
+                "dsh",
+                e,
+                "make the bridge's configPath an absolute path, then run ari setup",
+            );
+        }
+    };
+    let text = std::fs::read_to_string(&target).unwrap_or_default();
+    let shown = target.display();
+    if setup::all_commands(&text)
+        .iter()
+        .any(|c| c.contains("ari hook --agent dsh"))
+    {
+        pass("dsh", format!("wired via {shown}"))
+    } else if setup::plain_ari_hook(&text) {
+        problem(
+            "dsh",
+            format!("{shown} runs plain `ari hook`, so dsh sessions show as Claude Code"),
+            "change it to `ari hook --agent dsh` there (ari setup leaves that file alone)",
+        )
+    } else if setup::claude_settings(&target) {
+        problem(
+            "dsh",
+            format!("the bridge reads {shown}, a Claude Code settings file ARI won't add to"),
+            "point the bridge's configPath at a hooks.json of its own, then run ari setup",
+        )
+    } else {
+        problem("dsh", format!("{shown} doesn't run ARI"), "ari setup")
+    }
+}
+
 fn chain_checks(cfg: &config::Config) -> Vec<Check> {
     if cfg.chain.commands.is_empty() {
         return vec![pass("chain", "none (ARI is your only statusline)")];
@@ -173,7 +245,7 @@ fn chain_checks(cfg: &config::Config) -> Vec<Check> {
         .collect()
 }
 
-fn hooks(now_ms: u64) -> Check {
+fn hooks(now_ms: u64, apps: &[App]) -> Check {
     let newest = paths::state_root()
         .map(|r| sessions::list(&r))
         .and_then(|l| {
@@ -187,11 +259,20 @@ fn hooks(now_ms: u64) -> Check {
             "hooks",
             format!("last event {}", age(now_ms.saturating_sub(t))),
         ),
-        None => problem(
-            "hooks",
-            "no hook events recorded yet",
-            "start a new Claude Code session (or run /reload-plugins in one)",
-        ),
+        None => {
+            let names: Vec<&str> = apps.iter().map(|a| a.label()).collect();
+            let fix = match names.as_slice() {
+                [] => "install Claude Code, Codex or DeepSeek Harness, then run ari setup".into(),
+                [one] => format!("start a new {one} session"),
+                [rest @ .., last] => format!("start a new {} or {last} session", rest.join(", ")),
+            };
+            let reload = if apps.contains(&App::Claude) {
+                " (or run /reload-plugins in Claude Code)"
+            } else {
+                ""
+            };
+            problem("hooks", "no hook events recorded yet", fix + reload)
+        }
     }
 }
 
@@ -342,14 +423,29 @@ fn config_status(exists: bool, loaded: Result<config::Config, String>) -> Check 
 }
 
 pub fn checks(now_ms: u64) -> Vec<Check> {
-    let claude = claude_dir().unwrap_or_default();
-    let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
-    let mut out = vec![binary(), plugin(&claude, &settings), statusline(&settings)];
+    let apps = setup::found();
+    let mut out = vec![binary()];
+    // One line per app; one that isn't installed is neutral, never a problem.
+    for app in [App::Claude, App::Codex, App::Dsh] {
+        if !apps.contains(&app) {
+            out.push(info(app.as_str(), format!("{} not found", app.label())));
+            continue;
+        }
+        match app {
+            App::Claude => {
+                let claude = claude_dir().unwrap_or_default();
+                let settings = json(&claude.join("settings.json")).unwrap_or(Value::Null);
+                out.extend([plugin(&claude, &settings), statusline(&settings)]);
+            }
+            App::Codex => out.push(codex()),
+            App::Dsh => out.push(dsh()),
+        }
+    }
     let exists = config::path().is_some_and(|p| p.exists());
     let loaded = config::load_checked();
     out.push(config_status(exists, loaded.clone()));
     out.extend(chain_checks(&loaded.unwrap_or_default()));
-    out.push(hooks(now_ms));
+    out.push(hooks(now_ms, &apps));
     out.push(hook_failures(now_ms));
     out
 }
@@ -360,7 +456,11 @@ pub fn run(_args: &[String]) -> ! {
     for c in &checks {
         println!(
             "  {} {:<10} {}",
-            if c.ok { '✓' } else { '✗' },
+            match (c.info, c.ok) {
+                (true, _) => '·',
+                (_, true) => '✓',
+                _ => '✗',
+            },
             c.name,
             c.detail
         );

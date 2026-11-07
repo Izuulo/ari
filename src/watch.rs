@@ -5,7 +5,7 @@ use crate::panel::{self, View};
 use crate::sessions::{self, SessionInfo};
 use crate::state::{State, Verdict};
 use crate::usage::{self, Usage};
-use crate::{bar, burn, config, hook, paths, settings, state, theme, tokens};
+use crate::{app, bar, burn, config, hook, paths, settings, state, theme, tokens};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
@@ -41,6 +41,8 @@ struct App {
     settings_note: Option<String>,
     view: View,
     dir: Option<PathBuf>,
+    /// The watched session's app, read when its files change (not per frame).
+    session_app: crate::app::App,
     st: State,
     usage: Usage,
     x: bar::Extras,
@@ -55,6 +57,14 @@ struct App {
     interactive: bool,
     /// The session opened from the `--all` list: it stays put while the urgency order shifts.
     pinned: Option<PathBuf>,
+}
+
+/// `auto` follows the watched session's app; the merged views (no session) use `default`.
+fn palette(cfg: &config::Config, app: Option<crate::app::App>) -> theme::Palette {
+    app.map_or_else(
+        || theme::Palette::new(cfg),
+        |a| theme::Palette::for_app(cfg, a),
+    )
 }
 
 fn mtime(p: &Path) -> Option<SystemTime> {
@@ -128,6 +138,7 @@ impl App {
             };
             if dir != self.dir {
                 self.dir = dir;
+                self.session_app = Default::default();
                 self.mtimes = (None, None);
                 self.st = State::default();
                 self.usage = Usage::default();
@@ -156,6 +167,8 @@ impl App {
         }
         if changed {
             self.mtimes = now;
+            self.session_app = app::of(dir);
+            self.x.app = self.session_app;
             self.st = state::load_session(dir);
             self.usage = usage::load(dir);
             self.x.tokens = Some(tokens::update(
@@ -207,7 +220,17 @@ impl App {
         if self.view.settings.is_some() {
             lines
         } else {
-            theme::lines(lines, &theme::Palette::new(&self.cfg))
+            let single = self.dir.is_some() && self.mode != Mode::All;
+            let pinned = self.pinned.as_deref().map(app::of);
+            let p = palette(
+                &self.cfg,
+                if single {
+                    Some(self.session_app)
+                } else {
+                    pinned
+                },
+            );
+            theme::lines(lines, &p)
         }
     }
 
@@ -296,9 +319,10 @@ impl App {
                     let st = state::load_session(&dir);
                     let usage = usage::load(&dir);
                     let x = bar::Extras {
-                        tokens: Some(tokens::cached(&dir)),
+                        tokens: Some(tokens::cached_fresh(&dir, &usage)),
                         samples: burn::recent(&dir),
                         plan: state::plan_file(&st),
+                        app: app::of(&dir),
                         ..Default::default()
                     };
                     return self.view_lines(&dir, &st, &usage, x, width, height, now);
@@ -496,6 +520,7 @@ struct Entry {
     verdict: String,
     style: Style,
     project: String,
+    app: crate::app::App,
     title: Option<String>,
     detail: String,
     ctx: Option<f64>,
@@ -566,11 +591,12 @@ fn all_entries(root: &Path, cfg: &config::Config, now: u64) -> Vec<Entry> {
                 .clone()
                 .or_else(|| s.cwd.as_deref()?.rsplit('/').next().map(String::from))
                 .unwrap_or_else(|| s.id.chars().take(8).collect()),
+            app: s.app,
             title: u.session_name.clone(),
             // What it's asking beats what it was doing.
             detail,
             ctx: u.ctx_pct,
-            cost: u.cost_usd,
+            cost: u.cost_usd.filter(|_| s.app == crate::app::App::Claude),
             age_ms: now.saturating_sub(s.last_ms),
             dir: s.dir.clone(),
             limits: (u.five_h.is_some() || u.seven_d.is_some()).then_some((u.five_h, u.seven_d)),
@@ -595,10 +621,16 @@ fn list_lines(
     let dim = Style::new().add_modifier(Modifier::DIM);
     let bold = Style::new().add_modifier(Modifier::BOLD);
     // Rate limits are per account: show one session's once, not one per row.
-    let limits = entries
+    let mut recent: Vec<&Entry> = entries.iter().filter(|e| e.limits.is_some()).collect();
+    recent.sort_by_key(|e| e.age_ms);
+    let per_app = crate::hub::all::group_limits(recent.iter().map(|e| {
+        let (f, s) = e.limits.unwrap_or_default();
+        (e.app, f, s)
+    }));
+    // Claude Code only: the one-account line as always.
+    let limits = recent
         .iter()
-        .filter(|e| e.limits.is_some())
-        .min_by_key(|e| e.age_ms)
+        .find(|e| e.app == crate::app::App::Claude)
         .and_then(|e| e.limits);
     let total: f64 = entries.iter().filter_map(|e| e.cost).sum();
 
@@ -623,7 +655,9 @@ fn list_lines(
         ));
     }
     let mut acct = Vec::new();
-    if let Some((five, seven)) = limits {
+    if !per_app.is_empty() {
+        acct.extend(bar::app_limits(&per_app, now, cfg, false));
+    } else if let Some((five, seven)) = limits {
         for (name, l) in [("5h", five), ("7d", seven)] {
             if let Some(l) = l {
                 let reset = if l.resets_at > 0 {
@@ -654,9 +688,14 @@ fn list_lines(
         .unwrap_or(0)
         .min(22);
     let right = if w >= 70 { 26 } else { 0 };
+    // "Codex " before the project; Claude Code's rows stay bare.
+    let pre = |e: &Entry| match e.app {
+        crate::app::App::Claude => String::new(),
+        a => format!("{} ", a.label()),
+    };
     let label = |e: &Entry| match &e.title {
-        Some(t) => format!("{} · {t}", e.project),
-        None => e.project.clone(),
+        Some(t) => format!("{}{} · {t}", pre(e), e.project),
+        None => format!("{}{}", pre(e), e.project),
     };
     let full = entries.iter().map(|e| label(e).width()).max().unwrap_or(0);
     // Which session it is matters more than what it's doing: the label gets room first.
@@ -678,7 +717,12 @@ fn list_lines(
             Span::raw(" ".repeat(vw.saturating_sub(e.verdict.width()) + 2)),
         ];
         let text = crate::event::truncate(&label(e), lw);
-        let (p, t) = text.split_at(text.floor_char_boundary(e.project.len()));
+        let (a, rest) = text.split_at(text.floor_char_boundary(pre(e).len()));
+        let (p, t) = rest.split_at(rest.floor_char_boundary(e.project.len()));
+        spans.push(Span::styled(
+            a.to_string(),
+            paint(Style::new().fg(e.app.accent()).add_modifier(Modifier::BOLD)),
+        ));
         spans.push(Span::styled(
             p.to_string(),
             paint(if quiet { dim } else { bold }),
@@ -782,6 +826,7 @@ pub fn run(args: &[String]) -> ! {
             ..Default::default()
         },
         dir: None,
+        session_app: Default::default(),
         st: State::default(),
         usage: Usage::default(),
         x: bar::Extras::default(),
@@ -1183,6 +1228,7 @@ mod key_tests {
             settings_note: None,
             view: View::default(),
             dir: None,
+            session_app: Default::default(),
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
@@ -1212,6 +1258,20 @@ mod key_tests {
         app.cfg_path = Some(p.clone());
         app.refresh();
         (app, root, p)
+    }
+
+    #[test]
+    fn auto_palette_follows_the_session_app() {
+        let cfg = config::Config {
+            theme: "auto".into(),
+            ..Default::default()
+        };
+        let codex = palette(&cfg, Some(crate::app::App::Codex));
+        assert_eq!(codex.accent, crate::app::App::Codex.accent());
+        assert_eq!(
+            palette(&cfg, None),
+            theme::Palette::new(&config::Config::default())
+        );
     }
 
     fn edit(app: &mut App, key: &str, dir: i8) {
@@ -1648,6 +1708,7 @@ mod key_tests {
             settings_note: None,
             view: View::default(),
             dir: None,
+            session_app: Default::default(),
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
@@ -1697,8 +1758,60 @@ mod key_tests {
     }
 
     #[test]
+    fn pinned_codex_session_shows_its_app() {
+        let root = std::env::temp_dir().join(format!("ari-pin-app-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("cccc");
+        std::fs::create_dir_all(&d).unwrap();
+        let now = hook::now_ms();
+        let evs = [
+            format!(r#"{{"t":{},"e":"SessionStart"}}"#, now - 60_000),
+            format!(
+                r#"{{"t":{},"e":"UserPromptSubmit","msg":"go"}}"#,
+                now - 50_000
+            ),
+        ];
+        std::fs::write(d.join("events.jsonl"), evs.join("\n") + "\n").unwrap();
+        std::fs::write(d.join("meta.json"), r#"{"agent":"codex"}"#).unwrap();
+        let mut app = App {
+            root: root.clone(),
+            mode: Mode::All,
+            cfg: config::Config::default(),
+            file: config::Config::default(),
+            ascii_flag: false,
+            cfg_path: None,
+            cfg_mtime: None,
+            cfg_error: None,
+            settings_note: None,
+            view: View::default(),
+            dir: None,
+            session_app: Default::default(),
+            st: State::default(),
+            usage: Usage::default(),
+            x: bar::Extras::default(),
+            mtimes: (None, None),
+            picked_at: None,
+            recap_built: None,
+            recap_dirty: false,
+            last_verdict: None,
+            color: false,
+            interactive: true,
+            pinned: None,
+        };
+        app.view.open = true;
+        let text = panel::to_plain(&app.frame_lines(100, 40).0);
+        assert!(text.contains("Codex"), "{text}");
+        assert_eq!(
+            app.pinned.as_deref().map(app::of),
+            Some(crate::app::App::Codex)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn list_marks_the_selected_row_and_ends_with_a_hint() {
         let e = |p: &str| Entry {
+            app: Default::default(),
             rank: 0,
             verdict: "ON TRACK".into(),
             style: Style::default(),
@@ -1743,6 +1856,38 @@ mod key_tests {
         ));
         let head = panel::to_plain(&list_lines(&[old, fresh], None, &cfg, 0, 100)[..1]);
         assert!(head.contains("5h 77%") && !head.contains("11%"), "{head}");
+        // Another app's account is labelled, never merged under Claude's.
+        let codex = || {
+            let mut c = e("codex");
+            c.app = crate::app::App::Codex;
+            c.age_ms = 1;
+            c.limits = Some((
+                Some(usage::Limit {
+                    pct: 12.0,
+                    resets_at: 0,
+                }),
+                None,
+            ));
+            c
+        };
+        let (mut claude, mut old) = (e("claude"), e("old"));
+        claude.age_ms = 5;
+        claude.limits = Some((
+            Some(usage::Limit {
+                pct: 40.0,
+                resets_at: 0,
+            }),
+            None,
+        ));
+        old.limits = None;
+        let head = |v: &[Entry]| panel::to_plain(&list_lines(v, None, &cfg, 0, 100)[..1]);
+        let both = head(&[codex(), claude, old]);
+        assert!(both.contains("Claude 5h 40% · Codex 5h 12%"), "{both}");
+        let only = head(&[codex()]);
+        assert!(
+            only.contains("Codex 5h 12%") && !only.contains("Claude"),
+            "{only}"
+        );
         let once = list_lines(&es, None, &cfg, 0, 100);
         assert_eq!(once.len(), 4, "no hint without a selection");
         let ascii = config::Config {
@@ -1756,6 +1901,7 @@ mod key_tests {
     #[test]
     fn narrow_list_puts_the_detail_under_the_session() {
         let e = |w: &str| Entry {
+            app: Default::default(),
             rank: 0,
             verdict: "ON TRACK".into(),
             style: Style::default(),
@@ -1798,6 +1944,7 @@ mod key_tests {
     fn long_project_names_truncate_on_a_char_boundary() {
         for (n, w) in [(35, 120), (36, 120), (37, 120), (12, 40), (13, 40)] {
             let e = Entry {
+                app: Default::default(),
                 rank: 0,
                 verdict: "ON TRACK".into(),
                 style: Style::default(),

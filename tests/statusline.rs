@@ -114,3 +114,34 @@ fn reads_hook_events() {
         "{out}"
     );
 }
+
+#[test]
+fn claude_theme_colours_the_row() {
+    let d = tmp("claude-theme");
+    std::fs::write(d.join("config/ari/config.toml"), "theme = \"claude\"\n").unwrap();
+    let dir = d.join("state/ari/sessions/s1");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("events.jsonl"),
+        "{\"t\":1,\"e\":\"UserPromptSubmit\",\"msg\":\"go\"}\n{\"t\":2,\"e\":\"TaskCreated\",\"task\":{\"id\":\"1\",\"subject\":\"a\"}}\n{\"t\":3,\"e\":\"TaskCompleted\",\"task\":{\"id\":\"1\",\"status\":\"completed\",\"subject\":\"a\"}}\n{\"t\":4,\"e\":\"Stop\"}\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
+        .arg("statusline")
+        .env("XDG_STATE_HOME", d.join("state"))
+        .env("XDG_CONFIG_HOME", d.join("config"))
+        .env_remove("NO_COLOR")
+        .env("COLUMNS", "200")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(PAYLOAD.as_bytes())
+        .unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert!(out.contains("38;2;217;119;87"), "{out:?}");
+}

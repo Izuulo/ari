@@ -59,7 +59,10 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let row = bar::render(&st, &u, &x, cfg, now, width, color);
     if color {
-        crate::theme::ansi(&row, &crate::theme::Palette::new(cfg))
+        crate::theme::ansi(
+            &row,
+            &crate::theme::Palette::for_app(cfg, crate::app::App::Claude),
+        )
     } else {
         row
     }

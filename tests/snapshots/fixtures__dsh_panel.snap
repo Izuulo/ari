@@ -1,0 +1,15 @@
+---
+source: tests/fixtures.rs
+expression: out
+---
+╭─ ARI ──────────────────────────────────────── 12:00 ─╮
+│ ◌ IDLE · DeepSeek · Run the tests and fix the failu… │
+├─ agents ─────────────────────────────────────────────┤
+│ ◌ main      idle                                     │
+│ └─✓ default done 1s · Listed the files.              │
+├─ errors ─────────────────────────────────────────────┤
+│ ✗ 10s  cargo test · test result: FAILED. 3 passed; … │
+├─ session ────────────────────────────────────────────┤
+│ tests   ✗ 1/4                                        │
+│ time    18s · model 100%                             │
+╰──────────────────────────────────────────────────────╯

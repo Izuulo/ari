@@ -4,7 +4,7 @@
 
 ### Stop asking Claude how it's going.
 
-**All Relevant Information**: a zero-token status panel for Claude Code.
+**All Relevant Information**: a zero-token status panel for Claude Code, Codex and DeepSeek Harness.
 
 [![CI](https://github.com/Izuulo/ari/actions/workflows/ci.yml/badge.svg)](https://github.com/Izuulo/ari/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Izuulo/ari?color=blue)](https://github.com/Izuulo/ari/releases/latest)
@@ -12,7 +12,7 @@
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)
 
-[Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
+[Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Other agents](#other-agents-codex-and-deepseek-harness) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
 
 <img src="docs/demo.gif" alt="ARI replaying a Claude Code session: the same test fails three times and the verdict turns to STUCK, Claude waits on a permission prompt (NEEDS YOU), the fix lands and it is back ON TRACK, two Explore subagents finish, and it ends on DONE" width="760">
 
@@ -30,9 +30,9 @@ ari setup
 
 1. Installs the `ari` binary to `~/.local/bin` (macOS and Linux). With Homebrew: `brew install Izuulo/tap/ari`. With Rust: `cargo install --git https://github.com/Izuulo/ari ari-cli`.
 2. Adds the plugin whose hooks feed ARI. In-app: `/plugin marketplace add Izuulo/ari`, then `/plugin install ari@ari`.
-3. Adds ARI's row to your statusline. It shows the change, asks first, and keeps your current statusline running alongside.
+3. Adds ARI's row to your statusline. It shows the change, asks first, and keeps your current statusline running alongside. If Codex or DeepSeek Harness is installed, it wires those up too (see [Other agents](#other-agents-codex-and-deepseek-harness)).
 
-Start a new Claude Code session (or `/reload-plugins`) and the row appears. Something missing? `ari doctor` says what and how to fix it. Just want to look? `ari demo` replays a real session with no Claude needed.
+Start a new Claude Code session (or `/reload-plugins`) and the row appears. Something missing? `ari doctor` says what and how to fix it. Just want to look? `ari demo` replays a real session with no Claude needed; `ari demo --codex` and `ari demo --deepseek` show the same session as those apps report it.
 
 ## What you get
 
@@ -101,6 +101,24 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 | `✓ DONE` | Turn finished and every task is complete |
 | `◌ IDLE` | Turn finished; tasks incomplete or none |
 
+## Other agents: Codex and DeepSeek Harness
+
+ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ari watch`, `ari watch --all`, the hub and `ari recap`. `ari setup` wires every app it finds (Claude Code, Codex, dsh), `ari uninstall` removes exactly what it added, and `ari doctor` shows one line per app.
+
+| | Codex | DeepSeek Harness |
+|---|---|---|
+| Activity, tool calls, tests, subagents | yes | yes |
+| Errors | test failures only | yes |
+| Context fill, tokens, 5h/7d limits | yes, from Codex's rollout log | no (dsh doesn't expose its session log to hooks) |
+| Cost | no | no |
+| ARI row in the app's footer | no: run `ari watch` in a pane | no: run `ari watch` in a pane |
+
+- **Codex:** after `ari setup`, run `/hooks` inside Codex once and approve ARI's hooks. Known limit: Codex doesn't give hooks a command's exit code, so a failing non-test command isn't shown as an error; a failing test run is.
+- **dsh:** setup mounts dsh's Claude Code hook bridge (`@deepseek-ai/dsh-hooks-claude-code`) in `$DSH_HOME/cordis.patch.yml` (default `~/.dsh`), pointing at ARI's own hooks file. If you already use the bridge with your own hooks file, setup adds ARI's entries to that file instead. dsh support is tested from sample data shaped after dsh's documented payloads, not a recorded session.
+- **Multi-session screens** label non-Claude sessions with their app, show account limits per app, and count dollar figures for Claude Code sessions only.
+- **Themes:** each app has its own: `claude` (orange and grey), `codex` and `deepseek`. Set `theme = "auto"` and the panel and hub take the colours of the app running the watched session. Pick one with `s` in `ari watch` or in `config.toml`; the default theme is unchanged.
+- **See it first:** `ari demo --codex` and `ari demo --deepseek` replay the bundled session as that app would report it, with its label, its colours and only the numbers it gives ARI. Press `x` for the hub.
+
 ## Why ARI
 
 | | |
@@ -127,7 +145,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 | `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
 | `ari hub [--session <id> \| --all] [--ascii]` | The hub: every agent, its messages and context |
 | `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
-| `ari demo [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed |
+| `ari demo [--codex \| --deepseek] [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed; `--codex` and `--deepseek` show it as that app reports it |
 | `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |
 | `ari replay <dir>` | Print a recorded session as a timeline |
 
@@ -141,7 +159,7 @@ Every key is optional:
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-theme = "default"           # default · soft · vivid · colorblind · mono
+theme = "default"           # default · soft · vivid · colorblind · mono · claude · codex · deepseek · auto
 hide = ["cost"]             # statusline segments to drop: conflicts now tasks agents errors tests ctx 5h 7d cost tokens
 hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session turns
 face = false                # the little (•_•) in the panel header
@@ -175,6 +193,10 @@ good = "#5fd787"            # roles: good warn bad accent highlight info muted b
 | `vivid` | the bright variants, for dark low-contrast terminals |
 | `colorblind` | blue for good, orange for bad, never red against green |
 | `mono` | no colour; dim and bold only |
+| `claude` | Claude Code's orange and grey |
+| `codex` | Codex's colours |
+| `deepseek` | DeepSeek's colours |
+| `auto` | follows the app of the watched session; multi-session screens use `default` |
 
 Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR` is respected; glyphs always carry the meaning, so nothing relies on color alone.
 

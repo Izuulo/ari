@@ -8,6 +8,7 @@ pub const LIVE_MS: u64 = 30 * 60_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionInfo {
+    pub app: crate::app::App,
     pub id: String,
     pub dir: PathBuf,
     pub cwd: Option<String>,
@@ -86,6 +87,7 @@ pub fn list(root: &Path) -> Vec<SessionInfo> {
                 .unwrap_or(0);
             let ended = last_line_is_end(&dir.join("events.jsonl"));
             SessionInfo {
+                app: crate::app::of(&dir),
                 id: e.file_name().to_string_lossy().into_owned(),
                 cwd: cwd_of(&dir),
                 dir,

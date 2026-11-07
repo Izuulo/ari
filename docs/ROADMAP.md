@@ -33,9 +33,9 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 
 | Idea | Why | Data |
 |---|---|---|
-| Sessions from other coding agents (starting with the one you use most; to decide) in `ari watch --all` | One panel for every agent you run | New: each harness's session logs or hooks |
-| Per-harness and per-provider branding: the tool running the session (Claude Code, Codex) and the model doing the work (Opus, GPT, DeepSeek) | See at a glance what is running where | Model names already shown as given |
 | Flaky-test detection by test name | A test that flips between pass and fail | New: per-test parsing |
+
+Shipped in M7: Codex and DeepSeek Harness sessions in `ari watch --all` and the hub, and per-app themes (`claude`, `codex`, `deepseek`, `auto`). The per-model branding idea (Opus, GPT, DeepSeek) is not built.
 
 Shipped from the hub list: sort by urgency, account limits once in the header, and what a NEEDS YOU session is asking.
 

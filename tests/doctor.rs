@@ -17,6 +17,8 @@ fn doctor(d: &Path, with_binary: bool) -> (Output, String) {
         .arg("doctor")
         .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
         .env("HOME", d)
+        .env_remove("CODEX_HOME")
+        .env_remove("DSH_HOME")
         .env("CLAUDE_CONFIG_DIR", d.join("claude"))
         .env("XDG_CONFIG_HOME", d.join("config"))
         .env("XDG_STATE_HOME", d.join("state"))
@@ -80,4 +82,103 @@ fn slow_chain_times_out() {
     let (_, text) = doctor(&d, true);
     assert!(text.contains("slower than 200ms"), "{text}");
     assert!(t.elapsed() < std::time::Duration::from_millis(1500));
+}
+
+fn line<'a>(text: &'a str, name: &str) -> &'a str {
+    text.lines()
+        .find(|l| l.split_whitespace().nth(1) == Some(name))
+        .unwrap_or_else(|| panic!("no {name} line: {text}"))
+}
+
+#[test]
+fn codex_wired_or_not() {
+    let d = tmp("codex");
+    std::fs::create_dir_all(d.join(".codex")).unwrap();
+    let (_, text) = doctor(&d, true);
+    let l = line(&text, "codex");
+    assert!(l.contains('✗'), "{text}");
+    let fix = text.lines().skip_while(|x| *x != l).nth(1).unwrap();
+    assert!(fix.contains("→ ari setup"), "{text}");
+
+    write(
+        d.join(".codex/hooks.json"),
+        &ari_cli::setup::codex_add(None).unwrap(),
+    );
+    let (_, text) = doctor(&d, true);
+    assert!(
+        line(&text, "codex")
+            .contains("✓ codex      wired (approve with /hooks if events don't arrive)"),
+        "{text}"
+    );
+    let l = line(&text, "dsh");
+    assert!(l.contains("not found") && !l.contains('✗'), "{text}");
+}
+
+#[test]
+fn dsh_wired_or_not() {
+    let d = tmp("dsh");
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    let (_, text) = doctor(&d, true);
+    assert!(line(&text, "dsh").contains('✗'), "{text}");
+
+    let ari_hooks = d.join("config/ari/dsh-hooks.json");
+    write(ari_hooks.clone(), &ari_cli::setup::dsh_hooks());
+    write(
+        d.join(".dsh/cordis.patch.yml"),
+        &ari_cli::setup::dsh_add(None, &ari_hooks.display().to_string()).unwrap(),
+    );
+    let (_, text) = doctor(&d, true);
+    assert!(line(&text, "dsh").contains('✓'), "{text}");
+
+    // A bridge whose file runs plain `ari hook`: setup leaves it, doctor says so.
+    let theirs = d.join("theirs.json");
+    write(
+        theirs.clone(),
+        r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"ari hook"}]}]}}"#,
+    );
+    write(
+        d.join(".dsh/cordis.patch.yml"),
+        &format!(
+            "- insert:\n    - id: mine\n      name: '@deepseek-ai/dsh-hooks-claude-code'\n      config:\n        configPath: {}\n",
+            theirs.display()
+        ),
+    );
+    let (_, text) = doctor(&d, true);
+    assert!(line(&text, "dsh").contains("plain `ari hook`"), "{text}");
+}
+
+#[test]
+fn dsh_only_machine_wired_is_all_good() {
+    let d = tmp("dsh-only");
+    std::fs::remove_dir_all(d.join("claude")).unwrap();
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    let ari_hooks = d.join("config/ari/dsh-hooks.json");
+    write(ari_hooks.clone(), &ari_cli::setup::dsh_hooks());
+    write(
+        d.join(".dsh/cordis.patch.yml"),
+        &ari_cli::setup::dsh_add(None, &ari_hooks.display().to_string()).unwrap(),
+    );
+    write(
+        d.join("state/ari/sessions/s1/events.jsonl"),
+        "{\"t\":1,\"e\":\"Stop\"}\n",
+    );
+    let (out, text) = doctor(&d, true);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("All good."), "{text}");
+    let names: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1))
+        .collect();
+    assert!(
+        !names.contains(&"plugin") && !names.contains(&"statusline"),
+        "{text}"
+    );
+    assert!(line(&text, "claude").contains("not found"), "{text}");
+    assert!(line(&text, "codex").contains("not found"), "{text}");
+
+    // No events yet: the hint names dsh, not Claude Code.
+    std::fs::remove_dir_all(d.join("state")).unwrap();
+    let (_, text) = doctor(&d, true);
+    assert!(!text.contains("Claude Code session"), "{text}");
+    assert!(text.contains("DeepSeek"), "{text}");
 }

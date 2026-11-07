@@ -164,3 +164,53 @@ fn first_event_writes_meta_once() {
     assert_silent(&hook(&s, start.to_string().as_bytes()));
     assert_eq!(std::fs::read_to_string(&meta).unwrap(), first);
 }
+
+fn hook_args(state: &Path, args: &[&str], stdin: &[u8]) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
+        .arg("hook")
+        .args(args)
+        .env("XDG_STATE_HOME", state)
+        .env("XDG_CONFIG_HOME", state.join("config"))
+        .env_remove("ARI_RAW_LOG")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn start(sid: &str) -> Vec<u8> {
+    serde_json::json!({"session_id": sid, "hook_event_name": "SessionStart", "cwd": "/p"})
+        .to_string()
+        .into_bytes()
+}
+
+#[test]
+fn agent_flag_lands_in_meta() {
+    let s = tmp("agent");
+    assert_silent(&hook_args(&s, &["--agent", "codex"], &start("s1")));
+    let dir = s.join("ari/sessions/s1");
+    let meta: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(meta["agent"], "codex");
+    assert_eq!(ari_cli::app::of(&dir), ari_cli::app::App::Codex);
+}
+
+#[test]
+fn no_flag_and_unknown_flag_mean_claude() {
+    let s = tmp("noagent");
+    for (sid, args) in [("a", &[][..]), ("b", &["--agent", "nope"][..])] {
+        assert_silent(&hook_args(&s, args, &start(sid)));
+        assert_eq!(log(&s, sid).len(), 1);
+        assert_eq!(
+            ari_cli::app::of(&s.join("ari/sessions").join(sid)),
+            ari_cli::app::App::Claude
+        );
+    }
+    let dir = s.join("ari/sessions/old");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"cwd":"/p"}"#).unwrap();
+    assert_eq!(ari_cli::app::of(&dir), ari_cli::app::App::Claude);
+}

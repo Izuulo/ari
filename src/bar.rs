@@ -26,6 +26,8 @@ pub struct Extras {
     pub plan: Option<crate::state::PlanFile>,
     /// The session's recent limit/context/cost samples, oldest first (panel only).
     pub samples: Vec<crate::burn::Sample>,
+    /// The session's app; a label shows for any but Claude Code.
+    pub app: crate::app::App,
 }
 
 /// Forecasts are only worth showing this close.
@@ -140,6 +142,28 @@ pub fn spark(values: &[f64]) -> String {
             }
         })
         .collect()
+}
+
+/// Accounts differ per app: "Claude 5h 40% · Codex 5h 12%". Apps with no shown limit are left out.
+pub fn app_limits(
+    limits: &[(String, Option<Limit>, Option<Limit>)],
+    now_ms: u64,
+    cfg: &Config,
+    color: bool,
+) -> Option<String> {
+    let apps: Vec<String> = limits
+        .iter()
+        .filter_map(|(app, five, seven)| {
+            let parts: Vec<String> = [("5h", five), ("7d", seven)]
+                .into_iter()
+                .filter(|(n, l)| l.is_some() && !cfg.hide.iter().any(|h| h == n))
+                .map(|(n, l)| limit(n, *l, now_ms, cfg, color))
+                .collect();
+            let name = app.split(' ').next().unwrap_or(app);
+            (!parts.is_empty()).then(|| format!("{name} {}", parts.join(" ")))
+        })
+        .collect();
+    (!apps.is_empty()).then(|| apps.join(" · "))
 }
 
 fn limit(name: &str, l: Option<Limit>, now_ms: u64, cfg: &Config, color: bool) -> String {
@@ -299,11 +323,15 @@ pub fn render(
             None => "ctx —".into(),
         });
     }
-    if shown("5h") {
-        segs.push(limit("5h", u.five_h, now_ms, cfg, color));
-    }
-    if shown("7d") {
-        segs.push(limit("7d", u.seven_d, now_ms, cfg, color));
+    if !u.app_limits.is_empty() {
+        segs.extend(app_limits(&u.app_limits, now_ms, cfg, color));
+    } else {
+        if shown("5h") {
+            segs.push(limit("5h", u.five_h, now_ms, cfg, color));
+        }
+        if shown("7d") {
+            segs.push(limit("7d", u.seven_d, now_ms, cfg, color));
+        }
     }
     if shown("cost")
         && let Some(c) = u.cost_usd
@@ -684,6 +712,30 @@ mod tests {
         );
         assert!(colored.contains("\x1b["));
         assert_eq!(visible_width(&colored), plain.chars().count());
+    }
+
+    #[test]
+    fn app_limits_are_labelled_and_skip_hidden() {
+        let l = |pct| Some(Limit { pct, resets_at: 0 });
+        let limits = vec![
+            ("Claude Code".to_string(), l(40.0), l(10.0)),
+            ("Codex".to_string(), l(12.0), None),
+        ];
+        let mut cfg = Config::default();
+        let got = app_limits(&limits, NOW, &cfg, false).unwrap();
+        assert_eq!(got, "Claude 5h 40% 7d 10% · Codex 5h 12%");
+        cfg.hide = vec!["7d".into()];
+        let got = app_limits(&limits, NOW, &cfg, false).unwrap();
+        assert_eq!(got, "Claude 5h 40% · Codex 5h 12%");
+        cfg.hide = vec!["5h".into(), "7d".into()];
+        assert_eq!(app_limits(&limits, NOW, &cfg, false), None);
+        let (st, mut u) = sample();
+        u.app_limits = limits;
+        let text = render(&st, &u, &Extras::default(), &cfg, NOW, 300, false);
+        assert!(
+            !text.contains("Claude") && !text.contains("Codex"),
+            "{text}"
+        );
     }
 
     #[test]

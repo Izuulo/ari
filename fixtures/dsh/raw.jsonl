@@ -1,0 +1,13 @@
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"SessionStart","source":"startup"},"t":1793900001500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"UserPromptSubmit","prompt":"Run the tests and fix the failure"},"t":1793900003000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PreToolUse","tool_name":"bash","tool_input":{"command":"ls"},"tool_use_id":"c1"},"t":1793900004500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PostToolUse","tool_name":"bash","tool_input":{"command":"ls"},"tool_response":{"exit_code":0,"stdout":"a.rs\n","stderr":""},"tool_use_id":"c1"},"t":1793900006000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PreToolUse","tool_name":"bash","tool_input":{"command":"cargo test"},"tool_use_id":"c2"},"t":1793900007500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PostToolUse","tool_name":"bash","tool_input":{"command":"cargo test"},"tool_response":{"exit_code":101,"stderr":"test result: FAILED. 3 passed; 1 failed","stdout":""},"tool_use_id":"c2"},"t":1793900009000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PreToolUse","tool_name":"edit","tool_input":{"file_path":"/p/b.rs","old_string":"x","new_string":"y"},"tool_use_id":"c3"},"t":1793900010500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PostToolUse","tool_name":"edit","tool_input":{"file_path":"/p/b.rs","old_string":"x","new_string":"y"},"tool_response":{"ok":true},"tool_use_id":"c3"},"t":1793900012000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PreToolUse","tool_name":"spawn_agent","tool_input":{"message":"list files"},"tool_use_id":"c4"},"t":1793900013500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"SubagentStart","agent_id":"sub1","agent_type":"default"},"t":1793900015000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"SubagentStop","agent_id":"sub1","agent_type":"default","last_assistant_message":"Listed the files."},"t":1793900016500}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"PostToolUse","tool_name":"spawn_agent","tool_input":{"message":"list files"},"tool_response":{"agent_id":"sub1"},"tool_use_id":"c4"},"t":1793900018000}
+{"p":{"cwd":"/p","session_id":"dsh-session-0001","hook_event_name":"Stop","last_assistant_message":"Fixed."},"t":1793900019500}

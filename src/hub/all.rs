@@ -1,10 +1,11 @@
 //! `ari hub --all`: every live session merged into one state the hub draws
 //! (spec: docs/superpowers/specs/2026-11-06-hub-all-design.md).
 
+use crate::app::App;
 use crate::sessions;
 use crate::state::{self, Agent, State};
 use crate::tokens::{self, TokenCache};
-use crate::usage::{self, Usage};
+use crate::usage::{self, Limit, Usage};
 use std::path::Path;
 
 /// One live session, ready to merge.
@@ -13,6 +14,7 @@ pub struct Part {
     pub key: String,
     pub name: String,
     pub st: State,
+    pub app: App,
     pub u: Usage,
     pub tokens: TokenCache,
 }
@@ -33,12 +35,34 @@ pub fn load(root: &Path, now: u64) -> Vec<Part> {
                 .unwrap_or_else(|| key.clone());
             Part {
                 st: state::load_session(&s.dir),
-                tokens: tokens::cached(&s.dir),
+                app: s.app,
+                tokens: tokens::cached_fresh(&s.dir, &u),
                 key,
                 name,
                 u,
             }
         })
+        .collect()
+}
+
+/// Per-app limits from sessions' (app, 5h, 7d), most recent first: each app's freshest,
+/// Claude first. Empty unless a non-Claude app has limits (then one account is the whole story).
+pub fn group_limits(
+    seen: impl IntoIterator<Item = (App, Option<Limit>, Option<Limit>)>,
+) -> Vec<(String, Option<Limit>, Option<Limit>)> {
+    let mut limits: Vec<(App, Option<Limit>, Option<Limit>)> = vec![];
+    for (app, f, s) in seen {
+        if (f.is_some() || s.is_some()) && !limits.iter().any(|l| l.0 == app) {
+            limits.push((app, f, s));
+        }
+    }
+    if limits.iter().all(|l| l.0 == App::Claude) {
+        return vec![];
+    }
+    limits.sort_by_key(|l| l.0 != App::Claude); // stable: Claude first
+    limits
+        .into_iter()
+        .map(|(a, f, s)| (a.label().to_string(), f, s))
         .collect()
 }
 
@@ -61,6 +85,7 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         ..Default::default()
     };
     let mut tok = TokenCache::default();
+    let mut seen: Vec<(App, Option<Limit>, Option<Limit>)> = vec![];
     // shortcut: another session is addressed by its name as ARI knows it; aliases miss.
     let names: Vec<(String, String)> = parts
         .iter()
@@ -103,6 +128,7 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         }
         lead.id = key.clone();
         lead.kind = "session".into();
+        lead.app = p.app;
         lead.name = Some(p.name.clone());
         lead.parent = Some("main".into());
         // A live session isn't stale while its subagents work.
@@ -158,18 +184,25 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
             st.first_t = s.first_t;
         }
         st.last_t = st.last_t.max(s.last_t);
-        if let Some(c) = p.u.cost_usd {
+        // Dollars are Claude Code's; other apps' tokens are counted, not priced.
+        if p.app == App::Claude
+            && let Some(c) = p.u.cost_usd
+        {
             *u.cost_usd.get_or_insert(0.0) += c;
         }
-        // Limits are per account: the most recent session's are the freshest.
-        if u.five_h.is_none() && u.seven_d.is_none() {
-            (u.five_h, u.seven_d) = (p.u.five_h, p.u.seven_d);
-        }
+        seen.push((p.app, p.u.five_h, p.u.seven_d));
         tok.agents.insert(key.clone(), p.tokens.main);
         for (a, l) in p.tokens.agents {
             tok.agents.insert(id(&a), l);
         }
     }
+    if let Some((_, five, seven)) = seen
+        .iter()
+        .find(|l| l.0 == App::Claude && (l.1.is_some() || l.2.is_some()))
+    {
+        (u.five_h, u.seven_d) = (*five, *seven);
+    }
+    u.app_limits = group_limits(seen);
     let span = |t: u64| if t == 0 { now } else { t };
     (st.agents[0].started, st.agents[0].last_t) = (span(st.first_t), span(st.last_t));
     st.messages.make_contiguous().sort_by_key(|m| m.t);
@@ -189,6 +222,7 @@ mod tests {
             key: key.into(),
             name: name.into(),
             st,
+            app: App::Claude,
             u: Usage::default(),
             tokens: TokenCache::default(),
         }
@@ -201,6 +235,24 @@ mod tests {
     }
     fn agent<'a>(st: &'a State, id: &str) -> &'a Agent {
         st.agents.iter().find(|a| a.id == id).unwrap()
+    }
+
+    #[test]
+    fn codex_session_gets_tokens_from_its_rollout() {
+        let root = std::env::temp_dir().join(format!("ari-allcodex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let d = root.join("sessions").join("cccccccc");
+        std::fs::create_dir_all(&d).unwrap();
+        let rollout = d.join("rollout.jsonl");
+        let fx =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/codex/rollout.jsonl");
+        std::fs::write(&rollout, std::fs::read(fx).unwrap()).unwrap(); // copy keeps the old mtime
+        let meta = serde_json::json!({"agent": "codex", "transcript": rollout});
+        std::fs::write(d.join("meta.json"), meta.to_string()).unwrap();
+        let parts = load(&root, crate::hook::now_ms());
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].tokens.main.input + parts[0].tokens.main.output > 0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

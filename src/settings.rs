@@ -395,13 +395,26 @@ mod tests {
     fn theme_cycles_and_wraps() {
         let mut c = Config::default();
         let mut seen = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..9 {
             step(&mut c, "theme", 1);
             seen.push(c.theme.clone());
         }
-        assert_eq!(seen, ["soft", "vivid", "colorblind", "mono", "default"]);
+        assert_eq!(
+            seen,
+            [
+                "soft",
+                "vivid",
+                "colorblind",
+                "mono",
+                "auto",
+                "claude",
+                "codex",
+                "deepseek",
+                "default"
+            ]
+        );
         step(&mut c, "theme", -1);
-        assert_eq!(c.theme, "mono");
+        assert_eq!(c.theme, "deepseek");
         c.theme = "neon".into();
         step(&mut c, "theme", 1);
         assert_eq!(c.theme, "soft");
