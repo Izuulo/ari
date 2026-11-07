@@ -277,12 +277,17 @@ pub(crate) fn tool_style(tool: &str) -> Style {
     }
 }
 
-/// Border and name color: lead, waiting, retrying, finished, running.
+/// Waits on a permission prompt, or (`--all`) its session needs you.
+pub(crate) fn needs_you(a: &Agent) -> bool {
+    a.waiting.is_some() || matches!(a.session, Some((_, crate::state::Verdict::NeedsYou)))
+}
+
+/// Border and name color: needs you, lead, finished, retrying, running.
 pub(crate) fn node_style(i: &Input, a: &Agent) -> Style {
-    if a.id == "main" {
-        lead()
-    } else if a.waiting.is_some() {
+    if needs_you(a) {
         msg()
+    } else if a.id == "main" {
+        lead()
     } else if a.done {
         faint()
     } else if a.recent.back().is_some_and(|r| r.ok == Some(false)) {
@@ -566,6 +571,27 @@ mod tests {
                 assert_eq!(l.width(), w as usize, "{w}×{h}: {l:?}");
             }
         }
+    }
+
+    #[test]
+    fn needs_you_turns_the_box_purple() {
+        use crate::state::Verdict;
+        let mut st = with_main(vec![kid("a1", "main", 1), kid("s1", "main", 2)]);
+        st.agents[0].waiting = Some((0, "Bash".into()));
+        st.agents[2].session = Some((true, Verdict::NeedsYou));
+        let (u, x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 0,
+            clock: "",
+        };
+        let style = |k: usize| node_style(&i, &st.agents[k]);
+        assert_eq!(style(0), msg(), "main waiting");
+        assert_eq!(style(1), agent(), "running kid");
+        assert_eq!(style(2), msg(), "session needs you");
     }
 
     #[test]
