@@ -96,7 +96,7 @@ pub struct Todo {
 }
 
 /// Codex and dsh tool calls rewritten as their Claude Code equivalents; Claude payloads pass
-/// through borrowed. Codex has no failure event, so a nonzero `tool_response.exit_code` makes one.
+/// through borrowed. dsh has no failure event, so a nonzero `tool_response.exit_code` on its `bash` makes one.
 fn canonical(raw: &Value) -> Cow<'_, Value> {
     let name = raw.get("tool_name").and_then(Value::as_str).unwrap_or("");
     let tool = match name {
@@ -111,8 +111,9 @@ fn canonical(raw: &Value) -> Cow<'_, Value> {
         _ => name,
     };
     // shortcut: dsh's bash result shape is unverified; confirm with a recorded dsh session.
-    let code = raw
-        .pointer("/tool_response/exit_code")
+    let code = Some(name)
+        .filter(|n| *n == "bash")
+        .and_then(|_| raw.pointer("/tool_response/exit_code"))
         .and_then(Value::as_i64)
         .filter(|c| *c != 0);
     let failed = code.is_some() && raw.get("hook_event_name") == Some(&json!("PostToolUse"));
@@ -670,13 +671,18 @@ mod tests {
     #[test]
     fn object_exit_code_is_a_failure() {
         let ev = n(
-            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            json!({"hook_event_name": "PostToolUse", "tool_name": "bash",
             "tool_input": {"command": "cargo test"},
             "tool_response": {"exit_code": 101, "stderr": "test result: FAILED. 3 passed; 1 failed"}}),
         );
         assert_eq!(ev.ok, Some(false));
         assert_eq!(ev.kind.as_deref(), Some("exit 101"));
         assert_eq!(ev.tests, Some((3, 1)));
+        let claude = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "x"}, "tool_response": {"exit_code": 1}}),
+        );
+        assert_eq!(claude.ok, Some(true), "Claude payloads are untouched");
     }
 
     #[test]
