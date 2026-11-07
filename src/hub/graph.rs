@@ -331,7 +331,13 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
         return;
     }
     if !big {
-        let mut row = model.split('-').next().unwrap_or("").to_string();
+        // A session (`--all`) names its repo there instead, unless unknown or its title says it.
+        let repo = a.session.is_some() && a.kind != "session" && a.kind != a.label();
+        let mut row = if repo {
+            a.kind.clone()
+        } else {
+            model.split('-').next().unwrap_or("").to_string()
+        };
         if let Some((_, pct)) = ctx {
             row.push_str(&format!(" · ctx {pct:.0}%"));
         }

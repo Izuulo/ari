@@ -127,7 +127,12 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
             lead.started = now; // live by its transcript, no hook events yet
         }
         lead.id = key.clone();
-        lead.kind = "session".into();
+        // The node's second line: the repo (or folder) it works in.
+        let folder = p.u.dir.as_deref().map(|d| d.trim_end_matches('/'));
+        let folder = folder.and_then(|d| d.rsplit('/').next()).map(String::from);
+        lead.kind = (p.u.project.clone().or(folder))
+            .filter(|f| !f.is_empty())
+            .unwrap_or_else(|| "session".into());
         lead.app = p.app;
         lead.name = Some(p.name.clone());
         lead.parent = Some("main".into());
@@ -288,6 +293,22 @@ mod tests {
             st.agents[0].kind, "2 sessions",
             "the root node's second line"
         );
+    }
+
+    #[test]
+    fn session_node_names_its_repo() {
+        let (mut a, mut b) = two();
+        a.u.project = Some("ari".into());
+        b.u.dir = Some("/home/me/site/".into());
+        let c = part("cccccccc", "cli", State::default());
+        let (st, _, _) = merge(vec![a, b, c], 0);
+        assert_eq!(agent(&st, "aaaaaaaa").kind, "ari");
+        assert_eq!(
+            agent(&st, "bbbbbbbb").kind,
+            "site",
+            "folder when no repo name"
+        );
+        assert_eq!(agent(&st, "cccccccc").kind, "session", "neither known");
     }
 
     #[test]
