@@ -421,7 +421,11 @@ pub(crate) fn draw(
                     || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
         })
         .collect();
-    kids.sort_by_key(|&k| (st.agents[k].done, st.agents[k].started));
+    // Whoever needs you comes first, so it never folds into `+N more`.
+    kids.sort_by_key(|&k| {
+        let a = &st.agents[k];
+        (!super::needs_you(a), a.done, a.started)
+    });
     let lay = layout(area, &kids, big);
     let big = lay.big;
     let main = st.agents.iter().find(|a| a.id == "main");
