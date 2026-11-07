@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Codex and DeepSeek Harness sessions.** They show in `ari watch`, `ari watch --all`, the hub and `ari recap` with activity, tool calls, errors, tests and subagents. Codex also shows context fill, tokens and 5h/7d limits, read from its rollout log; it has no cost. dsh has no token, context or cost numbers.
+- `ari setup` wires every app it finds (Claude Code, Codex, dsh) and `ari uninstall` removes exactly what it added. `ari doctor` shows one line per app. Codex hooks need a one-time `/hooks` approval inside Codex. For dsh, setup mounts the Claude Code hook bridge in `$DSH_HOME/cordis.patch.yml`.
+- `ari hook --agent <app>` records which app ran a session; a missing flag means Claude Code.
+- New themes `claude` (orange and grey), `codex`, `deepseek` and `auto` (follows the watched session's app). The default theme is unchanged.
+- Multi-session screens label non-Claude sessions with their app, show account limits per app, and count dollar figures for Claude Code sessions only.
+- Known limits: Codex doesn't give hooks a command's exit code, so a failing non-test command isn't shown as an error (a failing test run is). dsh support is tested from sample data, not a real session.
+
 ## 0.3.0 - 2026-11-06
 
 - **`ari hub --all`** (or `x` in `ari watch --all`): one hub over every live session. Each session is a node under you with its agents folded in, messages between sessions draw as arcs, any agent waiting on you turns it `NEEDS YOU`, and each session's context is measured against its own window.
