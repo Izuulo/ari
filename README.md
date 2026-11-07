@@ -4,7 +4,7 @@
 
 ### Stop asking Claude how it's going.
 
-**All Relevant Information**: a zero-token status panel for Claude Code.
+**All Relevant Information**: a zero-token status panel for Claude Code, Codex and DeepSeek Harness.
 
 [![CI](https://github.com/Izuulo/ari/actions/workflows/ci.yml/badge.svg)](https://github.com/Izuulo/ari/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Izuulo/ari?color=blue)](https://github.com/Izuulo/ari/releases/latest)
@@ -12,7 +12,7 @@
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)
 
-[Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
+[Install](#install) · [What you get](#what-you-get) · [The hub](#every-agent-at-once-the-hub) · [Other agents](#other-agents-codex-and-deepseek-harness) · [Commands](#commands) · [Config](#config) · [FAQ](#faq)
 
 <img src="docs/demo.gif" alt="ARI replaying a Claude Code session: the same test fails three times and the verdict turns to STUCK, Claude waits on a permission prompt (NEEDS YOU), the fix lands and it is back ON TRACK, two Explore subagents finish, and it ends on DONE" width="760">
 
@@ -30,9 +30,9 @@ ari setup
 
 1. Installs the `ari` binary to `~/.local/bin` (macOS and Linux). With Homebrew: `brew install Izuulo/tap/ari`. With Rust: `cargo install --git https://github.com/Izuulo/ari ari-cli`.
 2. Adds the plugin whose hooks feed ARI. In-app: `/plugin marketplace add Izuulo/ari`, then `/plugin install ari@ari`.
-3. Adds ARI's row to your statusline. It shows the change, asks first, and keeps your current statusline running alongside.
+3. Adds ARI's row to your statusline. It shows the change, asks first, and keeps your current statusline running alongside. If Codex or DeepSeek Harness is installed, it wires those up too (see [Other agents](#other-agents-codex-and-deepseek-harness)).
 
-Start a new Claude Code session (or `/reload-plugins`) and the row appears. Something missing? `ari doctor` says what and how to fix it. Just want to look? `ari demo` replays a real session with no Claude needed.
+Start a new Claude Code session (or `/reload-plugins`) and the row appears. Something missing? `ari doctor` says what and how to fix it. Just want to look? `ari demo` replays a real session with no Claude needed; `ari demo --codex` and `ari demo --deepseek` show the same session as those apps report it.
 
 ## What you get
 
@@ -116,6 +116,8 @@ ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ar
 - **Codex:** after `ari setup`, run `/hooks` inside Codex once and approve ARI's hooks. Known limit: Codex doesn't give hooks a command's exit code, so a failing non-test command isn't shown as an error; a failing test run is.
 - **dsh:** setup mounts dsh's Claude Code hook bridge (`@deepseek-ai/dsh-hooks-claude-code`) in `$DSH_HOME/cordis.patch.yml` (default `~/.dsh`), pointing at ARI's own hooks file. If you already use the bridge with your own hooks file, setup adds ARI's entries to that file instead. dsh support is tested from sample data shaped after dsh's documented payloads, not a recorded session.
 - **Multi-session screens** label non-Claude sessions with their app, show account limits per app, and count dollar figures for Claude Code sessions only.
+- **Themes:** each app has its own: `claude` (orange and grey), `codex` and `deepseek`. Set `theme = "auto"` and the panel and hub take the colours of the app running the watched session. Pick one with `s` in `ari watch` or in `config.toml`; the default theme is unchanged.
+- **See it first:** `ari demo --codex` and `ari demo --deepseek` replay the bundled session as that app would report it, with its label, its colours and only the numbers it gives ARI. Press `x` for the hub.
 
 ## Why ARI
 
