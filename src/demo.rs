@@ -1,12 +1,13 @@
 //! `ari demo`: replay a bundled real session in the panel. No Claude, no state dir, no network.
 
+use crate::app::App;
 use crate::bar::Extras;
 use crate::event::Event;
 use crate::panel::{self, View};
 use crate::state::{State, Verdict};
 use crate::tokens::{self, Ledger, TokenCache};
 use crate::usage::{Limit, Usage};
-use crate::{config, hub, replay, watch};
+use crate::{config, hub, replay, theme, watch};
 use ratatui::layout::Alignment;
 use std::time::Instant;
 
@@ -29,6 +30,43 @@ pub fn events() -> Vec<Event> {
     replay::parse(RAW)
 }
 
+/// The bundled session as `app` would report it: only the hook events it sends, and no
+/// Claude-only tools (task list, tool search).
+pub fn events_for(app: App) -> Vec<Event> {
+    let sent: &[&str] = match app {
+        App::Claude => return events(),
+        App::Codex => &[
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Stop",
+            "SubagentStart",
+            "SubagentStop",
+        ],
+        // dsh's Claude Code hook bridge: seven events; failures arrive as PostToolUse.
+        App::Dsh => &[
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "Stop",
+            "SubagentStart",
+            "SubagentStop",
+        ],
+    };
+    let claude_only = ["TaskCreate", "TaskUpdate", "ToolSearch"];
+    events()
+        .into_iter()
+        .filter(|e| sent.contains(&e.e.as_str()))
+        .filter(|e| !e.tool.as_deref().is_some_and(|t| claude_only.contains(&t)))
+        .collect()
+}
+
 fn scaled(l: &Ledger, f: f64) -> Ledger {
     let s = |n: u64| (n as f64 * f) as u64;
     Ledger {
@@ -47,6 +85,54 @@ fn scaled(l: &Ledger, f: f64) -> Ledger {
 /// which runs no statusline. The 5h window barely moves for a 40-second Haiku session, so there
 /// is no pace warning to show.
 pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
+    frame_for(App::Claude, events, progress_ms)
+}
+
+/// `frame_at` with only the numbers `app` gives ARI: Codex has context, tokens and limits but
+/// no cost (and no per-subagent tokens); dsh has none.
+pub fn frame_for(app: App, events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
+    let (st, u, mut x, now) = claude_frame(events, progress_ms);
+    x.app = app;
+    match app {
+        App::Claude => (st, u, x, now),
+        App::Codex => {
+            let model = "gpt-5.5-codex";
+            let u = Usage {
+                model: Some(model.into()),
+                ctx_size: Some(272_000),
+                ctx_used: u.ctx_pct.map(|p| (p * 2720.0) as u64),
+                cost_usd: None,
+                api_duration_ms: None,
+                ..u
+            };
+            let main = x.tokens.take().map(|c| c.main).unwrap_or_default();
+            let mut main = Ledger {
+                input: main.input + main.cache_write,
+                cache_write: 0,
+                last_model: Some(model.into()),
+                ..main
+            };
+            let per_model = tokens::ModelTokens {
+                input: main.input,
+                cache_write: 0,
+                cache_read: main.cache_read,
+                output: main.output,
+            };
+            main.by_model = [(model.to_string(), per_model)].into();
+            x.tokens = Some(TokenCache {
+                main,
+                ..Default::default()
+            });
+            (st, u, x, now)
+        }
+        App::Dsh => {
+            x.tokens = None;
+            (st, Usage::default(), x, now)
+        }
+    }
+}
+
+fn claude_frame(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
     let t0 = events.first().map_or(0, |e| e.t);
     let span = events.last().map_or(1, |e| e.t - t0).max(1);
     let progress = progress_ms.min(span);
@@ -106,10 +192,13 @@ pub fn run(args: &[String]) -> ! {
     let mut cfg = config::load();
     let mut speed = 1.5_f64;
     let mut once = false;
+    let mut app = App::Claude;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--ascii" => cfg.ascii = true,
+            "--codex" => app = App::Codex,
+            "--deepseek" => app = App::Dsh,
             "--once" => once = true,
             "--speed" => match it
                 .next()
@@ -120,15 +209,24 @@ pub fn run(args: &[String]) -> ! {
                 None => fail("--speed needs a positive number"),
             },
             other => fail(&format!(
-                "unknown option {other} (try --speed <x>, --ascii, --once)"
+                "unknown option {other} (try --codex, --deepseek, --speed <x>, --ascii, --once)"
             )),
         }
     }
     cfg.bell = false;
-    let events = events();
+    // Another app's demo shows that app's colours unless a theme was picked.
+    if app != App::Claude && cfg.theme == "default" {
+        cfg.theme = "auto".into();
+    }
+    let pal = (app != App::Claude).then(|| theme::Palette::for_app(&cfg, app));
+    let paint = |lines| match &pal {
+        Some(p) => theme::lines(lines, p),
+        None => lines,
+    };
+    let events = events_for(app);
     let total = span(&events);
     if once || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        let (st, u, x, now) = frame_at(&events, total);
+        let (st, u, x, now) = frame_for(app, &events, total);
         let width = std::env::var("COLUMNS")
             .ok()
             .and_then(|c| c.parse().ok())
@@ -154,7 +252,7 @@ pub fn run(args: &[String]) -> ! {
     let result = watch::run_tui(View::default(), |view, _tab, w, h| {
         // The demo replays with defaults; it has no settings screen.
         view.settings = None;
-        let (st, u, x, now) = frame_at(&events, progress as u64);
+        let (st, u, x, now) = frame_for(app, &events, progress as u64);
         progress += last.elapsed().as_secs_f64()
             * 1000.0
             * pace(st.verdict_with(cfg.thresholds.stuck_repeats), speed);
@@ -178,7 +276,7 @@ pub fn run(args: &[String]) -> ! {
                 lines
             };
             return (
-                lines,
+                paint(lines),
                 animating,
                 Alignment::Left,
                 None,
@@ -186,7 +284,7 @@ pub fn run(args: &[String]) -> ! {
             );
         }
         let lines = panel::lines(&st, &u, &x, &cfg, *view, now, &clock, w, h, color);
-        (lines, animating, Alignment::Left, None, None)
+        (paint(lines), animating, Alignment::Left, None, None)
     });
     if let Err(e) = result {
         fail(&e.to_string());
@@ -245,6 +343,82 @@ mod tests {
         assert_eq!(st.agents.iter().filter(|a| a.done).count(), 2);
         assert!(u.cost_usd.unwrap() > 0.11 && x.tokens.unwrap().total().total() > 400_000);
         assert!(x.burn_eta.is_none(), "no pace warning for a short session");
+    }
+
+    /// The third failure of the same test turns the verdict to STUCK.
+    fn reaches_stuck(evs: &[Event], app: App) -> bool {
+        let t0 = evs[0].t;
+        evs.iter()
+            .filter(|e| e.ok == Some(false))
+            .nth(2)
+            .is_some_and(|e| frame_for(app, evs, e.t - t0).0.verdict() == Verdict::Stuck)
+    }
+
+    #[test]
+    fn codex_demo_shows_what_codex_gives() {
+        let evs = events_for(App::Codex);
+        assert!(
+            evs.iter()
+                .all(|e| e.e != "TaskCreated" && e.tool.as_deref() != Some("TaskCreate"))
+        );
+        let (st, u, x, now) = frame_for(App::Codex, &evs, u64::MAX);
+        assert_eq!(
+            st.verdict(),
+            Verdict::Idle,
+            "no task list, so it ends idle, not done"
+        );
+        assert!(reaches_stuck(&evs, App::Codex));
+        assert_eq!(x.app, App::Codex);
+        assert!(u.ctx_pct.is_some() && u.five_h.is_some());
+        assert_eq!(u.cost_usd, None, "no dollars for Codex");
+        let t = x.tokens.as_ref().unwrap();
+        assert!(t.main.total() > 0 && t.agents.is_empty());
+        assert_eq!(
+            t.main.by_model.keys().collect::<Vec<_>>(),
+            ["gpt-5.5-codex"]
+        );
+        let out = panel::to_plain(&panel::lines(
+            &st,
+            &u,
+            &x,
+            &config::Config::default(),
+            View::default(),
+            now,
+            "12:00",
+            100,
+            60,
+            false,
+        ));
+        assert!(out.contains("Codex"), "{out}");
+        assert!(!out.contains("claude-haiku"), "{out}");
+    }
+
+    #[test]
+    fn deepseek_demo_has_no_numbers_or_permission_prompts() {
+        let evs = events_for(App::Dsh);
+        assert!(evs.iter().all(|e| e.e != "PermissionRequest"));
+        assert!(
+            evs.iter().any(|e| e.ok == Some(false)),
+            "failures still show"
+        );
+        let (st, u, x, now) = frame_for(App::Dsh, &evs, u64::MAX);
+        assert_eq!(st.verdict(), Verdict::Idle);
+        assert!(reaches_stuck(&evs, App::Dsh));
+        assert_eq!(u, Usage::default());
+        assert!(x.tokens.is_none());
+        let out = panel::to_plain(&panel::lines(
+            &st,
+            &u,
+            &x,
+            &config::Config::default(),
+            View::default(),
+            now,
+            "12:00",
+            100,
+            60,
+            false,
+        ));
+        assert!(out.contains("DeepSeek") && !out.contains('$'), "{out}");
     }
 
     #[test]
