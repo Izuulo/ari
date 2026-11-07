@@ -282,18 +282,28 @@ pub(crate) fn needs_you(a: &Agent) -> bool {
     a.waiting.is_some() || matches!(a.session, Some((_, crate::state::Verdict::NeedsYou)))
 }
 
-/// Border and name color: needs you, lead, finished, retrying, running.
+/// Border and name color by state. Main and (`--all`) each session take their verdict's colour,
+/// as in the statusline; subagents: needs you, finished, stale, retrying, running.
 pub(crate) fn node_style(i: &Input, a: &Agent) -> Style {
+    use crate::state::AgentStatus;
+    let verdict = match a.session {
+        Some((_, v)) => Some(v),
+        None if a.id == "main" => Some(i.st.verdict_with(i.cfg.thresholds.stuck_repeats)),
+        None => None,
+    };
     if needs_you(a) {
         msg()
-    } else if a.id == "main" {
-        lead()
-    } else if a.done {
+    } else if let Some(v) = verdict {
+        // The verdict's colour (and Idle's dim) without its bold or reverse.
+        let mut s =
+            crate::panel::verdict_style(v).remove_modifier(Modifier::BOLD | Modifier::REVERSED);
+        s.sub_modifier = Modifier::empty();
+        s
+    } else if a.done || i.st.agent_status(a, i.now) == AgentStatus::Stale {
         faint()
     } else if a.recent.back().is_some_and(|r| r.ok == Some(false)) {
         warn()
     } else {
-        let _ = i;
         agent()
     }
 }
@@ -592,6 +602,36 @@ mod tests {
         assert_eq!(style(0), msg(), "main waiting");
         assert_eq!(style(1), agent(), "running kid");
         assert_eq!(style(2), msg(), "session needs you");
+    }
+
+    #[test]
+    fn boxes_take_their_state_colour() {
+        use crate::state::Verdict;
+        let mut st = with_main(vec![
+            kid("run", "main", 1),
+            kid("stale", "main", 2),
+            kid("done", "main", 2),
+            kid("s1", "main", 3),
+        ]);
+        // Now is 1_000_000: `run` was just active, `stale` last at 0 (> STALE_MS ago).
+        st.agents[1].last_t = 1_000_000;
+        st.agents[3].done = true;
+        st.agents[4].session = Some((false, Verdict::Blocked));
+        let (u, x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 1_000_000,
+            clock: "",
+        };
+        let style = |k: usize| node_style(&i, &st.agents[k]);
+        assert_eq!(style(0), dim(), "main with nothing going on: idle");
+        assert_eq!(style(1), agent(), "running kid");
+        assert_eq!(style(2), faint(), "stale kid");
+        assert_eq!(style(3), faint(), "finished kid");
+        assert_eq!(style(4).fg, Some(Color::Red), "blocked session");
     }
 
     #[test]
