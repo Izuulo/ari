@@ -473,6 +473,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("⏎", "zoom".into()),
         ("g", "graph".into()),
         ("z", format!("show finished ({done})")),
+        ("c", "clear finished".into()),
         ("x", "back to panel".into()),
         ("s", "settings".into()),
         ("q", "quit".into()),

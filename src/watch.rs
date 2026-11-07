@@ -301,6 +301,15 @@ impl App {
         }
     }
 
+    /// Finished subagents ending at or before this are hidden: all with `auto_clear`, else up to `c`.
+    fn clear_cut(&self) -> u64 {
+        if self.cfg.auto_clear {
+            u64::MAX
+        } else {
+            self.view.cleared
+        }
+    }
+
     /// The frame's lines, and the entry count while the `--all` list is what's drawn.
     fn frame_lines(&mut self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
         if let Some(sel) = self.view.settings {
@@ -316,7 +325,8 @@ impl App {
             }
             if let Some(dir) = self.pinned.clone() {
                 if dir.is_dir() {
-                    let st = state::load_session(&dir);
+                    let mut st = state::load_session(&dir);
+                    st.clear_done(self.clear_cut());
                     let usage = usage::load(&dir);
                     let x = bar::Extras {
                         tokens: Some(tokens::cached_fresh(&dir, &usage)),
@@ -341,15 +351,9 @@ impl App {
             return (waiting(&self.mode), None);
         };
         let dir = dir.clone();
-        self.view_lines(
-            &dir,
-            &self.st,
-            &self.usage,
-            self.x.clone(),
-            width,
-            height,
-            now,
-        )
+        let mut st = self.st.clone();
+        st.clear_done(self.clear_cut());
+        self.view_lines(&dir, &st, &self.usage, self.x.clone(), width, height, now)
     }
 
     /// `ari hub --all`: every live session in one hub; a note while the window is too small.
@@ -368,7 +372,8 @@ impl App {
             ));
             return (vec![line], None);
         }
-        let (st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now), now);
+        let (mut st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now), now);
+        st.clear_done(self.clear_cut());
         let x = bar::Extras {
             tokens: Some(tokens),
             ..Default::default()
@@ -462,7 +467,9 @@ impl App {
                 "tab next session"
             };
             let text = note.unwrap_or_else(|| {
-                format!("e errors · a agents · r recap · x hub · s settings · {back} · q quit")
+                format!(
+                    "e errors · a agents · c clear done · r recap · x hub · s settings · {back} · q quit"
+                )
             });
             let text = crate::event::truncate(&text, width as usize);
             let text = if self.cfg.ascii {
@@ -954,6 +961,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
             }
             KeyCode::Char('g') => h.screen = Screen::Graph,
             KeyCode::Char('z') => h.show_done ^= true,
+            KeyCode::Char('c') => view.cleared = hook::now_ms(),
             KeyCode::PageUp => h.scroll += 10,
             KeyCode::PageDown => h.scroll = h.scroll.saturating_sub(10),
             _ => {}
@@ -976,6 +984,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         (KeyCode::Enter, Some(n)) if n > 0 => view.open = true,
         (KeyCode::Char('e'), _) => view.expand_errors ^= true,
         (KeyCode::Char('a'), _) => view.expand_agents ^= true,
+        (KeyCode::Char('c'), _) => view.cleared = hook::now_ms(),
         (KeyCode::Char('r'), _) => view.recap ^= true,
         _ => {}
     }

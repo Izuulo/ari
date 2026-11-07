@@ -1024,6 +1024,12 @@ impl State {
         self.tasks.iter().find(|t| t.status == "in_progress")
     }
 
+    /// Drop subagents that finished at or before `cut` (ms); `u64::MAX` drops every finished one.
+    pub fn clear_done(&mut self, cut: u64) {
+        self.agents
+            .retain(|a| a.id == "main" || !a.done || a.ended_t.unwrap_or(a.last_t) > cut);
+    }
+
     pub fn agent_status(&self, a: &Agent, now: u64) -> AgentStatus {
         if a.done {
             AgentStatus::Done
@@ -1109,6 +1115,31 @@ pub fn load_session(dir: &Path) -> State {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clear_done_keeps_main_running_and_later() {
+        let ag = |id: &str, done: bool, end: u64| Agent {
+            id: id.into(),
+            done,
+            ended_t: Some(end),
+            ..Default::default()
+        };
+        let mut st = State {
+            agents: vec![
+                ag("main", true, 1),
+                ag("old", true, 5),
+                ag("new", true, 20),
+                ag("run", false, 1),
+            ],
+            ..Default::default()
+        };
+        st.clear_done(10);
+        let ids: Vec<_> = st.agents.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["main", "new", "run"]);
+        st.clear_done(u64::MAX);
+        let ids: Vec<_> = st.agents.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["main", "run"]);
+    }
+
     #[test]
     fn resume_set_then_cleared_on_stop() {
         let mut st = State::default();

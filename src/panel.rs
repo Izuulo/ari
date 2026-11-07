@@ -13,6 +13,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub struct View {
     pub expand_errors: bool,
     pub expand_agents: bool,
+    /// `c`: finished subagents that ended at or before this time (ms) are hidden.
+    pub cleared: u64,
     /// Show the recap (`Extras::recap`) in place of the sections.
     pub recap: bool,
     /// `ari watch --all`: the highlighted row, and whether its session is open.
