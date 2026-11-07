@@ -33,6 +33,53 @@ pub(crate) struct Edge {
     pub t: u64,
 }
 
+/// Kid ↔ kid edges at the graph's level: each end lifted to its top node (a kid of main), merged
+/// per pair. Talk inside one node (a session and its own subagents in `--all`) drops out.
+pub(crate) fn lift(st: &State, all: &[Edge]) -> Vec<Edge> {
+    let parent = |id: &str| {
+        let a = st.agents.iter().find(|a| a.id == id)?;
+        a.parent
+            .as_deref()
+            .filter(|p| *p != "main" && st.agents.iter().any(|x| x.id == *p))
+    };
+    let top = |id: &str| {
+        let mut cur = id;
+        // Bounded: a parent loop in bad data can't spin forever.
+        for _ in 0..st.agents.len() {
+            match parent(cur) {
+                Some(p) => cur = p,
+                None => break,
+            }
+        }
+        cur.to_string()
+    };
+    let mut by: BTreeMap<(String, String), Edge> = BTreeMap::new();
+    for e in all {
+        let (a, b) = (top(&e.a), top(&e.b));
+        if a == b || a == "main" || b == "main" {
+            continue;
+        }
+        let (a, b) = if a < b { (a, b) } else { (b, a) };
+        let m = by.entry((a.clone(), b.clone())).or_insert_with(|| Edge {
+            a,
+            b,
+            n: 0,
+            last: String::new(),
+            from: String::new(),
+            t: 0,
+        });
+        m.n += e.n;
+        if e.t >= m.t {
+            m.last.clone_from(&e.last);
+            m.from = top(&e.from);
+            m.t = e.t;
+        }
+    }
+    let mut v: Vec<Edge> = by.into_values().collect();
+    v.sort_by(|x, y| y.n.cmp(&x.n).then(y.t.cmp(&x.t)));
+    v
+}
+
 /// One edge per pair of known agents that messaged; most messages first.
 pub(crate) fn edges(st: &State) -> Vec<Edge> {
     let known = |id: &str| st.agents.iter().any(|a| a.id == id);
@@ -347,6 +394,7 @@ pub(crate) fn draw(
 ) {
     let st = i.st;
     let all = edges(st);
+    let lifted = lift(st, &all);
     let inner = frame(
         buf,
         area,
@@ -459,10 +507,7 @@ pub(crate) fn draw(
             .find(|(k, _)| st.agents[*k].id == id)
             .map(|(_, r)| r.x + r.width / 2)
     };
-    let pairs: Vec<&Edge> = all
-        .iter()
-        .filter(|e| e.a != "main" && e.b != "main")
-        .collect();
+    let pairs: Vec<&Edge> = lifted.iter().collect();
     let mut drawn = vec![];
     for e in &pairs {
         let (Some(xa), Some(xb)) = (center(&e.a), center(&e.b)) else {
@@ -645,6 +690,32 @@ mod tests {
             msg(14, "a2", "ghost", "anyone?"),
         ]);
         st
+    }
+
+    #[test]
+    fn lift_drops_talk_inside_a_node_and_merges_across() {
+        // Two sessions s1, s2 under you; each has subagents.
+        let mut st = with_main(vec![
+            kid("s1", "main", 1),
+            kid("s1/g1", "s1", 2),
+            kid("s1/g2", "s1", 3),
+            kid("s2", "main", 4),
+            kid("s2/h1", "s2", 5),
+        ]);
+        st.messages.extend([
+            msg(10, "s1", "s1/g1", "go"),
+            msg(11, "s1", "s1/g2", "go"),
+            msg(12, "s1/g1", "s2/h1", "ping"),
+            msg(13, "s2", "s1", "pong"),
+        ]);
+        let got: Vec<_> = lift(&st, &edges(&st))
+            .into_iter()
+            .map(|e| (e.a, e.b, e.n, e.from, e.last))
+            .collect();
+        assert_eq!(
+            got,
+            [("s1".into(), "s2".into(), 2, "s2".into(), "pong".into())]
+        );
     }
 
     #[test]
