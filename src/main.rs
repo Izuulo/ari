@@ -12,7 +12,7 @@ usage:
   ari hub [--session <id> | --all] [--ascii]
                         the hub: every agent, its messages and context
   ari doctor            check that the binary and each app's hooks are wired
-  ari demo [--speed <x>] [--ascii] [--once]
+  ari demo [--codex | --deepseek] [--speed <x>] [--ascii] [--once]
                         replay a bundled session in the panel (no Claude needed)
   ari recap [--session <id>] [--since <start|prompt|30m>] [--md]
                         what this directory's session got done
