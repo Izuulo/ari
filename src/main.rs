@@ -1,7 +1,7 @@
-const USAGE: &str = "ari — a zero-token status panel for Claude Code
+const USAGE: &str = "ari — a zero-token status panel for Claude Code, Codex and DeepSeek Harness
 
 usage:
-  ari hook              hook entry point (called by Claude Code)
+  ari hook              hook entry point (called by Claude Code, Codex, dsh)
   ari statusline        statusline entry point (called by Claude Code)
   ari setup [--yes] [--dry-run]
                         wire ARI into Claude Code, Codex and dsh (asks first)
@@ -11,7 +11,7 @@ usage:
                         full panel for this directory's session
   ari hub [--session <id> | --all] [--ascii]
                         the hub: every agent, its messages and context
-  ari doctor            check that binary, plugin, statusline and hooks are wired
+  ari doctor            check that the binary and each app's hooks are wired
   ari demo [--speed <x>] [--ascii] [--once]
                         replay a bundled session in the panel (no Claude needed)
   ari recap [--session <id>] [--since <start|prompt|30m>] [--md]

@@ -107,7 +107,8 @@ ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ar
 
 | | Codex | DeepSeek Harness |
 |---|---|---|
-| Activity, tool calls, errors, tests, subagents | yes | yes |
+| Activity, tool calls, tests, subagents | yes | yes |
+| Errors | test failures only | yes |
 | Context fill, tokens, 5h/7d limits | yes, from Codex's rollout log | no (dsh doesn't expose its session log to hooks) |
 | Cost | no | no |
 | ARI row in the app's footer | no: run `ari watch` in a pane | no: run `ari watch` in a pane |

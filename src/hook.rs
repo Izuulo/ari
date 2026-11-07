@@ -1,4 +1,4 @@
-//! `ari hook`: called synchronously by Claude Code on every hook event.
+//! `ari hook`: called synchronously by Claude Code, Codex and dsh on every hook event.
 //! Rules: always exit 0, never print, append one line, do nothing heavy.
 
 use crate::{app::App, config, event, paths};
