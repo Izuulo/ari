@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Git section in the panel.** `ari watch` shows the session repo's branch, how far it is ahead of or behind upstream, how many files changed, the last 3 commits and the last 3 GitHub PRs (open, draft, merged or closed), each with its age. It refreshes every 30 s in the background. PRs need the `gh` CLI, logged in. Hide it with `hide_panel = ["git"]` or in settings → PANEL.
+- `a` in the hub switches between the watched session and every live session (`ari hub --all`), and back.
 - `ari hub --all`: each session's box, tile and zoom view name the repo (or folder) it works in.
 - Every hub box is coloured by its state. Main and each session in `ari hub --all` take their verdict's colour, as in the statusline (green on track, yellow stuck or retrying, red blocked, cyan done, dim idle, purple needs you). Subagents: cyan running, yellow retrying, grey finished or stale.
 - The hub graph counts messages between the boxes it shows. In `ari hub --all`, a session talking to its own subagents no longer floods the purple `also:` line, and subagents messaging across two sessions draw an arc between those sessions.
