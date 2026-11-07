@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Every hub box is coloured by its state. Main and each session in `ari hub --all` take their verdict's colour, as in the statusline (green on track, yellow stuck or retrying, red blocked, cyan done, dim idle, purple needs you). Subagents: cyan running, yellow retrying, grey finished or stale.
 - The hub graph counts messages between the boxes it shows. In `ari hub --all`, a session talking to its own subagents no longer floods the purple `also:` line, and subagents messaging across two sessions draw an arc between those sessions.
 - Hub boxes that need you are drawn in the needs-you colour (purple, or your theme's highlight): main waiting on a prompt, and in `ari hub --all` any session where an agent needs you. Agents that need you sort first on the graph, so they never fold into `+N more`.
 - `c` in `ari watch` and the hub clears finished subagents off the screen; ones that finish later still show. The `auto_clear` setting (settings → PANEL, or `auto_clear = true` in config.toml) hides them as soon as they finish. Nothing is deleted from the logs.
