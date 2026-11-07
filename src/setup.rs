@@ -11,11 +11,49 @@ pub const ARI_CMD: &str = "ari statusline";
 const ORIGINAL: &str = "original-statusline.json";
 const CHAINED_HIDE: [&str; 2] = ["cost", "tokens"];
 
-pub fn settings_path() -> Option<PathBuf> {
-    match std::env::var_os("CLAUDE_CONFIG_DIR") {
-        Some(d) if !d.is_empty() => Some(PathBuf::from(d).join("settings.json")),
-        _ => Some(PathBuf::from(std::env::var_os("HOME")?).join(".claude/settings.json")),
+/// `$var` when set, else `~/dir`.
+fn home_or(var: &str, dir: &str) -> Option<PathBuf> {
+    match std::env::var_os(var) {
+        Some(d) if !d.to_string_lossy().trim().is_empty() => Some(PathBuf::from(d)),
+        _ => Some(PathBuf::from(std::env::var_os("HOME")?).join(dir)),
     }
+}
+
+pub fn settings_path() -> Option<PathBuf> {
+    home_or("CLAUDE_CONFIG_DIR", ".claude").map(|d| d.join("settings.json"))
+}
+
+pub fn codex_home() -> Option<PathBuf> {
+    home_or("CODEX_HOME", ".codex")
+}
+
+pub fn dsh_home() -> Option<PathBuf> {
+    home_or("DSH_HOME", ".dsh")
+}
+
+/// ARI's own hooks file for dsh's bridge.
+pub fn dsh_ari_hooks() -> Option<PathBuf> {
+    Some(paths::config_root()?.join("dsh-hooks.json"))
+}
+
+pub fn which(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// The apps on this machine: their command is on PATH or their home dir exists.
+pub fn found() -> Vec<App> {
+    let claude = settings_path().and_then(|p| p.parent().map(Path::to_path_buf));
+    [
+        (App::Claude, claude),
+        (App::Codex, codex_home()),
+        (App::Dsh, dsh_home()),
+    ]
+    .into_iter()
+    .filter(|(a, d)| which(a.as_str()).is_some() || d.as_ref().is_some_and(|d| d.is_dir()))
+    .map(|(a, _)| a)
+    .collect()
 }
 
 fn is_ari(sl: &Value) -> bool {
@@ -126,17 +164,54 @@ fn read_settings(path: &Path) -> Result<Value, String> {
 
 /// Back up, then write pretty JSON atomically.
 fn write_settings(path: &Path, v: &Value) -> std::io::Result<()> {
+    write_text(
+        path,
+        &(serde_json::to_string_pretty(v).map_err(std::io::Error::other)? + "\n"),
+    )
+}
+
+/// Back up to `<path>.ari-backup-<secs>`, then write atomically.
+fn write_text(path: &Path, text: &str) -> std::io::Result<()> {
     if path.exists() {
-        let stamp = crate::hook::now_ms() / 1000;
-        std::fs::copy(
-            path,
-            path.with_extension(format!("json.ari-backup-{stamp}")),
-        )?;
+        let mut backup = path.as_os_str().to_owned();
+        backup.push(format!(".ari-backup-{}", crate::hook::now_ms() / 1000));
+        std::fs::copy(path, backup)?;
     } else if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let text = serde_json::to_string_pretty(v).map_err(std::io::Error::other)? + "\n";
     paths::write_atomic(path, text.as_bytes())
+}
+
+/// The file's text; `None` when it doesn't exist.
+fn read_opt(path: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("can't read {}: {e}", path.display())),
+    }
+}
+
+/// `~/x` for paths under HOME, for messages.
+fn tilde(p: &Path) -> String {
+    std::env::var_os("HOME")
+        .and_then(|h| p.strip_prefix(h).ok())
+        .map_or_else(|| p.display().to_string(), |r| format!("~/{}", r.display()))
+}
+
+fn same_json(a: &str, b: &str) -> bool {
+    serde_json::from_str::<Value>(a).ok() == serde_json::from_str::<Value>(b).ok()
+}
+
+/// Write only when not a dry run and the user agrees.
+fn go(dry: bool, yes: bool, app: &str) -> bool {
+    if dry {
+        return false;
+    }
+    let ok = confirm(yes);
+    if !ok {
+        println!("{app}: cancelled, nothing written.");
+    }
+    ok
 }
 
 fn confirm(yes: bool) -> bool {
@@ -150,41 +225,53 @@ fn confirm(yes: bool) -> bool {
     matches!(line.trim(), "y" | "Y" | "yes")
 }
 
-fn fail(msg: &str) -> ! {
-    eprintln!("ari: {msg}");
-    std::process::exit(1)
-}
-
 pub fn run_setup(args: &[String]) -> ! {
     let has = |f: &str| args.iter().any(|a| a == f);
-    let path = settings_path().unwrap_or_else(|| fail("HOME is not set"));
-    let settings = read_settings(&path).unwrap_or_else(|e| fail(&e));
+    let (dry, yes) = (has("--dry-run"), has("--yes"));
+    let apps = found();
+    if apps.is_empty() {
+        println!("Found no Claude Code, Codex or DeepSeek Harness (dsh). Nothing to set up.");
+        std::process::exit(0)
+    }
+    let mut ok = true;
+    for app in apps {
+        let done = match app {
+            App::Claude => setup_claude(dry, yes),
+            App::Codex => setup_codex(dry, yes),
+            App::Dsh => setup_dsh(dry, yes),
+        };
+        // A broken file is explained and skipped; the other apps still get set up.
+        if let Err(e) = done {
+            eprintln!("ari: {e}");
+            ok = false;
+        }
+    }
+    if dry {
+        println!("Dry run: nothing written.");
+    }
+    std::process::exit(if ok { 0 } else { 1 })
+}
+
+fn setup_claude(dry: bool, yes: bool) -> Result<(), String> {
+    let path = settings_path().ok_or("HOME is not set")?;
+    let settings = read_settings(&path)?;
     let Some(plan) = plan(&settings, &config::load()) else {
         println!(
             "ARI is already your statusline ({}). Nothing to change.",
             path.display()
         );
-        std::process::exit(0)
+        return Ok(());
     };
     println!("{}", plan.diff);
-    if has("--dry-run") {
-        println!("Dry run: nothing written.");
-        std::process::exit(0)
+    if !go(dry, yes, "Claude Code") {
+        return Ok(());
     }
-    if !confirm(has("--yes")) {
-        println!("Cancelled. Nothing written.");
-        std::process::exit(0)
-    }
-    let cfg_dir = paths::config_root().unwrap_or_else(|| fail("HOME is not set"));
-    let saved = std::fs::create_dir_all(&cfg_dir)
+    let cfg_dir = paths::config_root().ok_or("HOME is not set")?;
+    std::fs::create_dir_all(&cfg_dir)
         .and_then(|_| std::fs::write(cfg_dir.join(ORIGINAL), plan.original.to_string()))
         .and_then(|_| config::save(&plan.config))
-        .and_then(|_| write_settings(&path, &plan.settings));
-    if let Err(e) = saved {
-        fail(&format!(
-            "setup failed, settings left as they were where possible: {e}"
-        ));
-    }
+        .and_then(|_| write_settings(&path, &plan.settings))
+        .map_err(|e| format!("setup failed, settings left as they were where possible: {e}"))?;
     println!(
         "Done. ARI's row shows on Claude Code's next statusline refresh.\n\
          Backup: {}.ari-backup-*\n\n\
@@ -193,14 +280,217 @@ pub fn run_setup(args: &[String]) -> ! {
          Undo any time with: ari uninstall",
         path.display()
     );
-    std::process::exit(0)
+    Ok(())
+}
+
+fn setup_codex(dry: bool, yes: bool) -> Result<(), String> {
+    let path = codex_home().ok_or("HOME is not set")?.join("hooks.json");
+    let old = read_opt(&path)?;
+    let new = codex_add(old.as_deref()).map_err(|e| format!("{}: {e}", tilde(&path)))?;
+    if old.as_deref().is_some_and(|o| same_json(o, &new)) {
+        println!(
+            "Codex: ARI's hooks are already in {}. Nothing to change.",
+            tilde(&path)
+        );
+        return Ok(());
+    }
+    println!(
+        "{}  hooks\n+ `{}` on {}\n",
+        tilde(&path),
+        hook_cmd(App::Codex),
+        CODEX_EVENTS.join(", ")
+    );
+    if !go(dry, yes, "Codex") {
+        return Ok(());
+    }
+    write_text(&path, &new).map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
+    println!(
+        "Codex: hooks added to {}. Open Codex and run /hooks once to approve them.",
+        tilde(&path)
+    );
+    Ok(())
+}
+
+/// Claude Code's own settings files: dsh hooks put there would fire in Claude Code too.
+fn claude_settings(p: &Path) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("settings") && n.ends_with(".json"))
+}
+
+/// Some hook in `text` runs plain `ari hook` (sessions recorded as Claude Code).
+pub fn plain_ari_hook(text: &str) -> bool {
+    all_commands(text)
+        .iter()
+        .any(|c| c.contains("ari hook") && !c.contains("--agent"))
+}
+
+fn setup_dsh(dry: bool, yes: bool) -> Result<(), String> {
+    let patch_path = dsh_home()
+        .ok_or("HOME is not set")?
+        .join("cordis.patch.yml");
+    let ours = dsh_ari_hooks().ok_or("HOME is not set")?;
+    let ours_text = ours.to_str().ok_or("ARI's config path is not UTF-8")?;
+    let in_patch = |e: String| format!("{}: {e}", tilde(&patch_path));
+    let patch = read_opt(&patch_path)?;
+    let new_patch = dsh_add(patch.as_deref(), ours_text).map_err(in_patch)?;
+    let target = dsh_bridge(&new_patch)
+        .map_err(in_patch)?
+        .map_or_else(|| ours.clone(), PathBuf::from);
+    let old = read_opt(&target)?;
+    if target != ours && claude_settings(&target) {
+        println!(
+            "dsh: its hooks bridge reads {}, a Claude Code settings file; ARI won't add dsh hooks \
+             there (Claude Code would run them too). Left alone.",
+            tilde(&target)
+        );
+        return Ok(());
+    }
+    if target != ours && old.as_deref().is_some_and(plain_ari_hook) {
+        println!(
+            "dsh: {} already runs `ari hook` (its sessions show as Claude Code). Left alone.",
+            tilde(&target)
+        );
+        return Ok(());
+    }
+    let new =
+        add_hooks(old.as_deref(), App::Dsh).map_err(|e| format!("{}: {e}", tilde(&target)))?;
+    let hooks_change = !old.as_deref().is_some_and(|o| same_json(o, &new));
+    let patch_change = patch.as_deref() != Some(new_patch.as_str());
+    if !(hooks_change || patch_change) {
+        println!(
+            "dsh: ARI's hooks are already in {}. Nothing to change.",
+            tilde(&target)
+        );
+        return Ok(());
+    }
+    if patch_change {
+        println!("{}  (dsh home patch)", tilde(&patch_path));
+        for l in new_patch.lines().skip_while(|l| *l != BEGIN) {
+            println!("+ {l}");
+        }
+        println!();
+    }
+    if hooks_change {
+        println!(
+            "{}  hooks\n+ `{}` on {}\n",
+            tilde(&target),
+            hook_cmd(App::Dsh),
+            DSH_EVENTS.join(", ")
+        );
+    }
+    if !go(dry, yes, "dsh") {
+        return Ok(());
+    }
+    let write = |p: &Path, t: &str| {
+        write_text(p, t).map_err(|e| format!("couldn't write {}: {e}", p.display()))
+    };
+    // Hooks file first, so the bridge never points at a missing file.
+    if hooks_change {
+        write(&target, &new)?;
+    }
+    if patch_change {
+        write(&patch_path, &new_patch)?;
+    }
+    println!(
+        "dsh: hooks added to {}. They run from dsh's next start.",
+        tilde(&target)
+    );
+    Ok(())
 }
 
 pub fn run_uninstall(args: &[String]) -> ! {
     let has = |f: &str| args.iter().any(|a| a == f);
-    let path = settings_path().unwrap_or_else(|| fail("HOME is not set"));
-    let settings = read_settings(&path).unwrap_or_else(|e| fail(&e));
-    let cfg_dir = paths::config_root().unwrap_or_else(|| fail("HOME is not set"));
+    let (yes, purge) = (has("--yes"), has("--purge"));
+    let apps = found();
+    let mut ok = true;
+    for done in [
+        apps.contains(&App::Codex).then(|| uninstall_codex(yes)),
+        apps.contains(&App::Dsh).then(|| uninstall_dsh(yes)),
+        (apps.contains(&App::Claude) || purge).then(|| uninstall_claude(yes, purge)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Err(e) = done {
+            eprintln!("ari: {e}");
+            ok = false;
+        }
+    }
+    std::process::exit(if ok { 0 } else { 1 })
+}
+
+fn uninstall_codex(yes: bool) -> Result<(), String> {
+    let path = codex_home().ok_or("HOME is not set")?.join("hooks.json");
+    let Some(new) = read_opt(&path)?.as_deref().and_then(codex_remove) else {
+        return Ok(());
+    };
+    println!("{}  hooks\n- `{}`\n", tilde(&path), hook_cmd(App::Codex));
+    if !go(false, yes, "Codex") {
+        return Ok(());
+    }
+    // A file left with no hooks at all was ARI's alone.
+    let empty = [json!({}), json!({"hooks": {}})]
+        .contains(&serde_json::from_str(&new).unwrap_or(Value::Null));
+    if empty {
+        std::fs::remove_file(&path)
+    } else {
+        write_text(&path, &new)
+    }
+    .map_err(|e| format!("couldn't update {}: {e}", path.display()))?;
+    println!("Codex: ARI's hooks removed from {}.", tilde(&path));
+    Ok(())
+}
+
+fn uninstall_dsh(yes: bool) -> Result<(), String> {
+    let patch_path = dsh_home()
+        .ok_or("HOME is not set")?
+        .join("cordis.patch.yml");
+    let ours = dsh_ari_hooks().ok_or("HOME is not set")?;
+    let patch = read_opt(&patch_path)?;
+    let new_patch = patch.as_deref().and_then(dsh_remove);
+    let target = patch
+        .as_deref()
+        .and_then(|p| dsh_bridge(p).ok().flatten())
+        .map_or_else(|| ours.clone(), PathBuf::from);
+    let new_hooks = read_opt(&target)?
+        .as_deref()
+        .and_then(|t| remove_hooks(t, App::Dsh));
+    if new_patch.is_none() && new_hooks.is_none() {
+        return Ok(());
+    }
+    if new_patch.is_some() {
+        println!(
+            "{}  (dsh home patch)\n- ARI's hooks bridge row\n",
+            tilde(&patch_path)
+        );
+    }
+    if new_hooks.is_some() {
+        println!("{}  hooks\n- `{}`\n", tilde(&target), hook_cmd(App::Dsh));
+    }
+    if !go(false, yes, "dsh") {
+        return Ok(());
+    }
+    let fail = |p: &Path, e: std::io::Error| format!("couldn't update {}: {e}", p.display());
+    // Patch first, so the bridge never points at a removed file.
+    match new_patch.as_deref() {
+        Some("") => std::fs::remove_file(&patch_path).map_err(|e| fail(&patch_path, e))?,
+        Some(t) => write_text(&patch_path, t).map_err(|e| fail(&patch_path, e))?,
+        None => {}
+    }
+    match new_hooks {
+        Some(_) if target == ours => std::fs::remove_file(&ours).map_err(|e| fail(&ours, e))?,
+        Some(t) => write_text(&target, &t).map_err(|e| fail(&target, e))?,
+        None => {}
+    }
+    println!("dsh: ARI's hooks removed.");
+    Ok(())
+}
+
+fn uninstall_claude(yes: bool, purge: bool) -> Result<(), String> {
+    let path = settings_path().ok_or("HOME is not set")?;
+    let settings = read_settings(&path)?;
+    let cfg_dir = paths::config_root().ok_or("HOME is not set")?;
     let saved = std::fs::read_to_string(cfg_dir.join(ORIGINAL))
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
@@ -220,7 +510,7 @@ pub fn run_uninstall(args: &[String]) -> ! {
     // A config.toml that doesn't parse is left as it is.
     let unchained = config::load_checked()
         .ok()
-        .filter(|_| changes && !has("--purge"))
+        .filter(|_| changes && !purge)
         .and_then(|c| Some((unchain(&c, &original)?, c)));
     if changes {
         println!(
@@ -235,7 +525,7 @@ pub fn run_uninstall(args: &[String]) -> ! {
             old.chain.commands, old.hide, new.chain.commands, new.hide
         );
     }
-    if has("--purge") {
+    if purge {
         println!("--purge: delete ARI state and config:");
         for d in [paths::state_root(), Some(cfg_dir.clone())]
             .into_iter()
@@ -245,17 +535,16 @@ pub fn run_uninstall(args: &[String]) -> ! {
         }
         println!();
     }
-    if !(changes || has("--purge")) {
-        std::process::exit(0)
+    if !(changes || purge) {
+        return Ok(());
     }
-    if !confirm(has("--yes")) {
+    if !confirm(yes) {
         println!("Cancelled. Nothing written.");
-        std::process::exit(0)
+        return Ok(());
     }
     if changes {
-        if let Err(e) = write_settings(&path, &restore(&settings, &original)) {
-            fail(&format!("couldn't restore {}: {e}", path.display()));
-        }
+        write_settings(&path, &restore(&settings, &original))
+            .map_err(|e| format!("couldn't restore {}: {e}", path.display()))?;
         let _ = std::fs::remove_file(cfg_dir.join(ORIGINAL));
         println!("Restored your original statusLine.");
         if let Some((new, _)) = &unchained
@@ -264,13 +553,13 @@ pub fn run_uninstall(args: &[String]) -> ! {
             eprintln!("ari: couldn't update config.toml: {e}");
         }
     }
-    if has("--purge") {
+    if purge {
         for d in [paths::state_root(), Some(cfg_dir)].into_iter().flatten() {
             let _ = std::fs::remove_dir_all(d);
         }
         println!("Deleted ARI state and config.");
     }
-    std::process::exit(0)
+    Ok(())
 }
 
 // ── Codex and DeepSeek Harness hook files ───────────────────────────────────

@@ -4,9 +4,9 @@ usage:
   ari hook              hook entry point (called by Claude Code)
   ari statusline        statusline entry point (called by Claude Code)
   ari setup [--yes] [--dry-run]
-                        wire ARI into your statusline (chains the existing one)
+                        wire ARI into Claude Code, Codex and dsh (asks first)
   ari uninstall [--yes] [--purge]
-                        restore your original statusline
+                        undo what setup changed
   ari watch [--session <id> | --all] [--once] [--ascii] [--hub]
                         full panel for this directory's session
   ari hub [--session <id> | --all] [--ascii]

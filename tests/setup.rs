@@ -383,3 +383,63 @@ fn dsh_remove_restores() {
     assert_eq!(dsh_remove(&dsh_add(None, path).unwrap()).unwrap(), "");
     assert_eq!(dsh_remove(USER_PATCH), None);
 }
+
+#[test]
+fn codex_only_machine_setup_and_uninstall() {
+    let d = std::env::temp_dir().join(format!("ari-setup-{}-codex", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let hooks = d.join(".codex/hooks.json");
+    std::fs::create_dir_all(hooks.parent().unwrap()).unwrap();
+    std::fs::write(&hooks, USER_CODEX).unwrap();
+
+    let dry = run(isolated(&d, &["setup", "--dry-run"]));
+    assert!(dry.contains("ari hook --agent codex"), "{dry}");
+    assert_eq!(std::fs::read_to_string(&hooks).unwrap(), USER_CODEX);
+
+    let out = run(isolated(&d, &["setup", "--yes"]));
+    assert!(
+        out.contains(
+            "Codex: hooks added to ~/.codex/hooks.json. Open Codex and run /hooks once to approve them."
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        ours(
+            &v(&std::fs::read_to_string(&hooks).unwrap())["hooks"],
+            "codex"
+        )
+        .len(),
+        11
+    );
+    assert!(
+        !d.join(".claude").exists(),
+        "no Claude Code here, so no ~/.claude"
+    );
+    assert!(run(isolated(&d, &["setup", "--yes"])).contains("already"));
+
+    run(isolated(&d, &["uninstall", "--yes"]));
+    assert_eq!(v(&std::fs::read_to_string(&hooks).unwrap()), v(USER_CODEX));
+    assert!(!d.join(".claude").exists());
+}
+
+#[test]
+fn dsh_only_machine_setup_and_uninstall() {
+    let d = std::env::temp_dir().join(format!("ari-setup-{}-dsh", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    let patch = d.join(".dsh/cordis.patch.yml");
+    let ari_hooks = d.join("config/ari/dsh-hooks.json");
+
+    run(isolated(&d, &["setup", "--yes"]));
+    let text = std::fs::read_to_string(&patch).unwrap();
+    assert_eq!(dsh_bridge(&text), Ok(Some(ari_hooks.display().to_string())));
+    assert_eq!(std::fs::read_to_string(&ari_hooks).unwrap(), dsh_hooks());
+    assert!(
+        !d.join(".claude").exists(),
+        "no Claude Code here, so no ~/.claude"
+    );
+
+    run(isolated(&d, &["uninstall", "--yes"]));
+    assert!(!patch.exists() && !ari_hooks.exists());
+    assert!(!d.join(".claude").exists());
+}
