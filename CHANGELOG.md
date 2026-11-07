@@ -8,6 +8,7 @@
 - `ari demo --codex` and `ari demo --deepseek` replay the bundled session as that app would report it, in its colours and with only the numbers it gives ARI, in the panel and the hub (`x`).
 - New themes `claude` (orange and grey), `codex`, `deepseek` and `auto` (follows the watched session's app). The default theme is unchanged.
 - Multi-session screens label non-Claude sessions with their app, show account limits per app, and count dollar figures for Claude Code sessions only.
+- Fix: after `/clear`, `ari watch` and `ari recap` kept showing the ended session until the new one's first prompt. They now follow the new session straight away.
 - Known limits: Codex doesn't give hooks a command's exit code, so a failing non-test command isn't shown as an error (a failing test run is). dsh support is tested from sample data, not a real session.
 
 ## 0.3.0 - 2026-11-06

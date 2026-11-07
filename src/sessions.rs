@@ -104,9 +104,18 @@ pub fn is_live(s: &SessionInfo, now_ms: u64) -> bool {
     !s.ended && now_ms.saturating_sub(s.last_ms) < LIVE_MS
 }
 
-/// Most recently active session started in `cwd`.
+/// Most recently active session started in `cwd`, preferring one that hasn't ended.
 pub fn pick<'a>(list: &'a [SessionInfo], cwd: &str) -> Option<&'a SessionInfo> {
-    list.iter().find(|s| s.cwd.as_deref() == Some(cwd))
+    let mut here = list.iter().filter(|s| s.cwd.as_deref() == Some(cwd));
+    let newest = here.next()?;
+    if !newest.ended {
+        return Some(newest);
+    }
+    // After /clear the ended session's transcript is still written a moment after its successor starts.
+    Some(
+        here.find(|s| !s.ended && newest.last_ms.saturating_sub(s.last_ms) < LIVE_MS)
+            .unwrap_or(newest),
+    )
 }
 
 #[cfg(test)]
@@ -183,8 +192,15 @@ mod tests {
             },
             now
         ));
-        // `gone` is the newest in /p, but ended sessions still win `pick`; watch skips them itself.
-        assert_eq!(pick(&l, "/p").unwrap().id, "gone");
+        // `gone` is the newest in /p but ended (the /clear case): its live successor wins.
+        assert_eq!(pick(&l, "/p").unwrap().id, "new");
+        // An ended session with no live one behind it is still shown.
+        let only_gone: Vec<_> = l
+            .iter()
+            .filter(|s| s.id != "new" && s.id != "old")
+            .cloned()
+            .collect();
+        assert_eq!(pick(&only_gone, "/p").unwrap().id, "gone");
         assert_eq!(pick(&l, "/q").unwrap().id, "other");
         assert!(pick(&l, "/nowhere").is_none());
         assert!(list(&root.join("missing")).is_empty());
