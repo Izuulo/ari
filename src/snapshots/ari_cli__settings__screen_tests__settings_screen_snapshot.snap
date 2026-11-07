@@ -37,8 +37,8 @@ expression: to_plain(&out)
    usage · context, limits   on                 │
    session · cost, time      on                 │
    turns · recent turns      on                 │
+   auto-clear done agents    off                │
  ALERTS                                         │
    bell                      off                │
    context warn              60%                │
-   context critical          80%                │
  ↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file
