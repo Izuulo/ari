@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The hub graph counts messages between the boxes it shows. In `ari hub --all`, a session talking to its own subagents no longer floods the purple `also:` line, and subagents messaging across two sessions draw an arc between those sessions.
 - `c` in `ari watch` and the hub clears finished subagents off the screen; ones that finish later still show. The `auto_clear` setting (settings → PANEL, or `auto_clear = true` in config.toml) hides them as soon as they finish. Nothing is deleted from the logs.
 - **Codex and DeepSeek Harness sessions.** They show in `ari watch`, `ari watch --all`, the hub and `ari recap` with activity, tool calls, errors, tests and subagents. Codex also shows context fill, tokens and 5h/7d limits, read from its rollout log; it has no cost. dsh has no token, context or cost numbers.
 - `ari setup` wires every app it finds (Claude Code, Codex, dsh) and `ari uninstall` removes exactly what it added. `ari doctor` shows one line per app. Codex hooks need a one-time `/hooks` approval inside Codex. For dsh, setup mounts the Claude Code hook bridge in `$DSH_HOME/cordis.patch.yml`.
