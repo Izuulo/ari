@@ -101,6 +101,21 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 | `✓ DONE` | Turn finished and every task is complete |
 | `◌ IDLE` | Turn finished; tasks incomplete or none |
 
+## Other agents: Codex and DeepSeek Harness
+
+ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ari watch`, `ari watch --all`, the hub and `ari recap`. `ari setup` wires every app it finds (Claude Code, Codex, dsh), `ari uninstall` removes exactly what it added, and `ari doctor` shows one line per app.
+
+| | Codex | DeepSeek Harness |
+|---|---|---|
+| Activity, tool calls, errors, tests, subagents | yes | yes |
+| Context fill, tokens, 5h/7d limits | yes, from Codex's rollout log | no (dsh doesn't expose its session log to hooks) |
+| Cost | no | no |
+| ARI row in the app's footer | no: run `ari watch` in a pane | no: run `ari watch` in a pane |
+
+- **Codex:** after `ari setup`, run `/hooks` inside Codex once and approve ARI's hooks. Known limit: Codex doesn't give hooks a command's exit code, so a failing non-test command isn't shown as an error; a failing test run is.
+- **dsh:** setup mounts dsh's Claude Code hook bridge (`@deepseek-ai/dsh-hooks-claude-code`) in `$DSH_HOME/cordis.patch.yml` (default `~/.dsh`), pointing at ARI's own hooks file. If you already use the bridge with your own hooks file, setup adds ARI's entries to that file instead. dsh support is tested from sample data shaped after dsh's documented payloads, not a recorded session.
+- **Multi-session screens** label non-Claude sessions with their app, show account limits per app, and count dollar figures for Claude Code sessions only.
+
 ## Why ARI
 
 | | |
@@ -141,7 +156,7 @@ Every key is optional:
 
 ```toml
 position = "top"            # ARI's row above or below your chained statusline
-theme = "default"           # default · soft · vivid · colorblind · mono
+theme = "default"           # default · soft · vivid · colorblind · mono · claude · codex · deepseek · auto
 hide = ["cost"]             # statusline segments to drop: conflicts now tasks agents errors tests ctx 5h 7d cost tokens
 hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session turns
 face = false                # the little (•_•) in the panel header
@@ -175,6 +190,10 @@ good = "#5fd787"            # roles: good warn bad accent highlight info muted b
 | `vivid` | the bright variants, for dark low-contrast terminals |
 | `colorblind` | blue for good, orange for bad, never red against green |
 | `mono` | no colour; dim and bold only |
+| `claude` | Claude Code's orange and grey |
+| `codex` | Codex's colours |
+| `deepseek` | DeepSeek's colours |
+| `auto` | follows the app of the watched session; multi-session screens use `default` |
 
 Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR` is respected; glyphs always carry the meaning, so nothing relies on color alone.
 
