@@ -420,9 +420,25 @@ pub fn run_uninstall(args: &[String]) -> ! {
     std::process::exit(if ok { 0 } else { 1 })
 }
 
+/// A hooks file ARI can take its entries out of: empty, or a JSON object.
+fn editable(path: &Path, text: &str) -> Result<(), String> {
+    match serde_json::from_str::<Value>(text) {
+        _ if text.trim().is_empty() => Ok(()),
+        Ok(Value::Object(_)) => Ok(()),
+        _ => Err(format!(
+            "{}: not a JSON object, so ARI can't take its hooks out; fix it, then run ari uninstall again",
+            tilde(path)
+        )),
+    }
+}
+
 fn uninstall_codex(yes: bool) -> Result<(), String> {
     let path = codex_home().ok_or("HOME is not set")?.join("hooks.json");
-    let Some(new) = read_opt(&path)?.as_deref().and_then(codex_remove) else {
+    let Some(old) = read_opt(&path)? else {
+        return Ok(());
+    };
+    editable(&path, &old)?;
+    let Some(new) = codex_remove(&old) else {
         return Ok(());
     };
     println!("{}  hooks\n- `{}`\n", tilde(&path), hook_cmd(App::Codex));
@@ -447,16 +463,33 @@ fn uninstall_dsh(yes: bool) -> Result<(), String> {
         .ok_or("HOME is not set")?
         .join("cordis.patch.yml");
     let ours = dsh_ari_hooks().ok_or("HOME is not set")?;
+    let ours_text = ours.to_str().ok_or("ARI's config path is not UTF-8")?;
     let patch = read_opt(&patch_path)?;
     let new_patch = patch.as_deref().and_then(dsh_remove);
-    let target = patch
-        .as_deref()
-        .and_then(|p| dsh_bridge(p).ok().flatten())
-        .map_or_else(|| ours.clone(), PathBuf::from);
-    let new_hooks = read_opt(&target)?
-        .as_deref()
-        .and_then(|t| remove_hooks(t, App::Dsh));
-    if new_patch.is_none() && new_hooks.is_none() {
+    // What dsh would read once ARI's block is gone.
+    let left = new_patch.as_deref().or(patch.as_deref()).unwrap_or("");
+    let bridge = dsh_bridge(left).ok().flatten();
+    if bridge.as_deref() == Some(ours_text) || left.contains(ours_text) {
+        return Err(format!(
+            "{} still mounts dsh's hooks bridge on {} outside ARI's markers; left both alone. \
+             Remove that row, then run ari uninstall again.",
+            tilde(&patch_path),
+            tilde(&ours)
+        ));
+    }
+    // The user's own bridge file: take ARI's entries out of it.
+    let theirs = match bridge.map(PathBuf::from) {
+        Some(p) => match read_opt(&p)? {
+            Some(t) => {
+                editable(&p, &t)?;
+                remove_hooks(&t, App::Dsh).map(|new| (p, new))
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let ours_exists = ours.exists();
+    if new_patch.is_none() && theirs.is_none() && !ours_exists {
         return Ok(());
     }
     if new_patch.is_some() {
@@ -465,8 +498,11 @@ fn uninstall_dsh(yes: bool) -> Result<(), String> {
             tilde(&patch_path)
         );
     }
-    if new_hooks.is_some() {
-        println!("{}  hooks\n- `{}`\n", tilde(&target), hook_cmd(App::Dsh));
+    if ours_exists {
+        println!("{}\n- ARI's hooks file for dsh\n", tilde(&ours));
+    }
+    if let Some((p, _)) = &theirs {
+        println!("{}  hooks\n- `{}`\n", tilde(p), hook_cmd(App::Dsh));
     }
     if !go(false, yes, "dsh") {
         return Ok(());
@@ -478,10 +514,11 @@ fn uninstall_dsh(yes: bool) -> Result<(), String> {
         Some(t) => write_text(&patch_path, t).map_err(|e| fail(&patch_path, e))?,
         None => {}
     }
-    match new_hooks {
-        Some(_) if target == ours => std::fs::remove_file(&ours).map_err(|e| fail(&ours, e))?,
-        Some(t) => write_text(&target, &t).map_err(|e| fail(&target, e))?,
-        None => {}
+    if ours_exists {
+        std::fs::remove_file(&ours).map_err(|e| fail(&ours, e))?;
+    }
+    if let Some((p, new)) = theirs {
+        write_text(&p, &new).map_err(|e| fail(&p, e))?;
     }
     println!("dsh: ARI's hooks removed.");
     Ok(())

@@ -467,3 +467,60 @@ fn dsh_only_machine_setup_and_uninstall() {
     assert!(!patch.exists() && !ari_hooks.exists());
     assert!(!d.join(".claude").exists());
 }
+
+fn fresh(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("ari-setup-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn uninstall_reports_broken_hook_files() {
+    let d = fresh("broken-hooks");
+    let codex = d.join(".codex/hooks.json");
+    std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+    std::fs::write(&codex, "{ broken").unwrap();
+    // dsh with a user bridge whose file is broken.
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    let theirs = d.join("theirs.json");
+    std::fs::write(&theirs, "nope").unwrap();
+    let patch = format!(
+        "- name: '@deepseek-ai/dsh-hooks-claude-code'\n  config:\n    configPath: {}\n",
+        theirs.display()
+    );
+    std::fs::write(d.join(".dsh/cordis.patch.yml"), &patch).unwrap();
+
+    let out = isolated(&d, &["uninstall", "--yes"]).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        err.contains("~/.codex/hooks.json") && err.contains("~/theirs.json"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(&codex).unwrap(), "{ broken");
+    assert_eq!(std::fs::read_to_string(&theirs).unwrap(), "nope");
+}
+
+#[test]
+fn uninstall_keeps_ari_hooks_the_patch_still_points_at() {
+    let d = fresh("dsh-unmarked");
+    std::fs::create_dir_all(d.join(".dsh")).unwrap();
+    run(isolated(&d, &["setup", "--yes"]));
+    let patch = d.join(".dsh/cordis.patch.yml");
+    // The user dropped ARI's markers but kept the row.
+    let unmarked: String = std::fs::read_to_string(&patch)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with("# "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&patch, &unmarked).unwrap();
+
+    let out = isolated(&d, &["uninstall", "--yes"]).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(err.contains("outside ARI's markers"), "{err}");
+    assert!(d.join("config/ari/dsh-hooks.json").exists());
+    assert_eq!(std::fs::read_to_string(&patch).unwrap(), unmarked);
+}
