@@ -46,6 +46,8 @@ struct App {
     st: State,
     usage: Usage,
     x: bar::Extras,
+    /// The session repo's git section, refreshed off-thread.
+    git: crate::git::Watcher,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
     /// When the recap view was last built, and whether events arrived since.
@@ -182,6 +184,8 @@ impl App {
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
             self.x.plan = state::plan_file(&self.st);
         }
+        self.git.poll(self.usage.dir.as_deref());
+        self.x.git = self.git.git.clone();
     }
 
     fn animating(&self, now: u64) -> bool {
@@ -316,6 +320,9 @@ impl App {
             return (self.settings_lines(sel, width, height), None);
         }
         let now = hook::now_ms();
+        if self.view.hub.is_some_and(|h| h.all) {
+            return self.all_hub_lines(width, height, now);
+        }
         if self.mode == Mode::All {
             if !self.view.open {
                 self.pinned = None;
@@ -364,7 +371,12 @@ impl App {
         now: u64,
     ) -> (Vec<Line<'static>>, Option<usize>) {
         if hub::fit(width, height) == Fit::TooSmall {
-            let note = format!("hub needs 120×30 · this window is {width}×{height} · x list");
+            let back = if self.mode == Mode::All {
+                "list"
+            } else {
+                "panel"
+            };
+            let note = format!("hub needs 120×30 · this window is {width}×{height} · x {back}");
             let dim = Style::new().add_modifier(Modifier::DIM);
             let line = Line::from(Span::styled(
                 crate::event::truncate(&note, width as usize),
@@ -837,6 +849,7 @@ pub fn run(args: &[String]) -> ! {
         st: State::default(),
         usage: Usage::default(),
         x: bar::Extras::default(),
+        git: Default::default(),
         mtimes: (None, None),
         picked_at: None,
         recap_built: None,
@@ -860,6 +873,8 @@ pub fn run(args: &[String]) -> ! {
         } else {
             (env("COLUMNS", 80), u16::MAX)
         };
+        // No later frame picks up the background fetch, so wait for it here.
+        app.x.git = app.usage.dir.as_deref().and_then(crate::git::fetch);
         println!("{}", panel::to_plain(&app.lines(width, height)));
         std::process::exit(0)
     }
@@ -960,6 +975,13 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
                 h.scroll = 0;
             }
             KeyCode::Char('g') => h.screen = Screen::Graph,
+            KeyCode::Char('a') => {
+                *h = HubView {
+                    all: !h.all,
+                    show_done: h.show_done,
+                    ..Default::default()
+                }
+            }
             KeyCode::Char('z') => h.show_done ^= true,
             KeyCode::Char('c') => view.cleared = hook::now_ms(),
             KeyCode::PageUp => h.scroll += 10,
@@ -1172,6 +1194,22 @@ mod key_tests {
     }
 
     #[test]
+    fn a_toggles_all_sessions_hub() {
+        let mut v = hub_view(Screen::Zoom, 2);
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        let h = v.hub.unwrap();
+        assert!(h.all);
+        assert_eq!(
+            (h.screen, h.sel),
+            (Screen::Hub, 0),
+            "the agent list changed"
+        );
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        assert!(!v.hub.unwrap().all);
+        assert!(!v.expand_agents, "a in the hub isn't the panel's a");
+    }
+
+    #[test]
     fn list_keys_work_with_hub_flag() {
         let mut v = hub_view(Screen::Hub, 0);
         key(&mut v, KeyCode::Down, Some(3), None);
@@ -1241,6 +1279,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1721,6 +1760,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1798,6 +1838,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            git: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,

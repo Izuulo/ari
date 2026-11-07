@@ -46,7 +46,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 <p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: STUCK because python3 test_calc.py failed 3 times in a row, 1 of 4 tasks, the AssertionError under errors, usage bars, and session cost and tokens" width="620"></p>
 
-Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. `--ascii` for terminals without Unicode.
+Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). `--ascii` for terminals without Unicode.
 
 ### Every agent at once: the hub
 
@@ -65,7 +65,7 @@ Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole termin
 </tr>
 </table>
 
-`↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, `c` clears finished agents off the screen, `esc` goes back one level and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call.
+`↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, `c` clears finished agents off the screen, `a` switches to every live session and back, `esc` goes back one level and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call.
 
 ### What a session got done: `ari recap`
 
@@ -161,7 +161,7 @@ Every key is optional:
 position = "top"            # ARI's row above or below your chained statusline
 theme = "default"           # default · soft · vivid · colorblind · mono · claude · codex · deepseek · auto
 hide = ["cost"]             # statusline segments to drop: conflicts now tasks agents errors tests ctx 5h 7d cost tokens
-hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session turns
+hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session turns git
 face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 auto_clear = false          # hide subagents in ari watch as soon as they finish

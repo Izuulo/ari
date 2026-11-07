@@ -28,6 +28,8 @@ pub struct Extras {
     pub samples: Vec<crate::burn::Sample>,
     /// The session's app; a label shows for any but Claude Code.
     pub app: crate::app::App,
+    /// The session repo's branch, commits and PRs (panel only, fetched in the background).
+    pub git: Option<crate::git::Git>,
 }
 
 /// Forecasts are only worth showing this close.

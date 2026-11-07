@@ -50,4 +50,4 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 │                                                                                                  ││                                                                  │
 │                                                                                                  ││           −10m                   −5m                     now     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
-  ↑↓ select   ⏎ zoom   g graph   z show finished (2)   c clear finished   x back to panel   s settings   q quit                                                  168×49
+  ↑↓ select   ⏎ zoom   g graph   z show finished (2)   c clear finished   a all sessions   x back to panel   s settings   q quit                                 168×49
