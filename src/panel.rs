@@ -1425,6 +1425,11 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
     rows
 }
 
+/// The git section's rows, colored, for the hub's git panes.
+pub(crate) fn git_rows(x: &Extras, now: u64) -> Vec<Vec<Span<'static>>> {
+    git(x, &Ctx { color: true, inner: 0 }, now)
+}
+
 /// Branch and working tree, then recent commits and PRs, each led by its age.
 fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     let Some(g) = &x.git else { return vec![] };

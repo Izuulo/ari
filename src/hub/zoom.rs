@@ -80,7 +80,8 @@ fn rule(buf: &mut Buffer, inner: Rect, y: u16) {
 }
 
 /// Draw agent `a` over `area`; `scroll` moves the timeline up from its newest line.
-pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, scroll: usize) {
+pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, v: &super::HubView) {
+    let scroll = v.scroll;
     let st = node_style(i, a);
     let (g, gs) = glyph(i, a);
     let l = ledger(i, a);
@@ -250,7 +251,12 @@ pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, scroll: u
     let ch = 14.min(area.height / 3);
     context(buf, Rect::new(rx, area.y, rw, ch), i, a);
     let mh = (area.height - ch) * 2 / 5;
-    messages(buf, Rect::new(rx, area.y + ch, rw, mh), i, a);
+    let mr = Rect::new(rx, area.y + ch, rw, mh);
+    if v.git && !super::merged(i) {
+        super::feed::git(buf, mr, i);
+    } else {
+        messages(buf, mr, i, a);
+    }
     let fh = (area.height - ch - mh) / 2;
     files(buf, Rect::new(rx, area.y + ch + mh, rw, fh), i, a);
     tasks(
@@ -431,7 +437,13 @@ fn files(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
         buf,
         r,
         vec![Span::styled("files", bold())],
-        vec![Span::styled("edits from hooks", dim())],
+        vec![Span::styled(
+            i.x.git.as_ref().map_or("edits from hooks".into(), |g| {
+                let n = a.files.keys().filter(|p| g.changed.contains(p)).count();
+                format!("{} · {n} uncommitted", g.branch)
+            }),
+            dim(),
+        )],
         faint(),
         false,
     );
@@ -457,7 +469,15 @@ fn files(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
         } else {
             format!("⚠ {} edited it too", others.join(", "))
         };
-        let nx = put(buf, x, y, p, w / 2, Style::default());
+        // ● still uncommitted, ✓ committed since; blank before git has loaded.
+        let mark = i.x.git.as_ref().map(|g| g.changed.contains(p));
+        let (m, ms) = match mark {
+            Some(true) => ("● ", warn()),
+            Some(false) => ("✓ ", faint()),
+            None => ("  ", faint()),
+        };
+        let nx = put(buf, x, y, m, 2, ms);
+        let nx = put(buf, nx, y, p, (w / 2).saturating_sub(2), Style::default());
         let nx = put(
             buf,
             nx.max(x + w / 2),
@@ -551,7 +571,11 @@ mod tests {
         };
         let mut buf = Buffer::empty(Rect::new(0, 0, 168, 46));
         let area = buf.area;
-        draw(&mut buf, area, &i, &st.agents[k], scroll);
+        let v = crate::hub::HubView {
+            scroll,
+            ..Default::default()
+        };
+        draw(&mut buf, area, &i, &st.agents[k], &v);
         crate::panel::to_plain(&crate::hub::to_lines(&buf, false))
             .lines()
             .map(String::from)

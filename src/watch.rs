@@ -983,6 +983,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
                 }
             }
             KeyCode::Char('z') => h.show_done ^= true,
+            KeyCode::Char('b') => h.git ^= true,
             KeyCode::Char('c') => view.cleared = hook::now_ms(),
             KeyCode::PageUp => h.scroll += 10,
             KeyCode::PageDown => h.scroll = h.scroll.saturating_sub(10),
