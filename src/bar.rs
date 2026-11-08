@@ -14,6 +14,8 @@ pub struct Extras {
     pub tokens: Option<TokenCache>,
     /// ms until the 5h limit at the current pace, only when that's before it resets.
     pub burn_eta: Option<u64>,
+    /// ms until the 7d limit at the current pace, only when that's before it resets.
+    pub week_eta: Option<u64>,
     /// How long ago the session's transcript last changed: a sign of life without hooks.
     pub transcript_age_ms: Option<u64>,
     /// Turns until context auto-compacts at the current growth.
@@ -336,7 +338,17 @@ pub fn render(
             segs.push(limit("5h", u.five_h, now_ms, cfg, color));
         }
         if shown("7d") {
-            segs.push(limit("7d", u.seven_d, now_ms, cfg, color));
+            let mut seg = limit("7d", u.seven_d, now_ms, cfg, color);
+            if let Some(eta) = x.week_eta {
+                let at = now_ms + eta;
+                let tag = format!(
+                    "▲{} {}",
+                    crate::panel::local_weekday(at),
+                    crate::panel::local_hhmm(at)
+                );
+                seg = format!("{seg} {}", paint(color, "1;33", &tag));
+            }
+            segs.push(seg);
         }
     }
     if shown("cost")
@@ -439,6 +451,40 @@ mod tests {
             ..Default::default()
         };
         (st, u)
+    }
+
+    #[test]
+    fn week_forecast_on_the_7d_segment() {
+        let (st, u) = sample();
+        let eta = 30 * 3_600_000;
+        let go = |week_eta, cfg: &Config| {
+            let x = Extras {
+                week_eta,
+                ..Default::default()
+            };
+            render(&st, &u, &x, cfg, NOW, 200, false)
+        };
+        let at = NOW + eta;
+        let tag = format!(
+            "7d 34% ↺4d ▲{} {}",
+            crate::panel::local_weekday(at),
+            crate::panel::local_hhmm(at)
+        );
+        let cfg = Config::default();
+        assert!(go(Some(eta), &cfg).contains(&tag));
+        assert!(go(None, &cfg).ends_with("7d 34% ↺4d │ $2.69"));
+        assert!(!go(None, &cfg).contains('▲'));
+        let hidden = Config {
+            hide: vec!["7d".into()],
+            ..Default::default()
+        };
+        assert!(!go(Some(eta), &hidden).contains('▲'));
+        let ascii = Config {
+            ascii: true,
+            ..Default::default()
+        };
+        let row = go(Some(eta), &ascii);
+        assert!(row.contains('^') && !row.contains('▲'), "{row}");
     }
 
     #[test]

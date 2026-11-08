@@ -111,6 +111,21 @@ pub fn local_hhmm(ms: u64) -> String {
     format!("{:02}:{:02}", s / 3600 % 24, s / 60 % 60)
 }
 
+/// Local weekday, `Sun`…`Sat`.
+pub fn local_weekday(ms: u64) -> &'static str {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    #[cfg(unix)]
+    {
+        let t = (ms / 1000) as libc::time_t;
+        // SAFETY: localtime_r only writes into the tm we own.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if !unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+            return DAYS[tm.tm_wday as usize % 7];
+        }
+    }
+    DAYS[((ms / 86_400_000 + 4) % 7) as usize] // 1970-01-01 was a Thursday
+}
+
 pub fn dur(ms: u64) -> String {
     let s = ms / 1000;
     match s {
@@ -1211,6 +1226,17 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         )]);
     }
+    if let Some(eta) = x.week_eta {
+        let at = now + eta;
+        rows.push(vec![c.span(
+            format!(
+                "▲ 7d runs out {} ~{} at this pace",
+                local_weekday(at),
+                local_hhmm(at)
+            ),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]);
+    }
     rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
@@ -1832,6 +1858,53 @@ mod tests {
             ..Default::default()
         };
         (st, x)
+    }
+
+    #[test]
+    fn weekday_names() {
+        assert!(["Wed", "Thu"].contains(&local_weekday(0)));
+        let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        for ms in (0..7 * 4).map(|i| i * 6 * 3_600_000) {
+            assert!(days.contains(&local_weekday(ms)));
+        }
+        // Noon UTC keeps seven days distinct in any time zone.
+        let mut seen: Vec<_> = (0..7)
+            .map(|d| local_weekday(43_200_000 + d * 86_400_000))
+            .collect();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 7);
+    }
+
+    #[test]
+    fn week_runs_out_row() {
+        let (st, u) = (State::default(), Usage::default());
+        let eta = 30 * 3_600_000;
+        let go = |week_eta| {
+            let x = Extras {
+                week_eta,
+                ..Default::default()
+            };
+            to_plain(&lines(
+                &st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                80,
+                40,
+                false,
+            ))
+        };
+        let want = format!(
+            "▲ 7d runs out {} ~{} at this pace",
+            local_weekday(NOW + eta),
+            local_hhmm(NOW + eta)
+        );
+        assert!(go(Some(eta)).contains(&want), "{}", go(Some(eta)));
+        assert!(!go(None).contains("7d runs out"));
     }
 
     #[test]
