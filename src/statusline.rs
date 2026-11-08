@@ -49,7 +49,7 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
             x.plan = state::plan_file(&st);
             if let Some(root) = &root {
                 x.conflicts = crate::conflicts::cached(root, &dir, now);
-                x.week_eta = burn::week_projection(&burn::load_week(root, now), now);
+                x.week_eta = burn::week_projection(&burn::load_week(root, now), u.seven_d, now);
             }
             x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
             x.transcript_age_ms =

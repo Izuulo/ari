@@ -183,7 +183,13 @@ impl App {
             let now = hook::now_ms();
             self.x.burn_eta = burn::projection(&burn::load(dir, now), now);
             self.x.week_eta = (self.session_app == crate::app::App::Claude)
-                .then(|| burn::week_projection(&burn::load_week(&self.root, now), now))
+                .then(|| {
+                    burn::week_projection(
+                        &burn::load_week(&self.root, now),
+                        self.usage.seven_d,
+                        now,
+                    )
+                })
                 .flatten();
             self.x.samples = burn::recent(dir);
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
@@ -1352,7 +1358,16 @@ mod key_tests {
             burn::record_week(&root, Some(l), now - (18 - i) * 600_000);
         }
         std::fs::write(root.join("sessions/s2/meta.json"), r#"{"agent":"codex"}"#).unwrap();
-        assert!(app_on(&root, "s1", &[]).x.week_eta.is_some());
+        let mut s1 = app_on(&root, "s1", &[]);
+        assert_eq!(s1.x.week_eta, None, "no rate_limits in usage.json");
+        let u = format!(
+            r#"{{"session_id":"s1","rate_limits":{{"seven_day":{{"used_percentage":46,"resets_at":{}}}}}}}"#,
+            now / 1000 + 3 * 86400
+        );
+        std::fs::write(root.join("sessions/s1/usage.json"), u).unwrap();
+        s1.mtimes = (None, None);
+        s1.refresh();
+        assert!(s1.x.week_eta.is_some());
         assert_eq!(app_on(&root, "s2", &[]).x.week_eta, None);
         let _ = std::fs::remove_dir_all(&root);
     }

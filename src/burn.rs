@@ -192,9 +192,16 @@ pub fn projection(samples: &[Sample], now: u64) -> Option<u64> {
     eta(samples, now, WINDOW_MS, MIN_SPAN_MS)
 }
 
-/// `projection` for the 7-day limit: a 6 h fit that needs an hour of samples.
-pub fn week_projection(samples: &[Sample], now: u64) -> Option<u64> {
-    eta(samples, now, WEEK_WINDOW_MS, WEEK_MIN_SPAN_MS)
+/// `projection` for the session's own 7-day limit: a 6 h fit that needs an hour of samples.
+/// No limit in the payload, no forecast.
+pub fn week_projection(samples: &[Sample], limit: Option<Limit>, now: u64) -> Option<u64> {
+    let l = limit?;
+    let own: Vec<Sample> = samples
+        .iter()
+        .filter(|s| s.resets_at == l.resets_at)
+        .copied()
+        .collect();
+    eta(&own, now, WEEK_WINDOW_MS, WEEK_MIN_SPAN_MS)
 }
 
 fn eta(samples: &[Sample], now: u64, window_ms: u64, min_span_ms: u64) -> Option<u64> {
@@ -396,13 +403,28 @@ mod tests {
             .collect()
     }
 
+    fn lim(resets_in_s: u64) -> Option<Limit> {
+        Some(Limit {
+            pct: 50.0,
+            resets_at: NOW / 1000 + resets_in_s,
+        })
+    }
+
+    #[test]
+    fn week_needs_the_sessions_own_limit() {
+        let s = series_h(40.0, 2.0, 3, 3 * 86400);
+        assert!(week_projection(&s, lim(3 * 86400), NOW).is_some());
+        assert_eq!(week_projection(&s, None, NOW), None);
+        assert_eq!(week_projection(&s, lim(4 * 86400), NOW), None);
+    }
+
     #[test]
     fn week_pace_warns_before_reset() {
         // 40% -> 46% over 3 h at 2%/h: 54% left = 27 h.
-        let eta = week_projection(&series_h(40.0, 2.0, 3, 3 * 86400), NOW).unwrap();
+        let eta = week_projection(&series_h(40.0, 2.0, 3, 3 * 86400), lim(3 * 86400), NOW).unwrap();
         assert!((eta as i64 - 27 * 3_600_000).abs() < 60_000, "{eta}");
         assert_eq!(
-            week_projection(&series_h(40.0, 2.0, 3, 20 * 3600), NOW),
+            week_projection(&series_h(40.0, 2.0, 3, 20 * 3600), lim(20 * 3600), NOW),
             None,
             "resets first"
         );
@@ -411,9 +433,13 @@ mod tests {
     #[test]
     fn week_needs_an_hour_of_samples() {
         let short: Vec<Sample> = series(40.0, 0.1, 50, 86400);
-        assert_eq!(week_projection(&short, NOW), None);
+        assert_eq!(week_projection(&short, lim(86400), NOW), None);
         assert_eq!(
-            week_projection(&series_h(40.0, 2.0, 3, 86400), NOW + 7 * 3_600_000),
+            week_projection(
+                &series_h(40.0, 2.0, 3, 86400),
+                lim(86400),
+                NOW + 7 * 3_600_000
+            ),
             None,
             "too old"
         );
@@ -421,13 +447,14 @@ mod tests {
 
     #[test]
     fn week_ignores_previous_window() {
+        // Old window rises fast from 90%; the new one is 2% -> 4% over 2 h.
         let mut s = series_h(90.0, 2.0, 2, 10);
-        s.extend(
-            series_h(2.0, 0.0, 1, 5 * 86400)
-                .into_iter()
-                .map(|x| Sample { t: x.t + 1, ..x }),
-        );
-        assert_eq!(week_projection(&s, NOW + 1), None);
+        let new = series_h(2.0, 1.0, 2, 5 * 86400);
+        s.extend(new.iter().map(|x| Sample { t: x.t + 1, ..*x }));
+        let alone: Vec<Sample> = new.iter().map(|x| Sample { t: x.t + 1, ..*x }).collect();
+        let got = week_projection(&s, lim(5 * 86400), NOW + 1);
+        assert!(got.is_some());
+        assert_eq!(got, week_projection(&alone, lim(5 * 86400), NOW + 1));
     }
 
     #[test]
@@ -437,14 +464,14 @@ mod tests {
         swapped.swap(5, 6);
         swapped.swap(0, 1);
         assert_eq!(
-            week_projection(&swapped, NOW),
-            week_projection(&sorted, NOW)
+            week_projection(&swapped, lim(3 * 86400), NOW),
+            week_projection(&sorted, lim(3 * 86400), NOW)
         );
-        assert!(week_projection(&swapped, NOW).is_some());
+        assert!(week_projection(&swapped, lim(3 * 86400), NOW).is_some());
         // The newest line landing earlier in the file must not panic either.
         let mut tail_first = sorted.clone();
         tail_first.rotate_right(1);
-        assert!(week_projection(&tail_first, NOW).is_some());
+        assert!(week_projection(&tail_first, lim(3 * 86400), NOW).is_some());
     }
 
     #[test]
