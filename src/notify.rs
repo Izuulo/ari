@@ -54,7 +54,7 @@ pub fn commands(note: &Note, n: &Notify, os: &str) -> Vec<Vec<String>> {
         out.push(c);
     }
     if ntfy_ok(&n.ntfy) {
-        let mut c = argv(&["curl", "-fsS", "-m", "10", "-H"]);
+        let mut c = argv(&["curl", "-q", "-fsS", "-m", "10", "-H"]);
         c.extend([
             format!("Title: {t}"),
             "--data-raw".into(),
@@ -99,7 +99,8 @@ pub struct Seen {
     pub fired_turn: u32,
 }
 
-/// The same verdict doesn't notify twice for one session within this.
+/// A verdict that equals the last one fired is not fired again within this; a flip through
+/// another verdict in between (STUCK, NEEDS YOU, STUCK) does fire.
 pub const REPEAT_MS: u64 = 60_000;
 
 /// New `Seen` and whether this verdict flip should notify.
@@ -251,6 +252,7 @@ mod tests {
             commands(&note(), &n, "macos"),
             vec![strs(&[
                 "curl",
+                "-q",
                 "-fsS",
                 "-m",
                 "10",
