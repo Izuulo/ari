@@ -136,6 +136,13 @@ pub(crate) fn lanes(buf: &mut Buffer, area: Rect, i: &Input) {
                 put(buf, x0 + 10 + j as u16, y, SPARK[lvl - 1], 1, s);
             }
         }
+        if a.id == "main" {
+            for b in st.compactions.iter().map(|(t, _)| t / LANE_MS) {
+                if (first..=nb).contains(&b) {
+                    put(buf, x0 + 10 + (b - first) as u16, y, "⟲", 1, warn());
+                }
+            }
+        }
         let (g, gs) = glyph(i, a);
         put(buf, x0 + 11 + n as u16, y, &g, 1, gs);
     }
@@ -500,6 +507,23 @@ mod tests {
             "{out:#?}"
         );
         assert!(!out.iter().any(|l| l.contains("m2")));
+    }
+
+    #[test]
+    fn lanes_mark_compaction() {
+        let mut st = with_main(vec![]);
+        let now = 100 * LANE_MS;
+        st.agents[0].lane.push_back((100, 1));
+        st.compactions.push_back((98 * LANE_MS, "auto".into()));
+        let main_row = |st: &State| {
+            draw_with(st, now, 68, 8, lanes)
+                .into_iter()
+                .find(|l| l.contains(" main "))
+                .unwrap()
+        };
+        assert!(main_row(&st).contains('⟲'), "{}", main_row(&st));
+        st.compactions[0].0 = 10 * LANE_MS;
+        assert!(!main_row(&st).contains('⟲'), "{}", main_row(&st));
     }
 
     #[test]

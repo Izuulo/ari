@@ -27,6 +27,7 @@ fn timeline(i: &Input, a: &Agent) -> Vec<Row> {
     enum E<'a> {
         Call(&'a crate::state::CallRec),
         Msg(&'a crate::state::Msg),
+        Compact(&'a str),
     }
     let mut ev: Vec<(u64, u8, E)> = a.recent.iter().map(|c| (c.t, 0, E::Call(c))).collect();
     ev.extend(
@@ -35,6 +36,10 @@ fn timeline(i: &Input, a: &Agent) -> Vec<Row> {
             .filter(|m| m.from == a.id || m.to == a.id)
             .map(|m| (m.t, 1, E::Msg(m))),
     );
+    // Compactions are main's: subagents keep their own context.
+    if a.id == "main" {
+        ev.extend(i.st.compactions.iter().map(|(t, k)| (*t, 2, E::Compact(k))));
+    }
     ev.sort_by_key(|e| (e.0, e.1));
     let mut out = vec![];
     for (t, _, e) in ev {
@@ -68,6 +73,7 @@ fn timeline(i: &Input, a: &Agent) -> Vec<Row> {
                     None,
                 ));
             }
+            E::Compact(k) => out.push((format!("{when}⟲ compacted ({k})"), warn(), None)),
         }
     }
     out
@@ -629,6 +635,21 @@ mod tests {
         out.iter()
             .position(|l| l.contains(s))
             .unwrap_or_else(|| panic!("{s} missing:\n{}", out.join("\n")))
+    }
+
+    #[test]
+    fn zoom_marks_compactions() {
+        let mut st = with_main(vec![kid("a1", "main", 1)]);
+        st.agents[0]
+            .recent
+            .extend([call(10_000, "one.rs"), call(50_000, "three.rs")]);
+        st.agents[1].recent.push_back(call(20_000, "kid.rs"));
+        st.compactions.push_back((30_000, "auto".into()));
+        let out = show(&st, &Default::default(), 0, 0);
+        let order = ["one.rs", "⟲ compacted (auto)", "three.rs"].map(|s| row(&out, s));
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+        let out = show(&st, &Default::default(), 1, 0);
+        assert!(!out.iter().any(|l| l.contains("compacted")), "{out:#?}");
     }
 
     #[test]
