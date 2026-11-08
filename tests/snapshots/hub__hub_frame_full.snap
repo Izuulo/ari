@@ -25,24 +25,24 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 │                                                                                                  ││                                                                  │
 │ ── spawn   ━━ message   ● in flight   dim = finished                                             ││                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
-┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━ 22s ━┓                                                                                                                              
-┃ main · 7 calls · 160k tok              ┃                                                                                                                              
-┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k       ┃                                                                                                                              
-┃ filled by messages 7.4k                ┃                                                                                                                              
-┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
-┃ 19s ToolS ToolSearch             ✓ .0s ┃                                                                                                                              
-┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
-┃ 17s TaskC plan                   ✓ .0s ┃                                                                                                                              
-┃ 14s Agent general-purpose: Wri… ✓ 6.6s ┃                                                                                                                              
-┃ 13s Agent general-purpose: Che… ✓ 8.6s ┃                                                                                                                              
-┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
-┃  2s TaskU plan                   ✓ .0s ┃                                                                                                                              
-┃                                        ┃                                                                                                                              
-┃                                        ┃                                                                                                                              
-┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃                                                                                                                              
-┃ ✓ done                              2s ┃                                                                                                                              
-┃                                        ┃                                                                                                                              
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                                                                              
+┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 22s ━┓╭─ context window ────────────────── 34k / 200k ─╮╭─ messages ─────────────────────── 0 in · 0 out ─╮
+┃ main · 7 calls · 160k tok                                       ┃│ ctx ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17%   ││ none                                            │
+┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k                                ┃│ compacts near 90%                              ││                                                 │
+┃ filled by messages 7.4k                                         ┃│                                                ││                                                 │
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│ what filled it                                 ││                                                 │
+┃ 19s ToolS ToolSearch                                      ✓ .0s ┃│ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ ││                                                 │
+┃ 17s TaskC plan                                            ✓ .0s ┃│ estimate: each tool result is the jump in inp… ││                                                 │
+┃ 17s TaskC plan                                            ✓ .0s ┃│ next call; base is the first call              ││                                                 │
+┃ 14s Agent general-purpose: Writer subagent writes notes  ✓ 6.6s ┃╰────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯
+┃ 13s Agent general-purpose: Checker subagent checks notes ✓ 8.6s ┃╭─ files ───────────────────── edits from hooks ─╮╭─ tasks & errors ────────────────────────────────╮
+┃  2s TaskU plan                                            ✓ .0s ┃│ no edits                                       ││ no errors                                       │
+┃  2s TaskU plan                                            ✓ .0s ┃│                                                ││                                                 │
+┃                                                                 ┃│                                                ││                                                 │
+┃                                                                 ┃│                                                ││                                                 │
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│                                                ││                                                 │
+┃ ✓ done                                                       2s ┃│                                                ││                                                 │
+┃                                                                 ┃│                                                ││                                                 │
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛╰────────────────────────────────────────────────╯╰─────────────────────────────────────────────────╯
 ╭─ messages ──────────────────────────────────────────────────────── 2 this session · newest last ─╮╭─ activity ─────────────────────────── last 10 min · 12 s a cell ─╮
 │   9s  writer    ━▸ checker   notes.md is ready in /home/user/proj. It has three lines about rai… ││ main                                                     ▆▄▄ ✓   │
 │   5s  checker   ━▸ writer    notes.md has 3 lines.                                               ││ checker                                                   █  ✓   │
