@@ -18,7 +18,7 @@
 
 </div>
 
-ARI watches your session through hooks and the statusline and answers *how far along are we, and is anything wrong?* at a glance, so you never have to interrupt a long run to ask. Nothing is ever sent to the model, and nothing leaves your machine.
+ARI watches your session through hooks and the statusline and answers *how far along are we, and is anything wrong?* at a glance, so you never have to interrupt a long run to ask. Nothing is ever sent to the model, and nothing leaves your machine unless you set `notify.ntfy`.
 
 ## Install
 
@@ -46,7 +46,7 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 <p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: STUCK because python3 test_calc.py failed 3 times in a row, 1 of 4 tasks, the AssertionError under errors, usage bars, and session cost and tokens" width="620"></p>
 
-**Notifications** when a session needs you: one desktop notification (and, if you set `notify.ntfy`, one push) each time a session flips to NEEDS YOU, STUCK, BLOCKED or DONE. They fire once per flip, from the hooks, so they work with no `ari watch` open. On macOS you may be asked once to allow notifications from Script Editor. Turn them off with `desktop = false` in `[notify]` or in settings.
+**Notifications** when a session needs you: one desktop notification (and, if you set `notify.ntfy`, one push) each time a session flips to NEEDS YOU, STUCK, BLOCKED or DONE. They fire once per flip, from the hooks, so they work with no `ari watch` open. On macOS you may be asked once to allow notifications from Script Editor. Turn them off with `desktop = false` in `[notify]` or in settings; clear `ntfy` to stop pushes.
 
 Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). `--ascii` for terminals without Unicode.
 
