@@ -167,7 +167,7 @@ pub fn record_week(root: &Path, l: Option<Limit>, now: u64) {
         let _ = f.write_all(format!("{line}\n").as_bytes());
     }
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > WEEK_MAX_BYTES) {
-        let keep: String = parse(&std::fs::read_to_string(&path).unwrap_or_default())
+        let keep: String = parse(&tail(&path, WEEK_MAX_BYTES / 2))
             .into_iter()
             .filter(|s| now.saturating_sub(s.t) < WEEK_KEEP_MS)
             .filter_map(|s| serde_json::to_string(&s).ok())
