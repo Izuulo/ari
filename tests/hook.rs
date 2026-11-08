@@ -14,7 +14,12 @@ fn tmp(name: &str) -> PathBuf {
 fn quiet_config(state: &Path) {
     let d = state.join("config/ari");
     std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(d.join("config.toml"), "[notify]\ndesktop = false\n").unwrap();
+    let f = d.join("config.toml");
+    let mut cfg = std::fs::read_to_string(&f).unwrap_or_default();
+    if !cfg.contains("[notify]") {
+        cfg += "\n[notify]\ndesktop = false\n";
+        std::fs::write(&f, cfg).unwrap();
+    }
 }
 
 fn hook(state: &Path, stdin: &[u8]) -> Output {
