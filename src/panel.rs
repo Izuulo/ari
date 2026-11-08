@@ -1435,7 +1435,7 @@ fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     if g.behind > 0 {
         head += &format!(" ↓{}", g.behind);
     }
-    let tree = match g.dirty {
+    let tree = match g.changed.len() {
         0 => "clean".to_string(),
         n => format!("{n} changed"),
     };
@@ -2143,7 +2143,7 @@ mod tests {
         x.git = Some(crate::git::Git {
             branch: "main".into(),
             ahead: 2,
-            dirty: 3,
+            changed: vec!["a".into(), "b".into(), "c".into()],
             commits: vec![crate::git::Commit {
                 hash: "1ec1c52".into(),
                 subject: "Merge pull request #38".into(),
