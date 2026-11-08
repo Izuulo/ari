@@ -9,6 +9,8 @@ python3 -I - "$root/target/release/ari" "$tmp" "$root/fixtures/basic/raw.jsonl" 
 import json, os, subprocess, sys, time
 bin, tmp, raw, n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 env = dict(os.environ, XDG_STATE_HOME=f"{tmp}/state", XDG_CONFIG_HOME=f"{tmp}/config", COLUMNS="160")
+os.makedirs(f"{tmp}/config/ari")
+open(f"{tmp}/config/ari/config.toml", "w").write("[notify]\ndesktop = false\n")  # benches must not pop notifications
 for line in open(raw):
     p = json.loads(line)["p"]
     p["session_id"] = "bench"
