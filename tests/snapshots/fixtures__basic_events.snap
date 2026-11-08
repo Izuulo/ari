@@ -27,7 +27,7 @@ expression: lines
 {"t":1793899415875,"e":"PreToolUse","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559,"pm":"dontAsk"}
 {"t":1793899417129,"e":"PostToolUseFailure","tool":"Bash","id":"toolu_01X3XV9oKKygVmt29ZJhYuNd","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":5965074057153844559,"ok":false,"kind":"exit 1","msg":"SyntaxError: unexpected EOF while parsing","dur":1231,"pm":"dontAsk"}
 {"t":1793899419193,"e":"PreToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"pm":"dontAsk"}
-{"t":1793899419219,"e":"PostToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"ok":true,"dur":3,"pm":"dontAsk","lines":[1,1]}
+{"t":1793899419219,"e":"PostToolUse","tool":"Edit","id":"toolu_01Y64ixoHwWWtqYEdZSXFnXy","act":"editing hello.py","sig":"Edit:/home/user/proj/hello.py","h":2704393211389936078,"ok":true,"dur":3,"pm":"dontAsk","lines":[1,1],"edit":[14677129257311656151,12230489160106290336]}
 {"t":1793899419807,"e":"PreToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064,"pm":"dontAsk"}
 {"t":1793899419851,"e":"PostToolUse","tool":"Bash","id":"toolu_01LAF42MMj8xbdWoS9sUuVH8","act":"$ python3 hello.py","sig":"Bash:python3 hello.py","h":12148803278934717064,"ok":true,"dur":30,"pm":"dontAsk"}
 {"t":1793899421296,"e":"PreToolUse","tool":"TaskUpdate","id":"toolu_01HFB4JwEfgMTRarcqVLCTTb","act":"updating plan","sig":"TaskUpdate","h":10330145707455771182,"pm":"dontAsk"}

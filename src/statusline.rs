@@ -37,9 +37,9 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
     let st = session_dir(&u)
         .map(|dir| {
             let root = paths::state_root();
-            if raw.is_object() && std::fs::create_dir_all(&dir).is_ok() {
+            let wrote = raw.is_object() && std::fs::create_dir_all(&dir).is_ok();
+            if wrote {
                 let _ = paths::write_atomic(&dir.join("usage.json"), input);
-                burn::record(&dir, &u, now);
                 if let Some(root) = &root {
                     burn::record_week(root, u.seven_d, now);
                 }
@@ -52,6 +52,14 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
                 x.week_eta = burn::week_projection(&burn::load_week(root, now), u.seven_d, now);
             }
             x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
+            if wrote {
+                let tok = x.tokens.as_ref().map(|t| t.total().total());
+                burn::record(&dir, &u, tok, now);
+            }
+            // Only STUCK reads samples here: for the tokens burned while stuck.
+            if st.verdict_with(cfg.thresholds.stuck_repeats) == state::Verdict::Stuck {
+                x.samples = burn::recent(&dir);
+            }
             x.transcript_age_ms =
                 tokens::transcript_for(&dir, &u).and_then(|t| tokens::transcript_age(&t, now));
             st

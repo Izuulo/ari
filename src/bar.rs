@@ -224,6 +224,12 @@ fn undated(name: &str) -> &str {
     if dated { &name[11..] } else { name }
 }
 
+/// Tokens spent since the session got stuck, when samples carry totals. Callers check the verdict is STUCK.
+pub fn stuck_tokens(st: &State, x: &Extras, repeats: u8) -> Option<u64> {
+    let s = st.stuck(repeats)?;
+    crate::burn::tokens_since(&x.samples, s.since).filter(|&n| n > 0)
+}
+
 pub fn render(
     st: &State,
     u: &Usage,
@@ -244,10 +250,15 @@ pub fn render(
             &format!("{} {} · tests failing", v.glyph(), v.label()),
         )
     } else if hooked {
+        let burned = Some(v)
+            .filter(|v| *v == Verdict::Stuck)
+            .and_then(|_| stuck_tokens(st, x, cfg.thresholds.stuck_repeats))
+            .map(|n| format!(" · {} tok", fmt_tokens(n)))
+            .unwrap_or_default();
         paint(
             color,
             verdict_color(v),
-            &format!("{} {}", v.glyph(), v.label()),
+            &format!("{} {}{burned}", v.glyph(), v.label()),
         )
     } else {
         // No hooks to judge by, but a growing transcript means Claude is working.
@@ -451,6 +462,34 @@ mod tests {
             ..Default::default()
         };
         (st, u)
+    }
+
+    fn tok_samples() -> Vec<crate::burn::Sample> {
+        [(10, 100), (20, 150), (30, 400)]
+            .iter()
+            .map(|&(t, tok)| crate::burn::Sample {
+                t,
+                tok: Some(tok),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stuck_shows_tokens_burned() {
+        let (mut st, u) = sample();
+        st.errors[0].retries = 3;
+        st.errors[0].first_t = 20;
+        st.recent.push_back((false, "Bash:cargo build".into()));
+        let cfg = &Config::default();
+        let x = Extras {
+            samples: tok_samples(),
+            ..Default::default()
+        };
+        let row = render(&st, &u, &x, cfg, NOW, 200, false);
+        assert!(row.starts_with("↻ STUCK · 250 tok │"), "{row}");
+        let row = render(&st, &u, &Extras::default(), cfg, NOW, 200, false);
+        assert!(row.starts_with("↻ STUCK │"), "{row}");
     }
 
     #[test]

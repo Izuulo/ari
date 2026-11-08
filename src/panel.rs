@@ -794,7 +794,10 @@ fn header(
     if v == Verdict::Stuck
         && let Some(why) = st.stuck_reason(repeats)
     {
-        rows.push(vec![c.span(format!("↻ {why}"), verdict_style(v))]);
+        let burned = crate::bar::stuck_tokens(st, x, repeats)
+            .map(|n| format!(" · {} tok while stuck", crate::bar::fmt_tokens(n)))
+            .unwrap_or_default();
+        rows.push(vec![c.span(format!("↻ {why}{burned}"), verdict_style(v))]);
     }
     if let Some(msg) = &st.needs_you {
         rows.push(vec![
@@ -2135,6 +2138,36 @@ mod tests {
         let out = render(&st, &u, View::default(), 50, 40);
         assert!(
             out.contains("↻ STUCK") && out.contains("↻ edit lib.rs failed 4× in a row"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn stuck_row_shows_tokens() {
+        let (mut st, _) = multi();
+        st.errors[1].retries = 3;
+        st.errors[1].first_t = 20;
+        st.recent.push_back((false, st.errors[1].sig.clone()));
+        let samples = [(10, 100), (20, 150), (30, 400)]
+            .iter()
+            .map(|&(t, tok)| crate::burn::Sample {
+                t,
+                tok: Some(tok),
+                ..Default::default()
+            })
+            .collect();
+        let x = Extras {
+            samples,
+            ..Default::default()
+        };
+        let out = render_x(&st, &x, 60, 40);
+        assert!(
+            out.contains("↻ edit lib.rs failed 4× in a row · 250 tok while stuck"),
+            "{out}"
+        );
+        let out = render_x(&st, &Extras::default(), 60, 40);
+        assert!(
+            out.contains("↻ edit lib.rs failed 4× in a row") && !out.contains("while stuck"),
             "{out}"
         );
     }

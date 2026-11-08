@@ -71,6 +71,9 @@ pub struct Event {
     /// Edit/Write/MultiEdit that succeeded: (lines in, lines out).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<(u32, u32)>,
+    /// Edit that succeeded: hashes of (old_string, new_string), to spot an edit that undoes another. Never the text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<(u64, u64)>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -217,6 +220,15 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
             ev.ok = Some(true);
             let resp = raw.get("tool_response").unwrap_or(&null);
             ev.lines = edit_lines(ev.tool.as_deref().unwrap_or(""), input);
+            if ev.tool.as_deref() == Some("Edit") {
+                let s = |k: &str| input.get(k).and_then(Value::as_str);
+                // Codex apply_patch has no strings; ("", "") would look like an undo of itself.
+                if let (Some(o), Some(n)) = (s("old_string"), s("new_string"))
+                    && o != n
+                {
+                    ev.edit = Some((fnv1a(o.as_bytes()), fnv1a(n.as_bytes())));
+                }
+            }
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
             // Codex sends a shell result as the output string itself.
@@ -772,6 +784,32 @@ mod tests {
             "tool_input": edit, "error": "x"}),
         );
         assert_eq!(fail.lines, None);
+    }
+
+    #[test]
+    fn edit_hashes_old_and_new() {
+        let input =
+            json!({"file_path": "/p/a", "old_string": "SECRET_OLD", "new_string": "SECRET_NEW"});
+        let ev = post("Edit", input.clone());
+        assert_eq!(ev.edit, Some((fnv1a(b"SECRET_OLD"), fnv1a(b"SECRET_NEW"))));
+        let line = to_line(&ev);
+        assert!(!line.contains("SECRET_OLD") && !line.contains("SECRET_NEW"));
+        let fail = n(
+            json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Edit",
+            "tool_input": input, "error": "x"}),
+        );
+        assert_eq!(fail.edit, None);
+        assert_eq!(
+            post("Write", json!({"file_path": "/p/a", "content": "x"})).edit,
+            None
+        );
+        let patch = n(
+            json!({"hook_event_name": "PostToolUse", "tool_name": "apply_patch",
+            "tool_input": {"command": "*** Begin Patch\n*** Update File: a.rs\n*** End Patch"}}),
+        );
+        assert_eq!(patch.edit, None);
+        let same = json!({"file_path": "/p/a", "old_string": "x", "new_string": "x"});
+        assert_eq!(post("Edit", same).edit, None);
     }
 
     #[test]

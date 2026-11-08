@@ -28,6 +28,9 @@ pub struct Sample {
     pub ctx: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost: Option<f64>,
+    /// The session's token total when sampled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tok: Option<u64>,
 }
 
 fn tail(path: &Path, bytes: u64) -> String {
@@ -49,7 +52,7 @@ fn parse(text: &str) -> Vec<Sample> {
 }
 
 /// Append a sample when anything moved, or every 30 s otherwise.
-pub fn record(dir: &Path, u: &Usage, now: u64) {
+pub fn record(dir: &Path, u: &Usage, tok: Option<u64>, now: u64) {
     if u.five_h.is_none() && u.ctx_pct.is_none() && u.cost_usd.is_none() {
         return;
     }
@@ -60,6 +63,7 @@ pub fn record(dir: &Path, u: &Usage, now: u64) {
         resets_at: l.resets_at,
         ctx: u.ctx_pct,
         cost: u.cost_usd,
+        tok,
     };
     let path = dir.join("limits.jsonl");
     if let Some(last) = parse(&tail(&path, 512)).last()
@@ -100,6 +104,19 @@ pub fn load(dir: &Path, now: u64) -> Vec<Sample> {
 /// The file's tail, unfiltered by time: enough for the last several turns.
 pub fn recent(dir: &Path) -> Vec<Sample> {
     parse(&tail(&dir.join("limits.jsonl"), 64 * 1024))
+}
+
+/// Tokens spent since `t`: the newest total minus the total at or before `t`
+/// (else the oldest known). `None` when no sample has a total.
+// shortcut: stuck longer than the sample tail (~64 KB) undercounts; keep a longer tail if that matters.
+pub fn tokens_since(samples: &[Sample], t: u64) -> Option<u64> {
+    let known = || samples.iter().filter_map(|s| Some((s.t, s.tok?)));
+    let newest = known().next_back()?.1;
+    let base = known()
+        .rfind(|&(st, _)| st <= t)
+        .or_else(|| known().next())?
+        .1;
+    Some(newest.saturating_sub(base))
 }
 
 /// Turns left before context reaches `at_pct`, from the median growth over the last turns.
@@ -314,7 +331,7 @@ mod tests {
             cost_usd: Some(1.5),
             ..Default::default()
         };
-        record(&dir, &u, NOW);
+        record(&dir, &u, None, NOW);
         let got = recent(&dir);
         assert_eq!(
             (got[0].ctx, got[0].cost),
@@ -378,17 +395,35 @@ mod tests {
             }),
             ..Default::default()
         };
-        record(&dir, &u(10.0), NOW);
-        record(&dir, &u(10.0), NOW + 1_000);
-        record(&dir, &u(11.0), NOW + 2_000);
-        record(&dir, &u(11.0), NOW + 40_000);
-        record(&dir, &Usage::default(), NOW + 50_000);
+        record(&dir, &u(10.0), Some(42), NOW);
+        record(&dir, &u(10.0), Some(42), NOW + 1_000);
+        record(&dir, &u(11.0), Some(42), NOW + 2_000);
+        record(&dir, &u(11.0), Some(42), NOW + 40_000);
+        record(&dir, &Usage::default(), Some(42), NOW + 50_000);
         let got = load(&dir, NOW + 60_000);
+        assert_eq!(got[0].tok, Some(42));
         assert_eq!(
             got.iter().map(|s| s.pct).collect::<Vec<_>>(),
             [10.0, 11.0, 11.0]
         );
         assert!(load(&dir, NOW + WINDOW_MS + 100_000).is_empty());
+    }
+
+    #[test]
+    fn tokens_since_uses_the_sample_before() {
+        let s: Vec<Sample> = [(10, 100), (20, 150), (30, 400)]
+            .iter()
+            .map(|&(t, tok)| Sample {
+                t,
+                tok: Some(tok),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(tokens_since(&s, 20), Some(250));
+        assert_eq!(tokens_since(&s, 25), Some(250));
+        assert_eq!(tokens_since(&s, 5), Some(300));
+        let bare = vec![Sample::default(); 3];
+        assert_eq!(tokens_since(&bare, 5), None);
     }
 
     fn series_h(start_pct: f64, per_hour: f64, hours: u64, resets_in_s: u64) -> Vec<Sample> {
