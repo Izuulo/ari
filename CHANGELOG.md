@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.12 - 2026-11-08
 
 - STUCK also fires when Claude edits one file 12 times without a passing test, or keeps undoing its own edit. STUCK shows the tokens spent since it began, in the statusline and the panel.
 - A subagent whose API call fails (for example after your login expires) now shows as ended instead of hanging around as a stale agent under the session in the hub, and no longer ends the main agent's turn. Existing sessions rebuild once so old phantoms clear.
