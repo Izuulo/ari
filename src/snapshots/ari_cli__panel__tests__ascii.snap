@@ -11,13 +11,13 @@ expression: text
 | +-| Explore grep refresh_token 3s - 14 calls . |
 | +-v tests   done 38s - 12 passed               |
 | +-? Plan    stale 6m - reading big.log         |
-+- errors ---------------------------------------+
-| x 5s   edit lib.rs - String to replace not fo. |
-| 1 fixed (e)                                    |
 +- usage ----------------------------------------+
 | ctx ##############------ 71%  142k/200k        |
 | 5h  ############-------- 62%  @ 1h40m          |
 +- session --------------------------------------+
 | cost    $2.69 - $0.67/task done                |
 | time    14m00s - claude 71%                    |
++- errors ---------------------------------------+
+| x 5s   edit lib.rs - String to replace not fo. |
+| 1 fixed (e)                                    |
 +------------------------------------------------+

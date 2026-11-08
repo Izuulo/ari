@@ -205,7 +205,7 @@ pub fn lines(
         color,
         inner: w.saturating_sub(4),
     };
-    // Wide panes split into two columns (not the recap view): agents/errors | usage/session/turns.
+    // Wide panes split into two columns (not the recap view): agents/turns | usage/session/errors/git.
     let two = w >= 120 && !(view.recap && x.recap.is_some());
     let col = |inner| Ctx { color, inner };
     let (lc, rc) = if two {
@@ -256,8 +256,8 @@ pub fn lines(
             rows: agents(st, x, &lc, view, now),
         },
         Section {
-            title: Some("errors"),
-            rows: errors(st, &lc, view, now),
+            title: Some("turns"),
+            rows: turns(st, x, &lc, now),
         },
         Section {
             title: Some("usage"),
@@ -268,8 +268,8 @@ pub fn lines(
             rows: session(st, u, x, cfg, &rc, now),
         },
         Section {
-            title: Some("turns"),
-            rows: turns(st, x, &rc, now),
+            title: Some("errors"),
+            rows: errors(st, &rc, view, now),
         },
         Section {
             title: Some("git"),
@@ -292,11 +292,15 @@ pub fn lines(
         sections.extend(recap_sections(r, &c, false));
     }
     let cols = if two {
-        let mut right = sections.split_off(3);
-        let mut left = sections.split_off(1);
+        let (mut left, mut right): (Vec<_>, Vec<_>) = sections
+            .split_off(1)
+            .into_iter()
+            .partition(|s| matches!(s.title, Some("agents" | "turns")));
         // Each column gets the height left under the full-width header rows.
         let h = (height as usize).saturating_sub(sections[0].rows.len());
         collapse(&mut left, h);
+        // Errors get little room on the right: trim them before git/session/usage go.
+        trim(&mut right, "errors", h);
         collapse(&mut right, h);
         Some((left, right))
     } else {
@@ -622,12 +626,7 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
 
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
 fn collapse(secs: &mut Vec<Section>, height: usize) {
-    let total = |s: &[Section]| {
-        2 + s
-            .iter()
-            .map(|x| x.rows.len() + x.title.is_some() as usize)
-            .sum::<usize>()
-    };
+    let total = panel_height;
     while total(secs) > height {
         let Some(s) = secs.iter_mut().find(|s| s.title == Some("turns")) else {
             break;
@@ -643,16 +642,28 @@ fn collapse(secs: &mut Vec<Section>, height: usize) {
         }
     }
     for title in ["errors", "agents"] {
-        while total(secs) > height {
-            let Some(s) = secs
-                .iter_mut()
-                .find(|s| s.title == Some(title) && s.rows.len() > 1)
-            else {
-                break;
-            };
-            s.rows.pop();
-        }
+        trim(secs, title, height);
     }
+}
+
+/// Pop rows off section `title`, keeping at least one, until the panel fits `height`.
+fn trim(secs: &mut [Section], title: &str, height: usize) {
+    while panel_height(secs) > height {
+        let Some(s) = secs
+            .iter_mut()
+            .find(|s| s.title == Some(title) && s.rows.len() > 1)
+        else {
+            break;
+        };
+        s.rows.pop();
+    }
+}
+
+fn panel_height(s: &[Section]) -> usize {
+    2 + s
+        .iter()
+        .map(|x| x.rows.len() + x.title.is_some() as usize)
+        .sum::<usize>()
 }
 
 /// Cost between two times from the sampled cumulative cost; never negative.

@@ -7,9 +7,9 @@ expression: out
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
 │ └─✓ default done 1s · Listed the files.              │
-├─ errors ─────────────────────────────────────────────┤
-│ ✗ 10s  cargo test · test result: FAILED. 3 passed; … │
 ├─ session ────────────────────────────────────────────┤
 │ tests   ✗ 1/4                                        │
 │ time    18s · model 100%                             │
+├─ errors ─────────────────────────────────────────────┤
+│ ✗ 10s  cargo test · test result: FAILED. 3 passed; … │
 ╰──────────────────────────────────────────────────────╯
