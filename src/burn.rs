@@ -1,6 +1,6 @@
 //! 5-hour rate-limit burn rate: sample `used_percentage`, fit a line, warn before the limit.
 
-use crate::usage::Usage;
+use crate::usage::{Limit, Usage};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -10,6 +10,12 @@ const MIN_SPAN_MS: u64 = 2 * 60_000;
 const MIN_GAP_MS: u64 = 30_000;
 const MAX_BYTES: u64 = 1 << 20;
 const KEEP_MS: u64 = 2 * 3_600_000;
+const WEEK_WINDOW_MS: u64 = 6 * 3_600_000;
+const WEEK_MIN_SPAN_MS: u64 = 3_600_000;
+const WEEK_GAP_MS: u64 = 10 * 60_000;
+const WEEK_KEEP_MS: u64 = 24 * 3_600_000;
+const WEEK_MAX_BYTES: u64 = 256 * 1024;
+const WEEK_FILE: &str = "week.jsonl";
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
 #[serde(default)]
@@ -134,14 +140,76 @@ pub fn forecast(dir: &Path, st: &crate::state::State, cfg: &crate::config::Confi
     )
 }
 
+/// Append the 7-day sample unless it repeats the last one within 10 minutes.
+pub fn record_week(root: &Path, l: Option<Limit>, now: u64) {
+    let Some(l) = l else { return };
+    let s = Sample {
+        t: now,
+        pct: l.pct,
+        resets_at: l.resets_at,
+        ..Default::default()
+    };
+    let path = root.join(WEEK_FILE);
+    if let Some(last) = parse(&tail(&path, 512)).last()
+        && (Sample { t: now, ..*last }) == s
+        && now.saturating_sub(last.t) < WEEK_GAP_MS
+    {
+        return;
+    }
+    let Ok(line) = serde_json::to_string(&s) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = f.write_all(format!("{line}\n").as_bytes());
+    }
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > WEEK_MAX_BYTES) {
+        let keep: String = parse(&std::fs::read_to_string(&path).unwrap_or_default())
+            .into_iter()
+            .filter(|s| now.saturating_sub(s.t) < WEEK_KEEP_MS)
+            .filter_map(|s| serde_json::to_string(&s).ok())
+            .map(|l| l + "\n")
+            .collect();
+        let _ = crate::paths::write_atomic(&path, keep.as_bytes());
+    }
+}
+
+/// 7-day samples from the last 6 hours, oldest first.
+pub fn load_week(root: &Path, now: u64) -> Vec<Sample> {
+    let mut v: Vec<Sample> = parse(&tail(&root.join(WEEK_FILE), 64 * 1024))
+        .into_iter()
+        .filter(|s| now.saturating_sub(s.t) <= WEEK_WINDOW_MS)
+        .collect();
+    v.sort_by_key(|s| s.t);
+    v
+}
+
 /// Milliseconds until the 5h limit hits 100% at the current pace, only if that's before it resets.
 pub fn projection(samples: &[Sample], now: u64) -> Option<u64> {
-    let last = samples.last()?;
-    let window: Vec<&Sample> = samples
+    eta(samples, now, WINDOW_MS, MIN_SPAN_MS)
+}
+
+/// `projection` for the 7-day limit: a 6 h fit that needs an hour of samples.
+pub fn week_projection(samples: &[Sample], now: u64) -> Option<u64> {
+    eta(samples, now, WEEK_WINDOW_MS, WEEK_MIN_SPAN_MS)
+}
+
+fn eta(samples: &[Sample], now: u64, window_ms: u64, min_span_ms: u64) -> Option<u64> {
+    let resets_at = samples.last()?.resets_at;
+    let mut window: Vec<&Sample> = samples
         .iter()
-        .filter(|s| s.resets_at == last.resets_at && now.saturating_sub(s.t) <= WINDOW_MS)
+        .filter(|s| s.resets_at == resets_at && now.saturating_sub(s.t) <= window_ms)
         .collect();
-    if window.len() < 3 || last.resets_at == 0 || last.t - window[0].t < MIN_SPAN_MS {
+    // Two statuslines can append out of order.
+    window.sort_by_key(|s| s.t);
+    if window.len() < 3 || resets_at == 0 {
+        return None;
+    }
+    let last = window[window.len() - 1];
+    if last.t.saturating_sub(window[0].t) < min_span_ms {
         return None;
     }
     // Least squares, x in minutes since the first sample.
@@ -165,8 +233,8 @@ pub fn projection(samples: &[Sample], now: u64) -> Option<u64> {
     if slope.is_nan() || slope <= 0.0 || last.pct >= 100.0 {
         return None;
     }
-    let eta = ((100.0 - last.pct) / slope * 60_000.0) as u64;
-    (now + eta < last.resets_at * 1000).then_some(eta)
+    let ms = ((100.0 - last.pct) / slope * 60_000.0) as u64;
+    (now + ms < last.resets_at * 1000).then_some(ms)
 }
 
 #[cfg(test)]
@@ -314,5 +382,102 @@ mod tests {
             [10.0, 11.0, 11.0]
         );
         assert!(load(&dir, NOW + WINDOW_MS + 100_000).is_empty());
+    }
+
+    fn series_h(start_pct: f64, per_hour: f64, hours: u64, resets_in_s: u64) -> Vec<Sample> {
+        let n = hours * 6;
+        (0..=n)
+            .map(|i| Sample {
+                t: NOW - (n - i) * 600_000,
+                pct: start_pct + per_hour * i as f64 / 6.0,
+                resets_at: NOW / 1000 + resets_in_s,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn week_pace_warns_before_reset() {
+        // 40% -> 46% over 3 h at 2%/h: 54% left = 27 h.
+        let eta = week_projection(&series_h(40.0, 2.0, 3, 3 * 86400), NOW).unwrap();
+        assert!((eta as i64 - 27 * 3_600_000).abs() < 60_000, "{eta}");
+        assert_eq!(
+            week_projection(&series_h(40.0, 2.0, 3, 20 * 3600), NOW),
+            None,
+            "resets first"
+        );
+    }
+
+    #[test]
+    fn week_needs_an_hour_of_samples() {
+        let short: Vec<Sample> = series(40.0, 0.1, 50, 86400);
+        assert_eq!(week_projection(&short, NOW), None);
+        assert_eq!(
+            week_projection(&series_h(40.0, 2.0, 3, 86400), NOW + 7 * 3_600_000),
+            None,
+            "too old"
+        );
+    }
+
+    #[test]
+    fn week_ignores_previous_window() {
+        let mut s = series_h(90.0, 2.0, 2, 10);
+        s.extend(
+            series_h(2.0, 0.0, 1, 5 * 86400)
+                .into_iter()
+                .map(|x| Sample { t: x.t + 1, ..x }),
+        );
+        assert_eq!(week_projection(&s, NOW + 1), None);
+    }
+
+    #[test]
+    fn week_fit_survives_out_of_order_lines() {
+        let sorted = series_h(40.0, 2.0, 3, 3 * 86400);
+        let mut swapped = sorted.clone();
+        swapped.swap(5, 6);
+        swapped.swap(0, 1);
+        assert_eq!(
+            week_projection(&swapped, NOW),
+            week_projection(&sorted, NOW)
+        );
+        assert!(week_projection(&swapped, NOW).is_some());
+        // The newest line landing earlier in the file must not panic either.
+        let mut tail_first = sorted.clone();
+        tail_first.rotate_right(1);
+        assert!(week_projection(&tail_first, NOW).is_some());
+    }
+
+    #[test]
+    fn record_week_dedupes_and_loads() {
+        let dir = std::env::temp_dir().join(format!("ari-burn-week-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let l = |pct| {
+            Some(Limit {
+                pct,
+                resets_at: NOW / 1000 + 86400,
+            })
+        };
+        record_week(&dir, l(10.0), NOW);
+        record_week(&dir, l(10.0), NOW + 60_000);
+        assert_eq!(load_week(&dir, NOW + 60_000).len(), 1);
+        record_week(&dir, l(10.0), NOW + WEEK_GAP_MS);
+        assert_eq!(load_week(&dir, NOW + WEEK_GAP_MS).len(), 2);
+        record_week(&dir, l(11.0), NOW + WEEK_GAP_MS + 1_000);
+        assert_eq!(load_week(&dir, NOW + WEEK_GAP_MS + 1_000).len(), 3);
+        assert_eq!(
+            load_week(&dir, NOW + WEEK_WINDOW_MS + 1).len(),
+            2,
+            "first dropped"
+        );
+    }
+
+    #[test]
+    fn record_week_skips_missing_limit() {
+        let dir = std::env::temp_dir().join(format!("ari-burn-weeknone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        record_week(&dir, None, NOW);
+        assert!(!dir.join(WEEK_FILE).exists());
     }
 }
