@@ -246,22 +246,52 @@ pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, v: &super
         faint(),
     );
 
-    let rx = left.right();
-    let rw = area.right() - rx;
-    let ch = 14.min(area.height / 3);
-    context(buf, Rect::new(rx, area.y, rw, ch), i, a);
-    let mh = (area.height - ch) * 2 / 5;
-    let mr = Rect::new(rx, area.y + ch, rw, mh);
-    if v.git {
-        super::feed::git(buf, mr, i, super::repo(i, a).map(|r| r.0));
-    } else {
-        messages(buf, mr, i, a);
+    side(
+        buf,
+        Rect::new(
+            left.right(),
+            area.y,
+            area.right() - left.right(),
+            area.height,
+        ),
+        i,
+        a,
+        v,
+    );
+}
+
+/// The zoom's right column, also the preview beside a wide hub tile: context, messages
+/// (git with `b`), files, tasks & errors. Short and wide, it lays them out 2×2 instead.
+pub(crate) fn side(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, v: &super::HubView) {
+    let msgs = |buf: &mut Buffer, mr: Rect| {
+        if v.git {
+            super::feed::git(buf, mr, i, super::repo(i, a).map(|r| r.0));
+        } else {
+            messages(buf, mr, i, a);
+        }
+    };
+    if r.height < 24 && r.width >= 80 {
+        let (hw, hh) = (r.width / 2, r.height / 2);
+        context(buf, Rect::new(r.x, r.y, hw, hh), i, a);
+        msgs(buf, Rect::new(r.x + hw, r.y, r.width - hw, hh));
+        files(buf, Rect::new(r.x, r.y + hh, hw, r.height - hh), i, a);
+        tasks(
+            buf,
+            Rect::new(r.x + hw, r.y + hh, r.width - hw, r.height - hh),
+            i,
+            a,
+        );
+        return;
     }
-    let fh = (area.height - ch - mh) / 2;
-    files(buf, Rect::new(rx, area.y + ch + mh, rw, fh), i, a);
+    let ch = 14.min(r.height / 3);
+    context(buf, Rect::new(r.x, r.y, r.width, ch), i, a);
+    let mh = (r.height - ch) * 2 / 5;
+    msgs(buf, Rect::new(r.x, r.y + ch, r.width, mh));
+    let fh = (r.height - ch - mh) / 2;
+    files(buf, Rect::new(r.x, r.y + ch + mh, r.width, fh), i, a);
     tasks(
         buf,
-        Rect::new(rx, area.y + ch + mh + fh, rw, area.height - ch - mh - fh),
+        Rect::new(r.x, r.y + ch + mh + fh, r.width, r.height - ch - mh - fh),
         i,
         a,
     );
