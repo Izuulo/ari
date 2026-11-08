@@ -41,4 +41,4 @@ expression: to_plain(&out)
    auto-clear done agents    off                │
  ALERTS                                         │
    bell                      off                │
- ↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file
+ ↑↓ move · ←→ change · d default · esc back · chain, prices, ntfy: edit the file

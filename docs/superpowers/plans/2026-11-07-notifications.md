@@ -149,15 +149,15 @@
     - else pass with detail the channels joined by ` + `: `desktop`, `ntfy <host>` (host only: the topic in the path works like a password).
   - `checks()` pushes `notify_status(&loaded_cfg.notify, std::env::consts::OS, |b| setup::which(b).is_some())`.
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - `settings.rs` `items_cover_every_role_and_feature`: length 44; every `NOTIFY_ON` id has a `notify_on.<id>` row in `ALERTS`. Groups order unchanged.
   - `settings.rs` `notify_rows`: default → `notify.desktop` `on`, `notify_on.needs_you` `on`, `notify_on.idle` `off`; step `notify_on.needs_you` twice → `cfg.notify.on` equals the default list in the same order; `reset` after a change → `Config::default()`.
   - `every_item_has_a_value_and_steps_back` and `reset_restores_default` pass unchanged for the new rows.
   - `doctor.rs` `notify_check_reports`: the five cases above, incl. `ntfy = "https://ntfy.sh/secret-topic"` → detail `desktop + ntfy ntfy.sh` and does not contain `secret-topic`.
-- [ ] **Step 2: Run** `cargo test settings:: doctor::` — FAIL.
-- [ ] **Step 3: Implement** the rows, value/step/reset cases, `KEYS`, `notify_status` and its call.
-- [ ] **Step 4: Run** `INSTA_UPDATE=always cargo test settings::`, review the `settings_screen_snapshot` diff (new rows and the key hint only), then `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): notification settings and doctor check`.
+- [x] **Step 2: Run** `cargo test settings:: doctor::` — FAIL.
+- [x] **Step 3: Implement** the rows, value/step/reset cases, `KEYS`, `notify_status` and its call.
+- [x] **Step 4: Run** `INSTA_UPDATE=always cargo test settings::`, review the `settings_screen_snapshot` diff (new rows and the key hint only), then `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(notify): notification settings and doctor check`.
 
 ---
 

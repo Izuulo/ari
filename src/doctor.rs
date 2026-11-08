@@ -422,6 +422,40 @@ fn config_status(exists: bool, loaded: Result<config::Config, String>) -> Check 
     }
 }
 
+/// Notifications: which channels are on and whether their tools exist.
+fn notify_status(n: &config::Notify, os: &str, found: impl Fn(&str) -> bool) -> Check {
+    let ntfy = config::ntfy_ok(&n.ntfy);
+    if !n.desktop && !ntfy {
+        return info("notify", "off");
+    }
+    if n.desktop && os == "linux" && !found("notify-send") {
+        return problem(
+            "notify",
+            "notify-send not found",
+            "install libnotify (apt install libnotify-bin), or set notify.desktop = false",
+        );
+    }
+    if ntfy && !found("curl") {
+        return problem(
+            "notify",
+            "curl not found (needed for ntfy)",
+            "install curl, or clear notify.ntfy",
+        );
+    }
+    let mut ch = Vec::new();
+    if n.desktop {
+        ch.push("desktop".to_string());
+    }
+    if ntfy {
+        // Host only: the topic in the path works like a password.
+        let rest = n.ntfy.split_once("://").map_or(&*n.ntfy, |x| x.1);
+        let auth = rest.split('/').next().unwrap_or("");
+        let host = auth.rsplit('@').next().unwrap_or("");
+        ch.push(format!("ntfy {}", host.split(':').next().unwrap_or("")));
+    }
+    pass("notify", ch.join(" + "))
+}
+
 pub fn checks(now_ms: u64) -> Vec<Check> {
     let apps = setup::found();
     let mut out = vec![binary()];
@@ -444,7 +478,11 @@ pub fn checks(now_ms: u64) -> Vec<Check> {
     let exists = config::path().is_some_and(|p| p.exists());
     let loaded = config::load_checked();
     out.push(config_status(exists, loaded.clone()));
-    out.extend(chain_checks(&loaded.unwrap_or_default()));
+    let loaded = loaded.unwrap_or_default();
+    out.push(notify_status(&loaded.notify, std::env::consts::OS, |b| {
+        setup::which(b).is_some()
+    }));
+    out.extend(chain_checks(&loaded));
     out.push(hooks(now_ms, &apps));
     out.push(hook_failures(now_ms));
     out
@@ -510,6 +548,37 @@ mod tests {
             c.detail,
             "unknown theme \"neon\"; hide: unknown segment \"nope\""
         );
+    }
+
+    #[test]
+    fn notify_check_reports() {
+        let all = |_: &str| true;
+        let mut n = config::Notify {
+            desktop: false,
+            ..config::Notify::default()
+        };
+        let c = notify_status(&n, "macos", all);
+        assert!(c.info && c.detail == "off");
+        n.desktop = true;
+        let c = notify_status(&n, "linux", |b| b != "notify-send");
+        assert!(!c.ok && c.detail == "notify-send not found");
+        assert_eq!(
+            c.fix.as_deref(),
+            Some("install libnotify (apt install libnotify-bin), or set notify.desktop = false")
+        );
+        n.ntfy = "https://ntfy.sh/secret-topic".into();
+        let c = notify_status(&n, "macos", |b| b != "curl");
+        assert!(!c.ok && c.detail == "curl not found (needed for ntfy)");
+        assert_eq!(c.fix.as_deref(), Some("install curl, or clear notify.ntfy"));
+        let c = notify_status(&n, "macos", all);
+        assert!(c.ok && c.detail == "desktop + ntfy ntfy.sh");
+        n.ntfy = "https://u:p@ntfy.example.com:8080/secret-topic".into();
+        assert_eq!(
+            notify_status(&n, "macos", all).detail,
+            "desktop + ntfy ntfy.example.com"
+        );
+        n.ntfy = "nonsense".into();
+        assert_eq!(notify_status(&n, "macos", all).detail, "desktop");
     }
 
     const DYLD: &str =
