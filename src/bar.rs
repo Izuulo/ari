@@ -268,6 +268,9 @@ pub fn render(
             paint(color, "2", "– not tracked")
         }
     }];
+    if let Some(r) = st.redoing() {
+        segs.push(paint(color, "33", &format!("⟲ redo ×{}", r.n)));
+    }
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
     if shown("conflicts")
@@ -490,6 +493,27 @@ mod tests {
         assert!(row.starts_with("↻ STUCK · 250 tok │"), "{row}");
         let row = render(&st, &u, &Extras::default(), cfg, NOW, 200, false);
         assert!(row.starts_with("↻ STUCK │"), "{row}");
+    }
+
+    #[test]
+    fn redo_segment() {
+        let (mut st, u) = sample();
+        let cfg = &Config::default();
+        let x = &Extras::default();
+        st.redo = Some(crate::state::Redo {
+            since: 1,
+            n: 3,
+            last: "editing a.rs".into(),
+        });
+        let v = st.verdict();
+        let row = render(&st, &u, x, cfg, NOW, 200, false);
+        let head = format!("{} {} │ ⟲ redo ×3 │", v.glyph(), v.label());
+        assert!(row.starts_with(&head), "{row}");
+        let row = render(&st, &u, x, cfg, NOW, 200, true);
+        assert!(row.contains("\x1b[33m⟲ redo ×3"), "{row}");
+        st.redo.as_mut().unwrap().n = 2;
+        let row = render(&st, &u, x, cfg, NOW, 200, false);
+        assert!(!row.contains('⟲'), "{row}");
     }
 
     #[test]

@@ -799,6 +799,12 @@ fn header(
             .unwrap_or_default();
         rows.push(vec![c.span(format!("↻ {why}{burned}"), verdict_style(v))]);
     }
+    if let Some(r) = st.redoing() {
+        rows.push(vec![c.span(
+            format!("⟲ redoing work since compaction · {}× · {}", r.n, r.last),
+            Style::new().fg(Color::Yellow),
+        )]);
+    }
     if let Some(msg) = &st.needs_you {
         rows.push(vec![
             c.span(format!("◉ {msg}"), verdict_style(Verdict::NeedsYou)),
@@ -2170,6 +2176,33 @@ mod tests {
             out.contains("↻ edit lib.rs failed 4× in a row") && !out.contains("while stuck"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn redo_row_in_header() {
+        let (mut st, _) = multi();
+        st.redo = Some(crate::state::Redo {
+            since: 1,
+            n: 3,
+            last: "editing a.rs".into(),
+        });
+        let out = render_x(&st, &Extras::default(), 80, 40);
+        assert!(
+            out.contains("⟲ redoing work since compaction · 3× · editing a.rs"),
+            "{out}"
+        );
+        let c = Ctx {
+            color: true,
+            inner: 80,
+        };
+        let v = st.verdict();
+        let rows = header(&st, &Extras::default(), None, &c, v, &Config::default());
+        let span = rows
+            .iter()
+            .flatten()
+            .find(|s| s.content.starts_with('⟲'))
+            .unwrap();
+        assert_eq!(span.style.fg, Some(Color::Yellow));
     }
 
     #[test]
