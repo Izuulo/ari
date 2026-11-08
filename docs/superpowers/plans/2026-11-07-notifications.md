@@ -78,17 +78,17 @@
   - `pub fn spawn_all(cmds: &[Vec<String>])`: each via `std::process::Command` with null stdin/stdout/stderr and `std::os::unix::process::CommandExt::process_group(0)`; `spawn()` errors ignored; never waits.
   - `pub fn send(note: &Note, n: &Notify)`: `spawn_all(&commands(note, n, std::env::consts::OS))`.
 
-- [ ] **Step 1: Write the failing tests** in `notify.rs`:
+- [x] **Step 1: Write the failing tests** in `notify.rs`:
   - `macos_and_linux_commands`: for `Note { title: "ARI: proj", body: "◉ NEEDS YOU · Bash" }` with defaults: `commands(.., "macos")` is exactly the osascript argv above with the title and body as its last two elements; `"linux"` gives the notify-send argv; `"windows"` gives `[]`; `desktop = false` gives `[]`.
   - `ntfy_only_when_set_and_valid`: `ntfy = "https://ntfy.sh/t"` adds a curl argv ending `["--", "https://ntfy.sh/t"]` with `"Title: ARI: proj"`; `ntfy = "ftp://x"` or `"-K /etc/passwd"` adds nothing.
   - `hostile_text_stays_one_argv_element`: body `"\"; do shell script \"rm -rf ~\" --\n@/etc/passwd $(id)"` → appears as exactly one argv element in each command (newline turned into a space), and the three `-e` script lines are the constant ones.
   - `long_text_is_cut`: a 500-char body → `chars().count() <= NOTE_MAX_CHARS`.
   - `title_from_cwd`: a temp session dir with `meta.json` `{"cwd":"/x/tankobon"}` → `ARI: tankobon`; no meta → `ARI`.
   - `spawn_ignores_missing_binary`: `spawn_all(&[vec!["/nonexistent/ari-notify".into()]])` returns without panic.
-- [ ] **Step 2: Run** `cargo test notify::` — FAIL.
-- [ ] **Step 3: Implement** `src/notify.rs` as above.
-- [ ] **Step 4: Run** `cargo test notify::` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): desktop and ntfy notifier, spawned detached`.
+- [x] **Step 2: Run** `cargo test notify::` — FAIL.
+- [x] **Step 3: Implement** `src/notify.rs` as above.
+- [x] **Step 4: Run** `cargo test notify::` — PASS.
+- [x] **Step 5: Commit** `feat(notify): desktop and ntfy notifier, spawned detached`.
 
 ---
 
