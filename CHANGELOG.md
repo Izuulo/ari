@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Notifications.** A desktop notification (`ARI: <repo>` with the verdict and reason) fires once when a session flips to NEEDS YOU, STUCK, BLOCKED or DONE, from the hooks, so no `ari watch` is needed. `[notify]` keys: `desktop` (default true), `on` (verdicts to notify on; also `idle`) and `ntfy` (optional URL such as `https://ntfy.sh/your-topic` that also gets the text; off by default, the only thing ARI sends off your machine). Turn off with `desktop = false` or in settings. A session already DONE or BLOCKED when you upgrade may notify once.
 - Hub agent windows and `ari hub --all` session cards get a plan row above the context bar, as in the watch: progress bar, done/total and the task in progress. Main and each session show their session's task list (or a checkbox plan file it wrote); a subagent shows the tasks it owns. Hidden when there's no plan.
 - Hub tiles: when fewer agents are showing than the row has room for, they share the whole row, and each wide one previews its zoom view beside it (context window and what filled it, messages or git with `b`, files, tasks and errors).
 - `b` works in `ari hub --all` too: the git pane shows a row per session (branch, changed files, newest PR or commit), and each agent's uncommitted edits are checked against its own session's repo. Each live session's repo refreshes in the background every 30 s.

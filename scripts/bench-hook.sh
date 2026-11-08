@@ -11,7 +11,7 @@ bin, state, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 payload = json.dumps({"session_id": "bench", "hook_event_name": "PostToolUse", "cwd": "/p",
     "tool_name": "Edit", "tool_input": {"file_path": "/p/src/main.rs", "old_string": "a" * 2000, "new_string": "b" * 2000},
     "tool_response": {"filePath": "/p/src/main.rs"}, "tool_use_id": "toolu_bench"}).encode()
-env = dict(os.environ, XDG_STATE_HOME=state)
+env = dict(os.environ, XDG_STATE_HOME=state, XDG_CONFIG_HOME=state)
 times = []
 for _ in range(n):
     t = time.perf_counter()

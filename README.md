@@ -46,6 +46,8 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 
 <p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: STUCK because python3 test_calc.py failed 3 times in a row, 1 of 4 tasks, the AssertionError under errors, usage bars, and session cost and tokens" width="620"></p>
 
+**Notifications** when a session needs you: one desktop notification (and, if you set `notify.ntfy`, one push) each time a session flips to NEEDS YOU, STUCK, BLOCKED or DONE. They fire once per flip, from the hooks, so they work with no `ari watch` open. On macOS you may be asked once to allow notifications from Script Editor. Turn them off with `desktop = false` in `[notify]` or in settings.
+
 Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). `--ascii` for terminals without Unicode.
 
 ### Every agent at once: the hub
@@ -129,6 +131,7 @@ ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ar
 | **Per-agent view** | What each subagent is doing right now, its tool calls and token spend |
 | **The hub** | Who spawned whom, who messages whom, and each agent's own context window, full screen |
 | **Permission waits** | Which agent is waiting on you, for what call and how long; ARI never answers for you |
+| **Notifications** | A desktop notification (or ntfy push) once when a session needs you, gets stuck, blocks or finishes |
 | **Cache savings** | Hit rate, roughly what caching saved, and an alert when the cache suddenly stops hitting |
 | **Rate-limit foresight** | Warns when you'll hit the 5-hour limit before it resets |
 | **Plays nice** | Chains your existing statusline instead of replacing it; `ari uninstall` restores it byte for byte |
@@ -168,6 +171,11 @@ auto_clear = false          # hide subagents in ari watch as soon as they finish
 ascii = false               # ASCII-only glyphs everywhere
 max_width = 0               # compact row width; 0 = terminal width
 retention_days = 7          # session logs older than this are deleted (at least 1)
+
+[notify]
+desktop = true              # a desktop notification when a session flips
+on = ["needs_you", "stuck", "blocked", "done"]   # also: idle
+ntfy = ""                   # optional, e.g. "https://ntfy.sh/your-topic"; the only thing ARI ever sends off your machine
 
 [chain]
 commands = []               # your previous statusline commands (ari setup fills this)
@@ -209,7 +217,7 @@ Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR
 
 **Will it break my statusline?** No. Your command runs with the same input and its output is printed untouched. If it fails or takes longer than 300 ms, only it is skipped. `ari uninstall` puts your settings back exactly.
 
-**Where does my data go?** Nowhere. Everything stays in `~/.local/state/ari/` and is pruned after 7 days. No network, no telemetry.
+**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. No telemetry.
 
 **Windows?** Not yet; planned for 1.1.
 
