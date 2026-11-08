@@ -127,6 +127,13 @@ fn notes(i: &Input) -> Vec<(String, Option<String>, Style)> {
     if let Some(c) = crate::conflicts::summary(&i.x.conflicts) {
         out.push((c, None, warn()));
     }
+    if let Some(r) = i.st.redoing() {
+        out.push((
+            format!("⟲ main is redoing work since compaction ({}×)", r.n),
+            None,
+            warn(),
+        ));
+    }
     if let Some(n) = i.x.compacts_in {
         out.push((format!("main compacts in ~{n} turns"), None, warn()));
     }
@@ -971,6 +978,22 @@ mod tests {
         for l in render(&st, &HubView::default(), 168, 49) {
             assert_eq!(l.width(), 168, "{l}");
         }
+    }
+
+    #[test]
+    fn notes_warn_on_redo() {
+        let mut st = with_main(vec![kid("a1", "main", 1)]);
+        st.redo = Some(crate::state::Redo {
+            since: 1,
+            n: 3,
+            last: "editing a.rs".into(),
+            ..Default::default()
+        });
+        let out = draw_with(&st, 68, 12, |b, r, i| table(b, r, i, 0));
+        assert!(
+            out.contains("⟲ main is redoing work since compaction (3×)"),
+            "{out}"
+        );
     }
 
     #[test]

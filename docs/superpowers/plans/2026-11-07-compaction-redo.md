@@ -46,17 +46,17 @@
   - On a real (non-synthetic) `UserPromptSubmit`, before pushing to `prompts`: if `prompts.back()` is later than `redo.since`, set `redo = None`.
   - `pub fn redoing(&self) -> Option<&Redo>`: `redo` when `n >= REDO_MIN`.
 
-- [ ] **Step 1: Write the failing tests** in `state.rs` tests, with a helper `post(t: u64, agent: Option<&str>, tool: &str, sig: &str, h: u64, ok: bool) -> Event` (`PostToolUse` or `PostToolUseFailure` by `ok`; `act = "$ {sig}"` as in the existing `tool` helper):
+- [x] **Step 1: Write the failing tests** in `state.rs` tests, with a helper `post(t: u64, agent: Option<&str>, tool: &str, sig: &str, h: u64, ok: bool) -> Event` (`PostToolUse` or `PostToolUseFailure` by `ok`; `act = "$ {sig}"` as in the existing `tool` helper):
   - `redo_after_compaction_counts_repeats`: `prompt` (t = 1 000); successful `Edit` h=1, `Bash:npm install` h=2, `Bash:cargo build` h=3 at t = 1 001..=1 003; `PreCompact` at t = 1 050; the same three at t = 1 051..=1 053 → `redoing().map(|r| (r.n, r.last.as_str())) == Some((3, "$ Bash:cargo build"))`; `verdict() == OnTrack`. With two repeats → `redoing() == None`.
   - `redo_ignores_tests_reads_subagents_and_new_work`: before and after the compaction, the same `Bash:cargo test` with `tests: Some((5, 0))`, `Bash:git status`, `Read`, a repeat by agent `a1`, and a new hash → `redo.unwrap().n == 0`.
   - `failed_redo_attempt_counts`: successful `Edit` h=1; compaction; `PostToolUseFailure` `Edit` h=1 → `n == 1`.
   - `pre_compaction_failure_is_not_work`: failing `Bash` h=5; compaction; the same succeeds → `n == 0`.
   - `redo_window_closes_and_restarts`: compaction mid-turn → next real prompt keeps `redo`, the one after clears it; a second compaction resets `n` to 0 with the new `since`; `PostCompact` with no `PreCompact` opens a window too; a `<task-notification>` prompt never closes it.
   - Every event in these tests gets its own increasing `t`. The `ev` helper defaults to 1 000, and the window compares times.
-- [ ] **Step 2: Run** `cargo test state::` — FAIL.
-- [ ] **Step 3: Implement** and bump `CACHE_VERSION`.
-- [ ] **Step 4: Run** `cargo test` — PASS (`turn_log_and_compactions` unchanged).
-- [ ] **Step 5: Commit** `feat(state): count work redone after a compaction`.
+- [x] **Step 2: Run** `cargo test state::` — FAIL.
+- [x] **Step 3: Implement** and bump `CACHE_VERSION`.
+- [x] **Step 4: Run** `cargo test` — PASS (`turn_log_and_compactions` unchanged).
+- [x] **Step 5: Commit** `feat(state): count work redone after a compaction`.
 
 ---
 
@@ -68,14 +68,14 @@
 **Interfaces:**
 - Consumes: `State::redoing() -> Option<&Redo>` (Task 1).
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `bar.rs` `redo_segment`: a state with `redo = Some(Redo { since: 1, n: 3, last: "editing a.rs".into() })` → row contains `│ ⟲ redo ×3 │` directly after the verdict segment, in SGR `33` when colour is on; `n: 2` → no `⟲`.
   - `panel.rs` `redo_row_in_header`: `render` with that state → contains `⟲ redoing work since compaction · 3× · editing a.rs`, in yellow.
   - `hub/agents.rs` `notes_warn_on_redo`: `draw_with` the table → contains `⟲ main is redoing work since compaction (3×)`.
-- [ ] **Step 2: Run** `cargo test bar:: panel:: hub::` — FAIL.
-- [ ] **Step 3: Implement** in the three places (yellow / `warn()`).
-- [ ] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
-- [ ] **Step 5: Commit** `feat(panel): warn when work is redone after a compaction`.
+- [x] **Step 2: Run** `cargo test bar:: panel:: hub::` — FAIL.
+- [x] **Step 3: Implement** in the three places (yellow / `warn()`).
+- [x] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
+- [x] **Step 5: Commit** `feat(panel): warn when work is redone after a compaction`.
 
 ---
 
@@ -88,13 +88,13 @@
 - Consumes: `State.compactions: VecDeque<(u64, String)>` (existing).
 - Produces: no new API. In `timeline`, when `a.id == "main"`, each compaction becomes a row `{when}⟲ compacted ({kind})` in `warn()`, sorted in with calls and messages (sort key rank 2, after a call or message at the same time). In `lanes`, main's row draws `⟲` in `warn()` over the bucket `t / LANE_MS` of each compaction inside the visible window.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `zoom.rs` `zoom_marks_compactions`: main with calls at 10 000 (`one.rs`) and 50 000 (`three.rs`), `compactions = [(30_000, "auto")]` → rows in order `one.rs` < `compacted (auto)` < `three.rs`. Zooming a subagent shows no `compacted`.
   - `feed.rs` `lanes_mark_compaction`: main active in the window, a compaction 2 buckets before `now` → main's lane row contains `⟲`; one older than the window → none.
-- [ ] **Step 2: Run** `cargo test hub::` — FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review `tests/snapshots/hub__*.snap` (only if their fixture has a compaction), then `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
-- [ ] **Step 5: Commit** `feat(hub): compactions on the zoom timeline and activity lanes`.
+- [x] **Step 2: Run** `cargo test hub::` — FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review `tests/snapshots/hub__*.snap` (only if their fixture has a compaction), then `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
+- [x] **Step 5: Commit** `feat(hub): compactions on the zoom timeline and activity lanes`.
 
 ---
 
@@ -103,12 +103,12 @@
 **Files:**
 - Modify: `README.md`, `CHANGELOG.md` (`## Unreleased`), `docs/DECISIONS.md`, `Cargo.toml`, `.claude-plugin/plugin.json`, `Cargo.lock`
 
-- [ ] **Step 1: README.** Under "The verdict" table, add one line: `⟲ redo ×N next to the verdict: after a compaction, main repeated N edits or commands it had already done before it (re-running tests and looking around don't count).` In the hub paragraph, note that zoom and the activity lanes mark compactions with `⟲`.
-- [ ] **Step 2: DECISIONS.** A new entry with the next free `D` number, "redo after compaction": main only; work = successful `REDO_TOOLS` calls by input hash, the last 200; test runs and `REORIENT` commands skipped; window from `PreCompact`/`PostCompact` until a whole turn has started after it; `REDO_MIN = 3`; a warning, not a verdict. Note that D20 still applies: no local recording has a compaction yet, so this is tested on synthetic events only.
-- [ ] **Step 3: CHANGELOG** under `## Unreleased`: `- After a compaction, ARI warns "⟲ redo ×N" when Claude repeats edits or commands it had already done. The hub's zoom view and activity lanes mark each compaction.`
-- [ ] **Step 4: Patch bump** (one patch above `main`) in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo build` updates `Cargo.lock`.
-- [ ] **Step 5: Run** the three CI commands — PASS.
-- [ ] **Step 6: Commit** `docs: redo after compaction` and `chore: bump to 0.3.x`. Open a PR with a bullet body.
+- [x] **Step 1: README.** Under "The verdict" table, add one line: `⟲ redo ×N next to the verdict: after a compaction, main repeated N edits or commands it had already done before it (re-running tests and looking around don't count).` In the hub paragraph, note that zoom and the activity lanes mark compactions with `⟲`.
+- [x] **Step 2: DECISIONS.** A new entry with the next free `D` number, "redo after compaction": main only; work = successful `REDO_TOOLS` calls by input hash, the last 200; test runs and `REORIENT` commands skipped; window from `PreCompact`/`PostCompact` until a whole turn has started after it; `REDO_MIN = 3`; a warning, not a verdict. Note that D20 still applies: no local recording has a compaction yet, so this is tested on synthetic events only.
+- [x] **Step 3: CHANGELOG** under `## Unreleased`: `- After a compaction, ARI warns "⟲ redo ×N" when Claude repeats edits or commands it had already done. The hub's zoom view and activity lanes mark each compaction.`
+- [x] **Step 4: Patch bump** (one patch above `main`) in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo build` updates `Cargo.lock`.
+- [x] **Step 5: Run** the three CI commands — PASS.
+- [x] **Step 6: Commit** `docs: redo after compaction` and `chore: bump to 0.3.x`. Open a PR with a bullet body.
 
 ---
 

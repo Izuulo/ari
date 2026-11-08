@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 13;
+const CACHE_VERSION: u32 = 14;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -22,6 +22,38 @@ const CHURN_EDITS: usize = 12;
 const UNDO_REPEATS: usize = 2;
 const EDIT_LOG: usize = 60;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+/// Repeats of earlier work after a compaction that count as redoing it.
+const REDO_MIN: u32 = 3;
+/// Main's successful work calls remembered for redo detection.
+const WORK: usize = 200;
+const REDO_TOOLS: [&str; 6] = [
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "Bash",
+    "PowerShell",
+];
+/// Shell commands that only look around, so repeating them after a compaction is normal.
+const REORIENT: [&str; 17] = [
+    "ls",
+    "cat",
+    "pwd",
+    "head",
+    "tail",
+    "wc",
+    "grep",
+    "rg",
+    "find",
+    "tree",
+    "which",
+    "echo",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+];
 /// Bookkeeping tools that repeat by design.
 const NOT_LOOPS: [&str; 6] = [
     "TaskCreate",
@@ -97,6 +129,22 @@ pub struct State {
     pub spawns: VecDeque<Spawn>,
     /// Successful file edits, oldest first, for churn detection.
     pub edit_log: VecDeque<EditRec>,
+    /// (time, input hash) of main's successful work calls, oldest first.
+    pub work: VecDeque<(u64, u64)>,
+    /// The open redo window after a compaction.
+    pub redo: Option<Redo>,
+}
+
+/// Work main repeats after a compaction.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Redo {
+    pub since: u64,
+    pub n: u32,
+    /// The latest redone call's activity.
+    pub last: String,
+    /// Hashes already counted, so re-running one command counts once.
+    pub seen: Vec<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -462,6 +510,14 @@ impl State {
                 }
                 self.start_turn();
                 if !crate::event::is_synthetic(msg) {
+                    // A whole turn has started since the compaction: the window closes.
+                    if self
+                        .redo
+                        .as_ref()
+                        .is_some_and(|r| self.turn_start() > r.since)
+                    {
+                        self.redo = None;
+                    }
                     // An Esc interrupt fires no Stop; the next prompt ends that turn.
                     self.end_turn(ev.t, true);
                     self.prompts.push_back(ev.t);
@@ -564,6 +620,7 @@ impl State {
                     t.tools_until = t.tools_until.max(ev.t);
                 }
                 self.track_reads(ev, aid);
+                self.track_work(ev);
                 if let Some((pass, fail)) = ev.tests {
                     self.test_runs.push_back(TestRun {
                         t: ev.t,
@@ -648,7 +705,9 @@ impl State {
                 if self.compactions.len() > 20 {
                     self.compactions.pop_front();
                 }
+                self.open_redo(ev.t);
             }
+            "PostCompact" => self.open_redo(ev.t),
             "Stop" => {
                 self.needs_you = None;
                 for e in self
@@ -945,6 +1004,11 @@ impl State {
         self.stuck(repeats).map(|s| s.why)
     }
 
+    /// Work being redone since the last compaction, once it repeats `REDO_MIN` times.
+    pub fn redoing(&self) -> Option<&Redo> {
+        self.redo.as_ref().filter(|r| r.n >= REDO_MIN)
+    }
+
     /// Start of the current turn: the last real prompt's time.
     pub fn turn_start(&self) -> u64 {
         self.prompts.back().copied().unwrap_or(0)
@@ -1093,6 +1157,57 @@ impl State {
             return Verdict::Retrying;
         }
         Verdict::OnTrack
+    }
+
+    fn open_redo(&mut self, t: u64) {
+        self.redo = Some(Redo {
+            since: t,
+            ..Default::default()
+        });
+    }
+
+    /// Remembers main's work calls and counts the ones repeated after a compaction.
+    fn track_work(&mut self, ev: &Event) {
+        let tool = ev.tool.as_deref().unwrap_or("");
+        if ev.a.is_some()
+            || !REDO_TOOLS.contains(&tool)
+            || ev.tests.is_some()
+            || ev.kind.as_deref() == Some("interrupt")
+        {
+            return;
+        }
+        if matches!(tool, "Bash" | "PowerShell") {
+            let cmd = ev
+                .sig
+                .as_deref()
+                .and_then(|s| s.split_once(':'))
+                .map_or("", |c| c.1);
+            // Test runs whose output had no counts (`go test`, `bun test`) aren't work either.
+            if crate::event::runs_tests(cmd)
+                || REORIENT.iter().any(|w| {
+                    cmd.strip_prefix(w)
+                        .is_some_and(|r| r.is_empty() || r.starts_with(' '))
+                })
+            {
+                return;
+            }
+        }
+        let Some(h) = ev.h else { return };
+        if let Some(r) = &mut self.redo
+            && ev.t >= r.since
+            && !r.seen.contains(&h)
+            && self.work.iter().any(|&(t, wh)| wh == h && t < r.since)
+        {
+            r.seen.push(h);
+            r.n += 1;
+            r.last = ev.act.clone().unwrap_or_default();
+        }
+        if ev.ok == Some(true) {
+            self.work.push_back((ev.t, h));
+            if self.work.len() > WORK {
+                self.work.pop_front();
+            }
+        }
     }
 
     fn track_reads(&mut self, ev: &Event, aid: &str) {
@@ -2431,5 +2546,154 @@ mod tests {
         assert_eq!((s.tasks.len(), s.errors.len(), s.turns), (2, 1, 1));
         std::fs::write(dir.join("state.json"), "{corrupt").unwrap();
         assert_eq!(load_session(&dir), s);
+    }
+
+    fn post(t: u64, agent: Option<&str>, tool: &str, sig: &str, h: u64, ok: bool) -> Event {
+        Event {
+            t,
+            a: agent.map(String::from),
+            tool: Some(tool.into()),
+            sig: Some(sig.into()),
+            h: Some(h),
+            ok: Some(ok),
+            act: Some(format!("$ {sig}")),
+            ..ev(if ok {
+                "PostToolUse"
+            } else {
+                "PostToolUseFailure"
+            })
+        }
+    }
+    fn at_prompt(t: u64, msg: &str) -> Event {
+        Event { t, ..prompt(msg) }
+    }
+    fn compact(t: u64, e: &str) -> Event {
+        Event {
+            kind: Some("auto".into()),
+            ..at(t, e, None)
+        }
+    }
+
+    #[test]
+    fn redo_after_compaction_counts_repeats() {
+        let work = [
+            ("Edit", "Edit:a.rs", 1),
+            ("Bash", "Bash:npm install", 2),
+            ("Bash", "Bash:cargo build", 3),
+        ];
+        let mut evs = vec![at_prompt(1_000, "build")];
+        for (i, (tool, sig, h)) in work.iter().enumerate() {
+            evs.push(post(1_001 + i as u64, None, tool, sig, *h, true));
+        }
+        evs.push(compact(1_050, "PreCompact"));
+        let mut two = evs.clone();
+        for (i, (tool, sig, h)) in work.iter().enumerate() {
+            evs.push(post(1_051 + i as u64, None, tool, sig, *h, true));
+            if i < 2 {
+                two.push(post(1_051 + i as u64, None, tool, sig, *h, true));
+            }
+        }
+        let s = run(&evs);
+        assert_eq!(
+            s.redoing().map(|r| (r.n, r.last.as_str())),
+            Some((3, "$ Bash:cargo build"))
+        );
+        assert_eq!(s.verdict(), Verdict::OnTrack);
+        assert_eq!(run(&two).redoing(), None);
+    }
+
+    #[test]
+    fn redo_ignores_tests_reads_subagents_and_new_work() {
+        let test_run = |t| Event {
+            tests: Some((5, 0)),
+            ..post(t, None, "Bash", "Bash:cargo test", 10, true)
+        };
+        let before = |t: u64| {
+            vec![
+                test_run(t),
+                post(t + 1, None, "Bash", "Bash:git status", 11, true),
+                post(t + 2, None, "Read", "Read:a.rs", 12, true),
+                post(t + 3, Some("a1"), "Edit", "Edit:b.rs", 13, true),
+            ]
+        };
+        let mut evs = vec![at_prompt(1_000, "build")];
+        evs.extend(before(1_001));
+        evs.push(compact(1_050, "PreCompact"));
+        evs.extend(before(1_051));
+        evs.push(post(1_060, None, "Edit", "Edit:c.rs", 99, true));
+        assert_eq!(run(&evs).redo.unwrap().n, 0);
+    }
+
+    #[test]
+    fn redo_skips_test_runs_without_counts() {
+        let mut evs = vec![at_prompt(1_000, "build")];
+        evs.push(post(1_001, None, "Bash", "Bash:go test", 20, true));
+        evs.push(compact(1_050, "PreCompact"));
+        for t in 1_051..1_054 {
+            evs.push(post(t, None, "Bash", "Bash:go test", 20, true));
+        }
+        assert_eq!(run(&evs).redo.unwrap().n, 0);
+    }
+
+    #[test]
+    fn redo_counts_each_repeat_once() {
+        let mut evs = vec![at_prompt(1_000, "build")];
+        evs.push(post(1_001, None, "Bash", "Bash:cargo build", 3, true));
+        evs.push(compact(1_050, "PreCompact"));
+        for t in 1_051..1_054 {
+            evs.push(post(t, None, "Bash", "Bash:cargo build", 3, true));
+        }
+        assert_eq!(run(&evs).redo.unwrap().n, 1);
+    }
+
+    #[test]
+    fn failed_redo_attempt_counts() {
+        let s = run(&[
+            at_prompt(1_000, "build"),
+            post(1_001, None, "Edit", "Edit:a.rs", 1, true),
+            compact(1_050, "PreCompact"),
+            post(1_051, None, "Edit", "Edit:a.rs", 1, false),
+        ]);
+        assert_eq!(s.redo.unwrap().n, 1);
+    }
+
+    #[test]
+    fn pre_compaction_failure_is_not_work() {
+        let s = run(&[
+            at_prompt(1_000, "build"),
+            post(1_001, None, "Bash", "Bash:make", 5, false),
+            compact(1_050, "PreCompact"),
+            post(1_051, None, "Bash", "Bash:make", 5, true),
+        ]);
+        assert_eq!(s.redo.unwrap().n, 0);
+    }
+
+    #[test]
+    fn redo_window_closes_and_restarts() {
+        let mut s = run(&[
+            at_prompt(1_000, "build"),
+            post(1_001, None, "Edit", "Edit:a.rs", 1, true),
+            compact(1_050, "PreCompact"),
+            post(1_051, None, "Edit", "Edit:a.rs", 1, true),
+        ]);
+        // The turn the compaction happened in hasn't ended: its next prompt keeps the window.
+        s.apply(&at_prompt(1_100, "next"));
+        assert_eq!(s.redo.as_ref().map(|r| r.n), Some(1));
+        s.apply(&at_prompt(
+            1_150,
+            "<task-notification>done</task-notification>",
+        ));
+        assert!(s.redo.is_some());
+        s.apply(&at_prompt(1_200, "again"));
+        assert_eq!(s.redo, None);
+
+        s.apply(&compact(1_250, "PreCompact"));
+        s.apply(&post(1_251, None, "Edit", "Edit:a.rs", 1, true));
+        s.apply(&compact(1_300, "PreCompact"));
+        assert_eq!(s.redo.as_ref().map(|r| (r.since, r.n)), Some((1_300, 0)));
+
+        let s = run(&[at_prompt(1_000, "x"), compact(1_050, "PostCompact")]);
+        assert_eq!(s.redo.map(|r| r.since), Some(1_050));
+        assert!(s.compactions.is_empty());
     }
 }
