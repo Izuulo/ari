@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 11;
+const CACHE_VERSION: u32 = 12;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -651,6 +651,27 @@ impl State {
                     self.turn_active = false;
                     self.agents[0].act = None;
                 }
+            }
+            // A subagent's API failure (e.g. an expired login) ends that agent, not main's turn.
+            "StopFailure" if aid != "main" => {
+                let a = self.agent_mut(aid, ev);
+                a.done = true;
+                a.ended_t = Some(ev.t);
+                a.result = ev.msg.clone();
+                a.act = None;
+                a.running_since = None;
+                let kind = ev.kind.clone().unwrap_or_else(|| "unknown".into());
+                self.add_error(ErrorRec {
+                    sig: format!("StopFailure:{kind}"),
+                    tool: "StopFailure".into(),
+                    msg: ev.msg.clone().unwrap_or_else(|| kind.clone()),
+                    kind: Some(kind),
+                    agent: aid.into(),
+                    first_t: ev.t,
+                    last_t: ev.t,
+                    turn: self.turns,
+                    ..Default::default()
+                });
             }
             "StopFailure" => {
                 self.end_turn(ev.t, false);
@@ -1710,6 +1731,23 @@ mod tests {
             });
             assert_eq!(s.time.idle_ms, 60_000);
         }
+    }
+
+    #[test]
+    fn subagent_stop_failure_ends_that_agent_only() {
+        let sf = Event {
+            a: Some("aafffe06".into()),
+            kind: Some("authentication_failed".into()),
+            msg: Some("Login reached its time limit".into()),
+            ..ev("StopFailure")
+        };
+        let s = run(&[prompt("go"), sf]);
+        let a = s.agents.iter().find(|a| a.id == "aafffe06").unwrap();
+        assert!(a.done && a.ended_t.is_some());
+        assert_eq!(s.running_agents(1_000), 0);
+        assert!(s.turn_active && !s.turn_failed);
+        assert_ne!(s.verdict(), Verdict::Blocked);
+        assert_eq!(s.errors[0].agent, "aafffe06");
     }
 
     #[test]
