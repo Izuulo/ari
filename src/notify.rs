@@ -135,16 +135,13 @@ pub fn decide(
 
 pub fn note(dir: &Path, st: &State, v: Verdict, repeats: u8) -> Note {
     let detail = match v {
-        Verdict::NeedsYou => st
-            .needs_you
-            .clone()
-            .or_else(|| {
-                // PermissionRequest lands before the Notification, so needs_you may still be unset.
-                st.waiting().map(|a| match a.waiting.as_ref() {
-                    Some((_, req)) if !req.is_empty() => req.clone(),
-                    _ => a.label(),
-                })
-            }),
+        Verdict::NeedsYou => st.needs_you.clone().or_else(|| {
+            // PermissionRequest lands before the Notification, so needs_you may still be unset.
+            st.waiting().map(|a| match a.waiting.as_ref() {
+                Some((_, req)) if !req.is_empty() => req.clone(),
+                _ => a.label(),
+            })
+        }),
         Verdict::Stuck => st.stuck_reason(repeats),
         _ => None,
     };
@@ -302,6 +299,23 @@ mod tests {
                 "end run"
             ])[..]
         );
+    }
+
+    #[test]
+    fn hostile_title_cannot_inject_headers() {
+        let n = Notify {
+            desktop: false,
+            ntfy: "https://ntfy.sh/t".into(),
+            ..Notify::default()
+        };
+        let note = Note {
+            title: "a\r\nX-Evil: 1".into(),
+            body: "b".into(),
+        };
+        let c = &commands(&note, &n, "macos")[0];
+        let h = c.iter().find(|a| a.starts_with("Title: ")).unwrap();
+        assert_eq!(h, "Title: a  X-Evil: 1");
+        assert!(!h.contains(['\r', '\n']));
     }
 
     #[test]
