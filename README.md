@@ -99,7 +99,7 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 |---|---|
 | `◉ NEEDS YOU` | Waiting on a permission prompt or your input |
 | `✗ BLOCKED` | The turn ended on an API error, or right after a failure it never fixed |
-| `↻ STUCK` | Going in circles: the same command failing again and again, or the same call repeated with nothing changing between |
+| `↻ STUCK` | Going in circles: the same command failing again and again, the same call repeated with nothing changing between, one file edited 12 times with no passing test, or an edit undone and redone. Shows the tokens spent since it got stuck |
 | `↻ RETRYING` | Something just failed and Claude is still working on it |
 | `● ON TRACK` | Working, nothing failing |
 | `✓ DONE` | Turn finished and every task is complete |
