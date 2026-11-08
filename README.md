@@ -50,7 +50,7 @@ Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agen
 
 ### Every agent at once: the hub
 
-Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. `ari hub --all` (or `x` in `ari watch --all`) puts every live session's agents in one hub, each session a node under you. Here it is replaying `ari demo`:
+Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole terminal. It shows a graph of who spawned whom and who is messaging whom, a table of every agent with its own context window, and a watch window per running agent with its last tool calls, what it's doing now and the last message it got. Below those: the messages between agents and an activity lane per agent. `ari hub --all` (or `x` in `ari watch --all`) puts every live session's agents in one hub, each session a node under you; zooming `you` lists every session with its state and context, the ones that need you first. Here it is replaying `ari demo`:
 
 <p align="center"><img src="docs/hub.gif" alt="The ARI hub replaying the demo session: main gets STUCK on a failing test, waits on a permission prompt, fixes it, spawns two Explore subagents that each get a watch window, and the verdict turns to DONE" width="100%"></p>
 
