@@ -137,7 +137,13 @@ pub fn note(dir: &Path, st: &State, v: Verdict, repeats: u8) -> Note {
         Verdict::NeedsYou => st
             .needs_you
             .clone()
-            .or_else(|| st.waiting().map(|a| a.label())),
+            .or_else(|| {
+                // PermissionRequest lands before the Notification, so needs_you may still be unset.
+                st.waiting().map(|a| match a.waiting.as_ref() {
+                    Some((_, req)) if !req.is_empty() => req.clone(),
+                    _ => a.label(),
+                })
+            }),
         Verdict::Stuck => st.stuck_reason(repeats),
         _ => None,
     };
@@ -424,6 +430,32 @@ mod tests {
         let d = stuck_dir("off");
         assert_eq!(check(&d, &cfg(false, ""), T), None);
         assert!(!d.join("notify.json").exists() && !d.join("state.json").exists());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn needs_you_names_the_request() {
+        use crate::event::{Event, to_line};
+        let d = std::env::temp_dir().join(format!("ari-notify-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let ev = |e: &str| Event {
+            t: 1_000,
+            e: e.into(),
+            ..Default::default()
+        };
+        let lines = to_line(&Event {
+            msg: Some("go".into()),
+            ..ev("UserPromptSubmit")
+        }) + &to_line(&Event {
+            tool: Some("Bash".into()),
+            act: Some("$ rm -rf build".into()),
+            ..ev("PermissionRequest")
+        });
+        std::fs::write(d.join("events.jsonl"), lines).unwrap();
+        let n = check(&d, &cfg(true, ""), T).expect("fires");
+        assert!(n.body.contains("NEEDS YOU"), "{}", n.body);
+        assert!(n.body.contains("rm -rf build"), "{}", n.body);
         std::fs::remove_dir_all(&d).ok();
     }
 
