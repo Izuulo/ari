@@ -7,7 +7,6 @@ Ideas for turning ARI into the hub for every Claude Code session you run. Each o
 | Idea | Why | Data |
 |---|---|---|
 | Group by repo, with a per-repo summary row | Several sessions in one repo read as one project | Have it (repo name) |
-| Desktop notification when any session flips to NEEDS YOU or BLOCKED | Don't have to watch the pane at all | Have it; new: notifier (osascript / notify-send) |
 | How long each session has been waiting on you | "NEEDS YOU · 6m" says how urgent it is | Have it (notification time) |
 | Account-wide totals: cost today, tokens, 5h and 7d use across sessions | Rate limits are per account, not per session | Have it |
 | Hide or archive finished sessions | Keep the list short | Have it |
@@ -61,3 +60,21 @@ Shipped from this list in M5: test pass/fail counts, files touched (in `ari reca
 | Windows support | PRD target for 1.1 | — |
 | Homebrew formula | Easier install on macOS | Needs the tap repo and token (PR #8 merged) |
 | crates.io release | `cargo install ari-cli` | Needs a crates.io token |
+
+## 7. Fixes for what people complain about
+
+From a survey of Claude Code GitHub issues, Reddit and blog posts (2026-11-07). Ranked: most common complaint and cheapest fix first. All of them stay zero-token, local and watch-only. Each has a plan in `docs/superpowers/plans/2026-11-07-*.md`.
+
+| # | Complaint | Idea | Data |
+|---|---|---|---|
+| 1 | "I didn't know it was waiting on me" | Desktop notification (and optional ntfy URL) when any session flips to NEEDS YOU, STUCK, BLOCKED or DONE | Have it (verdict); new: notifier (osascript / notify-send) |
+| 2 | The weekly limit hits by surprise | Extend the 5h burn forecast (`burn.rs`) to the 7d limit: "7d runs out Thu ~14:00 at this pace" | Have it (`rate_limits.seven_day`) |
+| 3 | Loops burn tokens overnight | STUCK also on edit churn: the same file edited N times, or an edit that undoes an earlier one; show tokens burned while stuck | Have it (edit events, token ledger) |
+| 4 | Compaction loses or redoes work | Mark compactions on the timeline; warn "redoing work since compaction" when the same edits or commands repeat after one | Have it (`PreCompact`/`PostCompact`) |
+| 5 | "Done" when it isn't | Flag test files edited or deleted, or skip/xfail added, during the run; "unverified" when files changed after the last test run | Have it (edits, test signatures) |
+| 6 | Destructive commands | Flag risky commands that ran (`rm -rf`, `git reset --hard`, force push, deletes outside the repo) in the panel and in `ari recap` | Have it (Bash tool input) |
+| 7 | "Claude feels dumber today" | Quality signals against your own baseline: reads per edit, errors per task, retries | New: per-session summary kept across sessions |
+| 8 | Too many diffs to review | `ari recap` groups files by the prompt or task that caused them, marks files to look at hard (tests, config, lockfiles), suggests a review order | Have it (edits, prompts, tasks) |
+| 9 | MCP and CLAUDE.md eat context up front | Show the context already used before the first prompt (system, MCP, memory) | Have it (first usage in the transcript) |
+| 10 | "Where did my session go?" | `ari find <text>`: search every transcript, print the folder and the `claude --resume` command | Have it (`~/.claude/projects`) |
+| 11 | Surprise API bills | `$` threshold per session and per day: statusline turns red and a notification fires | Have it (cost); new: config keys |
