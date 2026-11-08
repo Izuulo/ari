@@ -279,6 +279,54 @@ pub(crate) fn tool_style(tool: &str) -> Style {
     }
 }
 
+/// `--all`: every live session merged into one state, the root `main` being you.
+pub(crate) fn merged(i: &Input) -> bool {
+    i.u.project.as_deref() == Some("all sessions")
+}
+
+/// The agent's ancestor right under main (in `--all`, its session's lead); main maps to itself.
+pub(crate) fn top_of(st: &State, k: usize) -> usize {
+    let mut cur = k;
+    // Bounded: a parent loop in bad data can't spin forever.
+    for _ in 0..st.agents.len() {
+        let p = st.agents[cur].parent.as_deref().unwrap_or("main");
+        if st.agents[cur].id == "main" || p == "main" {
+            break;
+        }
+        match st.agents.iter().position(|a| a.id == p) {
+            Some(n) => cur = n,
+            None => break,
+        }
+    }
+    cur
+}
+
+/// Agents under `lead` in tree order with their depth (1 = spawned by `lead`).
+pub(crate) fn subtree(st: &State, lead: usize) -> Vec<(usize, usize)> {
+    let ord = order(st);
+    let Some(at) = ord.iter().position(|&k| k == lead) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for &k in &ord[at + 1..] {
+        let mut depth = 0;
+        let mut cur = k;
+        // Walk up to `lead`; a node outside its tree ends the run (tree order keeps them together).
+        while cur != lead && depth <= st.agents.len() {
+            let p = st.agents[cur].parent.as_deref().unwrap_or("main");
+            match st.agents.iter().position(|a| a.id == p) {
+                Some(n) => (cur, depth) = (n, depth + 1),
+                None => break,
+            }
+        }
+        if cur != lead {
+            break;
+        }
+        out.push((k, depth));
+    }
+    out
+}
+
 /// Waits on a permission prompt, or (`--all`) its session needs you.
 pub(crate) fn needs_you(a: &Agent) -> bool {
     a.waiting.is_some() || matches!(a.session, Some((_, crate::state::Verdict::NeedsYou)))
@@ -505,17 +553,24 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("q", "quit".into()),
     ];
     // `ari hub --all` is merged already: nothing for `a` to switch to.
-    let merged = !v.all && i.u.project.as_deref() == Some("all sessions");
+    let fixed = !v.all && merged(i);
     let keys: Vec<_> = keys
         .into_iter()
-        .filter(|k| !(merged && k.0 == "a"))
+        .filter(|k| !(fixed && k.0 == "a"))
         .collect();
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
     graph::draw(buf, a.graph, i, sel, false, f == Fit::Full, v.show_done);
     agents::table(buf, a.table, i, v.sel);
-    agents::tiles(buf, a.tiles, i, v, if f == Fit::Full { 4 } else { 2 });
+    let across = if merged(i) {
+        (w / 76).max(1) // session cards are two panes wide
+    } else if f == Fit::Full {
+        4
+    } else {
+        2
+    };
+    agents::tiles(buf, a.tiles, i, v, across);
     feed::messages(buf, a.messages, i);
     if let Some(l) = a.lanes {
         feed::lanes(buf, l, i);
@@ -586,6 +641,22 @@ mod tests {
             .map(|&i| st.agents[i].id.as_str())
             .collect();
         assert_eq!(ids, ["main", "a1", "a2", "a3"]);
+    }
+
+    #[test]
+    fn subtree_and_top_of_follow_parents() {
+        let st = State {
+            agents: vec![
+                kid("s1", "main", 1),
+                kid("rev", "s1", 2),
+                kid("scout", "rev", 3),
+                kid("s2", "main", 4),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(subtree(&st, 0), [(1, 1), (2, 2)]);
+        assert!(subtree(&st, 3).is_empty());
+        assert_eq!((top_of(&st, 2), top_of(&st, 3)), (0, 3));
     }
 
     #[test]

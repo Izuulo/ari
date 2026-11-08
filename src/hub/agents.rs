@@ -83,7 +83,11 @@ pub(crate) fn state_text(i: &Input, a: &Agent) -> (String, Style) {
 }
 
 fn tree_prefix(st: &State, k: usize, last: bool) -> &'static str {
-    if st.agents[k].id == "main" {
+    let a = &st.agents[k];
+    // `--all` has no main: each session's lead is a root.
+    let root = a.parent.as_deref().unwrap_or("main") == "main"
+        && !st.agents.iter().any(|x| x.id == "main");
+    if a.id == "main" || root {
         "◆ "
     } else if last {
         "└ "
@@ -268,7 +272,11 @@ pub(crate) fn table(buf: &mut Buffer, area: Rect, i: &Input, sel: usize) {
 }
 
 /// Watch windows for the page holding the selected agent; finished ones only with `show_done`.
+/// `--all` gets one card per session instead.
 pub(crate) fn tiles(buf: &mut Buffer, area: Rect, i: &Input, v: &HubView, across: u16) {
+    if super::merged(i) {
+        return cards(buf, area, i, v, across);
+    }
     let ord = order(i.st);
     let shown: Vec<usize> = ord
         .iter()
@@ -329,12 +337,16 @@ fn tile(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, more: usize)
         Span::styled(dur(i.now.saturating_sub(a.started)), dim())
     };
     let inner = frame(buf, r, title, vec![right], st, sel);
+    body(buf, inner, i, a);
+}
+
+/// A watch window's inside: kind and calls, context, what filled it, last calls, now, last message.
+fn body(buf: &mut Buffer, inner: Rect, i: &Input, a: &Agent) {
     if inner.height < 8 {
         return;
     }
-    if a.id == "main" && i.u.project.as_deref() == Some("all sessions") {
-        return super::zoom::sessions(buf, inner, i);
-    }
+    let (g, gs) = glyph(i, a);
+    let l = ledger(i, a);
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
     let xr = inner.right().saturating_sub(2);
     let tok = l.map_or(String::new(), |l| {
@@ -495,6 +507,233 @@ fn tile(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, more: usize)
     let _ = agent;
 }
 
+/// `--all`: one card per session, the page holding the selected agent's session. Each card is the
+/// session's main (as a watch window) beside a tree of its live subagents.
+fn cards(buf: &mut Buffer, area: Rect, i: &Input, v: &HubView, across: u16) {
+    let st = i.st;
+    let ord = order(st);
+    let leads: Vec<usize> = ord
+        .iter()
+        .copied()
+        .filter(|&k| st.agents[k].parent.as_deref().unwrap_or("main") == "main")
+        .collect();
+    let sel = ord.get(v.sel).copied();
+    let pos = sel
+        .and_then(|s| leads.iter().position(|&k| k == super::top_of(st, s)))
+        .unwrap_or(0);
+    let first = pos / across as usize * across as usize;
+    let on_page: Vec<usize> = leads
+        .iter()
+        .skip(first)
+        .take(across as usize)
+        .copied()
+        .collect();
+    let more = leads.len().saturating_sub(first + on_page.len());
+    let tw = area.width / across;
+    for (n, &k) in on_page.iter().enumerate() {
+        let n = n as u16;
+        let w = if n + 1 == across {
+            area.width - n * tw
+        } else {
+            tw
+        };
+        let last = n as usize + 1 == on_page.len();
+        card(
+            buf,
+            Rect::new(area.x + n * tw, area.y, w, area.height),
+            i,
+            v,
+            k,
+            sel,
+            if last { more } else { 0 },
+        );
+    }
+}
+
+fn card(
+    buf: &mut Buffer,
+    r: Rect,
+    i: &Input,
+    v: &HubView,
+    lead: usize,
+    sel: Option<usize>,
+    more: usize,
+) {
+    let st = i.st;
+    let a = &st.agents[lead];
+    let subs: Vec<(usize, usize)> = super::subtree(st, lead)
+        .into_iter()
+        .filter(|&(k, _)| v.show_done || !st.agents[k].done)
+        .collect();
+    let ns = node_style(i, a);
+    let (g, gs) = glyph(i, a);
+    let mut title = vec![
+        Span::styled(g, gs),
+        Span::styled(format!(" {}", a.label()), ns.add_modifier(Modifier::BOLD)),
+    ];
+    if a.kind != a.label() && a.kind != "session" {
+        title.push(Span::styled(format!(" · {}", a.kind), dim()));
+    }
+    let right = if more > 0 {
+        Span::styled(format!("+{more} more ›"), bold())
+    } else {
+        Span::styled(dur(i.now.saturating_sub(a.started)), dim())
+    };
+    let inner = frame(buf, r, title, vec![right], ns, sel == Some(lead));
+    // Main keeps the room its calls need; the tree takes the rest, at least 28 columns.
+    let tree_w = (inner.width * 45 / 100).max(28);
+    if subs.is_empty() || inner.width < tree_w + 30 {
+        return body(buf, inner, i, a);
+    }
+    let left = Rect::new(inner.x, inner.y, inner.width - tree_w - 1, inner.height);
+    body(buf, left, i, a);
+    for y in inner.y..inner.bottom() {
+        buf[(left.right(), y)].set_symbol("┆").set_style(faint());
+    }
+    let tree = Rect::new(left.right() + 1, inner.y, tree_w, inner.height);
+    sub_boxes(buf, tree, i, &subs, sel);
+}
+
+/// The subagent tree: `◆ main` on top, then a 3-row box per subagent, indented 3 columns a level,
+/// joined by tree lines. Scrolls to keep the selected box in view.
+fn sub_boxes(buf: &mut Buffer, r: Rect, i: &Input, subs: &[(usize, usize)], sel: Option<usize>) {
+    let st = i.st;
+    let open = subs.iter().filter(|&&(k, _)| !st.agents[k].done).count();
+    let x = put(buf, r.x + 1, r.y, "◆ main", r.width, bold());
+    put(
+        buf,
+        x,
+        r.y,
+        &format!("  {open} active"),
+        r.width.saturating_sub(x - r.x),
+        faint(),
+    );
+    let fit = (r.height.saturating_sub(1) / 3) as usize;
+    if fit == 0 {
+        return;
+    }
+    let overflow = subs.len() > fit;
+    let room = if overflow {
+        fit.saturating_sub(1).max(1)
+    } else {
+        fit
+    };
+    let at = sel
+        .and_then(|s| subs.iter().position(|&(k, _)| k == s))
+        .unwrap_or(0);
+    let start = at
+        .saturating_sub(room - 1)
+        .min(subs.len() - room.min(subs.len()));
+    // A later sibling at this depth before the tree climbs above it: the line runs on past this box.
+    let later = |j: usize| {
+        let d = subs[j].1;
+        subs[j + 1..]
+            .iter()
+            .take_while(|s| s.1 >= d)
+            .any(|s| s.1 == d)
+    };
+    for (row, j) in (start..subs.len()).take(room).enumerate() {
+        let (k, d) = subs[j];
+        let a = &st.agents[k];
+        let y = r.y + 1 + 3 * row as u16;
+        // Each level's column: a line where that level's ancestor has a later sibling.
+        for lvl in 1..d {
+            let anc = (0..j).rev().find(|&p| subs[p].1 == lvl);
+            if anc.is_some_and(later) {
+                for dy in 0..3 {
+                    put(buf, r.x + 1 + 3 * (lvl as u16 - 1), y + dy, "│", 1, faint());
+                }
+            }
+        }
+        let lx = r.x + 1 + 3 * (d as u16 - 1);
+        let more = later(j);
+        put(buf, lx, y, "│", 1, faint());
+        // Right under its parent's box: branch off that box's bottom border.
+        if row > 0 && subs[j - 1].1 + 1 == d {
+            buf[(lx, y - 1)].set_symbol("┬");
+        }
+        put(buf, lx, y + 1, if more { "├─" } else { "╰─" }, 2, faint());
+        if more {
+            put(buf, lx, y + 2, "│", 1, faint());
+        }
+        let bx = lx + 2;
+        let bw = r.right().saturating_sub(bx);
+        if bw < 12 {
+            continue;
+        }
+        let ns = node_style(i, a);
+        let (g, gs) = glyph(i, a);
+        let picked = sel == Some(k);
+        let n = st
+            .messages
+            .iter()
+            .filter(|m| m.from == a.id || m.to == a.id)
+            .count();
+        let mut right = vec![];
+        if n > 0 {
+            right.push(Span::styled(format!("✉{n} "), msg()));
+        }
+        if let Some((_, pct)) = ctx_of(i, a) {
+            right.push(Span::styled(format!("{pct:.0}%"), ctx_style(i, pct)));
+        }
+        let name = if a.done {
+            dim()
+        } else {
+            ns.add_modifier(Modifier::BOLD)
+        };
+        let inner = frame(
+            buf,
+            Rect::new(bx, y, bw, 3),
+            vec![
+                Span::styled(g, gs),
+                Span::styled(format!(" {}", a.label()), name),
+            ],
+            right,
+            ns,
+            picked,
+        );
+        buf[(bx, y + 1)].set_symbol(if picked { "┫" } else { "┤" });
+        let (act, s) = if let Some((_, w)) = &a.waiting {
+            (format!("needs you: {w}"), msg())
+        } else if a.done {
+            (
+                format!(
+                    "done {}",
+                    age(i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)))
+                ),
+                faint(),
+            )
+        } else {
+            let t = state_text(i, a).0;
+            (
+                a.act
+                    .clone()
+                    .unwrap_or_else(|| t.split_once(' ').map_or(t.clone(), |p| p.1.to_string())),
+                Style::default(),
+            )
+        };
+        put(
+            buf,
+            inner.x + 1,
+            inner.y,
+            &act,
+            inner.width.saturating_sub(2),
+            s,
+        );
+    }
+    if overflow && r.y + 1 + 3 * (room as u16) < r.bottom() {
+        let hidden = subs.len() - room;
+        put(
+            buf,
+            r.x + 1,
+            r.y + 1 + 3 * room as u16,
+            &format!("+{hidden} more · ↑↓ to scroll"),
+            r.width.saturating_sub(2),
+            faint(),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,33 +762,81 @@ mod tests {
         with_main((1..=5).map(|n| kid(&format!("a{n}"), "main", n)).collect())
     }
 
-    #[test]
-    fn all_sessions_you_tile_lists_sessions() {
-        let mut st = with_main(vec![kid("s1", "main", 1), kid("s2", "main", 2)]);
-        st.agents[2].waiting = Some((90_000, "Bash(cargo test)".into()));
+    /// Two sessions as `merge` leaves them: roots `s1` (two subagents, one nested) and `s2`.
+    fn sessions() -> State {
+        let mut st = State {
+            agents: vec![
+                kid("s1", "main", 1),
+                kid("rev", "s1", 2),
+                kid("scout", "rev", 3),
+                kid("s2", "main", 4),
+                kid("old", "s2", 5),
+            ],
+            ..Default::default()
+        };
+        st.agents[4].done = true;
+        st
+    }
+
+    fn all_tiles(st: &State, sel: usize, across: u16, w: u16) -> String {
         let u = crate::usage::Usage {
             project: Some("all sessions".into()),
             ..Default::default()
         };
         let (x, cfg) = Default::default();
         let i = Input {
-            st: &st,
+            st,
             u: &u,
             x: &x,
             cfg: &cfg,
             now: 100_000,
             clock: "",
         };
-        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 20));
+        let v = HubView {
+            sel,
+            ..Default::default()
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, 18));
         let area = buf.area;
-        tile(&mut buf, area, &i, &st.agents[0], false, 0);
-        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
-        let s2 = out.find("s2").expect(&out);
-        assert!(s2 < out.find("s1").expect(&out), "{out}");
+        tiles(&mut buf, area, &i, &v, across);
+        crate::panel::to_plain(&crate::hub::to_lines(&buf, false))
+    }
+
+    #[test]
+    fn all_sessions_cards_are_sessions_with_a_subagent_tree() {
+        let out = all_tiles(&sessions(), 0, 2, 168);
+        let top = out.lines().next().unwrap();
+        assert!(top.contains(" s1") && top.contains(" s2"), "{top}");
         assert!(
-            out.contains("needs you: Bash") && !out.contains("filled by"),
-            "{out}"
+            !top.contains(" rev"),
+            "subagents get no card of their own: {top}"
         );
+        assert!(out.contains("◆ main") && out.contains("2 active"), "{out}");
+        let rev = out.lines().find(|l| l.contains(" rev")).expect(&out);
+        let scout = out.lines().find(|l| l.contains(" scout")).expect(&out);
+        assert!(
+            scout.find("scout").unwrap() > rev.find("rev").unwrap(),
+            "scout nests under rev:\n{out}"
+        );
+        assert!(out.contains("╰─┤") && out.contains("┬"), "{out}");
+        assert!(
+            !out.contains(" old"),
+            "finished subagents leave the tree: {out}"
+        );
+    }
+
+    #[test]
+    fn all_sessions_selected_sub_is_heavy_and_its_card_shows() {
+        // Order: s1, rev, scout, s2, old. One card a page: selecting scout shows s1's card.
+        let out = all_tiles(&sessions(), 2, 1, 120);
+        let top = out.lines().next().unwrap();
+        assert!(top.contains(" s1") && top.contains("+1 more ›"), "{top}");
+        let scout = out.lines().find(|l| l.contains(" scout")).expect(&out);
+        assert!(scout.contains('━'), "selected box is heavy: {scout}");
+        let rev = out.lines().find(|l| l.contains(" rev")).expect(&out);
+        assert!(!rev.contains('━'), "{rev}");
+        let out = all_tiles(&sessions(), 3, 1, 120);
+        assert!(out.lines().next().unwrap().contains(" s2"), "{out}");
     }
 
     #[test]

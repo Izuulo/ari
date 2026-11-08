@@ -66,20 +66,13 @@ pub fn group_limits(
         .collect()
 }
 
-/// One state over all sessions: the root `main` is you, each session's lead becomes `<key>`
-/// under it, and every other agent `<key>/<id>`. `parts` are most recently active first.
+/// One state over all sessions, with no agent of its own: each session's lead becomes a root
+/// `<key>` (parent `main`, which isn't there), and every other agent `<key>/<id>`. `parts` are most recently active first.
 pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
     let mut st = State {
         label: Some(format!("{} sessions", parts.len())),
         ..Default::default()
     };
-    st.agents.push(Agent {
-        id: "main".into(),
-        // The graph node's second line.
-        kind: format!("{} sessions", parts.len()),
-        name: Some("you".into()),
-        ..Default::default()
-    });
     let mut u = Usage {
         project: Some("all sessions".into()),
         ..Default::default()
@@ -208,8 +201,6 @@ pub fn merge(parts: Vec<Part>, now: u64) -> (State, Usage, TokenCache) {
         (u.five_h, u.seven_d) = (*five, *seven);
     }
     u.app_limits = group_limits(seen);
-    let span = |t: u64| if t == 0 { now } else { t };
-    (st.agents[0].started, st.agents[0].last_t) = (span(st.first_t), span(st.last_t));
     st.messages.make_contiguous().sort_by_key(|m| m.t);
     (st, u, tok)
 }
@@ -261,38 +252,27 @@ mod tests {
     }
 
     #[test]
-    fn empty_is_root_only() {
+    fn empty_has_no_agents() {
         let (st, u, _) = merge(vec![], 0);
-        assert_eq!(st.agents.len(), 1);
-        assert_eq!(st.agents[0].label(), "you");
+        assert!(st.agents.is_empty());
         assert_eq!(u.project.as_deref(), Some("all sessions"));
     }
 
     #[test]
-    fn sessions_hang_under_root_and_ids_dont_collide() {
+    fn sessions_are_roots_and_ids_dont_collide() {
         let (mut a, b) = two();
         a.tokens.agents.insert("rev".into(), Ledger::default());
         let (st, _, t) = merge(vec![a, b], 0);
         let ids: Vec<_> = st.agents.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(
             ids,
-            [
-                "main",
-                "aaaaaaaa",
-                "aaaaaaaa/rev",
-                "bbbbbbbb",
-                "bbbbbbbb/rev"
-            ]
+            ["aaaaaaaa", "aaaaaaaa/rev", "bbbbbbbb", "bbbbbbbb/rev"]
         );
-        assert_eq!(st.agents[1].parent.as_deref(), Some("main"));
-        assert_eq!(st.agents[1].label(), "api");
-        assert_eq!(st.agents[2].parent.as_deref(), Some("aaaaaaaa"));
+        assert_eq!(st.agents[0].parent.as_deref(), Some("main"));
+        assert_eq!(st.agents[0].label(), "api");
+        assert_eq!(st.agents[1].parent.as_deref(), Some("aaaaaaaa"));
         assert!(t.agents.contains_key("aaaaaaaa") && t.agents.contains_key("aaaaaaaa/rev"));
         assert_eq!(st.label.as_deref(), Some("2 sessions"));
-        assert_eq!(
-            st.agents[0].kind, "2 sessions",
-            "the root node's second line"
-        );
     }
 
     #[test]
@@ -470,14 +450,5 @@ mod tests {
         let (st, _, _) = merge(vec![part("cccccccc", "cli", State::default())], 77);
         assert_eq!(st.agents[0].started, 77);
         assert_eq!(agent(&st, "cccccccc").started, 77);
-    }
-
-    #[test]
-    fn root_spans_the_sessions() {
-        let (mut a, mut b) = two();
-        (a.st.first_t, a.st.last_t) = (50, 90);
-        (b.st.first_t, b.st.last_t) = (20, 70);
-        let (st, _, _) = merge(vec![a, b], 0);
-        assert_eq!((st.agents[0].started, st.agents[0].last_t), (20, 90));
     }
 }

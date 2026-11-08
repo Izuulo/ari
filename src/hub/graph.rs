@@ -127,9 +127,9 @@ pub(crate) struct Layout {
     pub ky: u16,
 }
 
-/// Lead centered one row below the top; kids in a row 3 rows under it (1 when tight).
-/// Big nodes need 21 rows; under 14, nodes shrink to 3 rows so they stay inside the pane.
-pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
+/// Lead centered one row below the top; kids in a row 3 rows under it (1 when tight), or on the
+/// top row with no lead (`--all`). Big nodes need 21 rows; under 14, nodes shrink to 3 rows.
+pub(crate) fn layout(area: Rect, kids: &[usize], big: bool, has_lead: bool) -> Layout {
     let big = big && area.height >= 21;
     let tight = !big && area.height < 14;
     let (pref, nh) = if big {
@@ -142,7 +142,9 @@ pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
     let inner_w = area.width.saturating_sub(2);
     let lw = pref.min(inner_w);
     let lead = Rect::new(area.x + (area.width - lw) / 2, area.y + 1, lw, nh);
-    let (bus, ky) = if tight {
+    let (bus, ky) = if !has_lead {
+        (area.y + 1, area.y + 1)
+    } else if tight {
         (lead.bottom(), lead.bottom() + 1)
     } else {
         (lead.bottom() + 1, lead.bottom() + 3)
@@ -387,6 +389,109 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
     );
 }
 
+/// Shown in the graph: running, or finished under 5 minutes ago, or every one with `show_done`.
+fn live(i: &Input, a: &Agent, show_done: bool) -> bool {
+    show_done || !a.done || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000
+}
+
+/// `--all`: under each session node, its live subagents as a tree, one row each: state, name,
+/// `✉` when it has messages (`●` while one is in flight), what it's doing. Returns the row after.
+#[allow(clippy::too_many_arguments)]
+fn subs_tree(
+    buf: &mut Buffer,
+    i: &Input,
+    lay: &Layout,
+    edges: &[Edge],
+    kb: u16,
+    arcs: u16,
+    sel: Option<&str>,
+    legend_y: u16,
+    right_edge: u16,
+    show_done: bool,
+) -> u16 {
+    let st = i.st;
+    // Below the kid ↔ kid arcs, if any.
+    let y0 = if arcs == 0 { kb } else { kb + 1 + arcs };
+    let rows = legend_y.saturating_sub(y0) as usize;
+    let mut bottom = y0;
+    for (n, (k, r)) in lay.nodes.iter().enumerate() {
+        let subs: Vec<(usize, usize)> = super::subtree(st, *k)
+            .into_iter()
+            .filter(|&(s, _)| live(i, &st.agents[s], show_done))
+            .collect();
+        if subs.is_empty() || rows == 0 {
+            continue;
+        }
+        let tx = r.x + 2;
+        let xr = lay
+            .nodes
+            .get(n + 1)
+            .map_or(right_edge, |(_, r)| r.x)
+            .saturating_sub(2);
+        buf[(tx, r.bottom() - 1)].set_symbol("┬");
+        for y in r.bottom()..y0 {
+            let c = &mut buf[(tx, y)];
+            match c.symbol() {
+                " " => {
+                    c.set_symbol("│").set_style(dim());
+                }
+                "━" => {
+                    c.set_symbol("┿");
+                }
+                _ => {}
+            }
+        }
+        let (shown, more) = if subs.len() <= rows {
+            (subs.len(), 0)
+        } else {
+            (rows - 1, subs.len() - (rows - 1))
+        };
+        for (row, &(s, depth)) in subs.iter().take(shown).enumerate() {
+            let y = y0 + row as u16;
+            let a = &st.agents[s];
+            let last = row + 1 == shown && more == 0;
+            put(buf, tx, y, if last { "╰" } else { "├" }, 1, dim());
+            let mut x = tx + 1 + 2 * (depth as u16).saturating_sub(1);
+            let w = |x: u16| (xr + 1).saturating_sub(x);
+            let (g, gs) = glyph(i, a);
+            x = put(buf, x, y, &format!(" {g} "), w(x), gs);
+            let mut ns = node_style(i, a).add_modifier(Modifier::BOLD);
+            if sel == Some(a.id.as_str()) {
+                ns = ns.add_modifier(Modifier::REVERSED);
+            }
+            x = put(buf, x, y, &a.label(), w(x), ns);
+            let mine: Vec<&Edge> = edges
+                .iter()
+                .filter(|e| e.a == a.id || e.b == a.id)
+                .collect();
+            if !mine.is_empty() {
+                let flying = mine.iter().any(|e| i.now.saturating_sub(e.t) < PACKET_MS);
+                x = put(buf, x, y, if flying { " ●" } else { " ✉" }, w(x), msg());
+            }
+            let (act, s) = if a.waiting.is_some() {
+                ("needs you".to_string(), msg())
+            } else if a.done {
+                ("done".to_string(), faint())
+            } else {
+                (a.act.clone().unwrap_or_else(|| "—".into()), dim())
+            };
+            put(buf, x, y, &format!(" {act}"), w(x), s);
+        }
+        if more > 0 {
+            put(
+                buf,
+                tx,
+                y0 + shown as u16,
+                &format!("╰ +{more} more"),
+                (xr + 1).saturating_sub(tx),
+                faint(),
+            );
+        }
+        bottom = bottom.max(y0 + shown as u16 + (more > 0) as u16);
+    }
+    bottom
+}
+
 /// Draw the graph pane into `area` (its frame included). Kids finished over 5 minutes ago
 /// drop out unless `show_done`.
 pub(crate) fn draw(
@@ -401,16 +506,18 @@ pub(crate) fn draw(
     let st = i.st;
     let all = edges(st);
     let lifted = lift(st, &all);
+    let open = st.agents.iter().filter(|a| !a.done).count();
+    let count = if super::merged(i) {
+        format!("{open} open · {}", plural(st.agents.len(), "agent"))
+    } else {
+        plural(st.agents.len(), "agent")
+    };
     let inner = frame(
         buf,
         area,
         vec![Span::styled("graph", bold())],
         vec![Span::styled(
-            format!(
-                "{} · {}",
-                plural(st.agents.len(), "agent"),
-                plural(all.len(), "link")
-            ),
+            format!("{count} · {}", plural(all.len(), "link")),
             dim(),
         )],
         faint(),
@@ -422,9 +529,7 @@ pub(crate) fn draw(
             let a = &st.agents[k];
             a.id != "main"
                 && a.parent.as_deref().unwrap_or("main") == "main"
-                && (show_done
-                    || !a.done
-                    || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
+                && live(i, a, show_done)
         })
         .collect();
     // Whoever needs you comes first, so it never folds into `+N more`.
@@ -432,13 +537,25 @@ pub(crate) fn draw(
         let a = &st.agents[k];
         (!super::needs_you(a), a.done, a.started)
     });
-    let lay = layout(area, &kids, big);
-    let big = lay.big;
     let main = st.agents.iter().find(|a| a.id == "main");
+    let lay = layout(area, &kids, big, main.is_some());
+    let big = lay.big;
     let legend_y = inner.bottom().saturating_sub(1);
     if lay.nodes.is_empty() {
         match main {
             Some(m) => node(buf, lay.lead, i, m, sel == Some("main"), big),
+            None if super::merged(i) => {
+                let t = "no live sessions";
+                put(
+                    buf,
+                    area.x + (area.width - t.width() as u16) / 2,
+                    lay.ky,
+                    t,
+                    inner.width,
+                    dim(),
+                );
+                return;
+            }
             None => {
                 frame(
                     buf,
@@ -469,16 +586,19 @@ pub(crate) fn draw(
     let mut drops: Vec<(String, u16)> = lay
         .nodes
         .iter()
+        .filter(|_| main.is_some())
         .map(|(k, r)| (st.agents[*k].id.clone(), drop_x(r)))
         .collect();
-    if let Some(r) = lay.more_rect {
+    if let Some(r) = lay.more_rect.filter(|_| main.is_some()) {
         drops.push((String::new(), drop_x(&r)));
     }
     let lo = drops.iter().map(|d| d.1).min().unwrap_or(tx).min(tx);
     let hi = drops.iter().map(|d| d.1).max().unwrap_or(tx).max(tx);
-    lines.run((tx, top), (tx, bus), false, dim());
-    lines.poke(tx, top, U, false, dim());
-    lines.run((lo, bus), (hi, bus), false, dim());
+    if main.is_some() {
+        lines.run((tx, top), (tx, bus), false, dim());
+        lines.poke(tx, top, U, false, dim());
+        lines.run((lo, bus), (hi, bus), false, dim());
+    }
     for (id, dx) in &drops {
         let done = st.agents.iter().any(|a| &a.id == id && a.done);
         let s = if done { faint() } else { dim() };
@@ -575,11 +695,13 @@ pub(crate) fn draw(
     // Junctions on borders, drawn after the nodes.
     let lead_heavy = paths.iter().any(|(e, _)| e.a == "main" || e.b == "main");
     let lead_sel = sel == Some("main");
-    buf[(tx, top - 1)].set_symbol(match (lead_sel, lead_heavy) {
-        (true, _) => "┳",
-        (false, true) => "┰",
-        _ => "┬",
-    });
+    if main.is_some() {
+        buf[(tx, top - 1)].set_symbol(match (lead_sel, lead_heavy) {
+            (true, _) => "┳",
+            (false, true) => "┰",
+            _ => "┬",
+        });
+    }
     for (id, dx) in &drops {
         let heavy = paths
             .iter()
@@ -595,8 +717,23 @@ pub(crate) fn draw(
         buf[(*xa, kb - 1)].set_symbol("┰").set_style(msg());
         buf[(*xb, kb - 1)].set_symbol("┰").set_style(msg());
     }
+    let mut label_y = kb + 1 + drawn.len() as u16;
+    if super::merged(i) && !lay.tight {
+        label_y = label_y.max(subs_tree(
+            buf,
+            i,
+            &lay,
+            &all,
+            kb,
+            drawn.len() as u16,
+            sel,
+            legend_y,
+            inner.right(),
+            show_done,
+        ));
+    }
     if labels {
-        let mut y = kb + 1 + drawn.len() as u16;
+        let mut y = label_y;
         let name = |id: &str| {
             st.agents
                 .iter()
@@ -731,7 +868,7 @@ mod tests {
     #[test]
     fn layout_fits_four_and_overflows_twelve() {
         let area = Rect::new(0, 0, 100, 20);
-        let l = layout(area, &[1, 2, 3, 4], false);
+        let l = layout(area, &[1, 2, 3, 4], false, true);
         assert_eq!(l.nodes.len(), 4);
         assert_eq!(l.more, 0);
         for (k, (_, r)) in l.nodes.iter().enumerate() {
@@ -744,7 +881,7 @@ mod tests {
             }
         }
         let kids: Vec<usize> = (1..=12).collect();
-        let l = layout(area, &kids, false);
+        let l = layout(area, &kids, false, true);
         assert_eq!(l.more, 12 - l.nodes.len());
         assert!(l.more > 0 && l.more_rect.is_some());
         assert!(l.nodes.iter().all(|(_, r)| r.width >= 16));

@@ -79,103 +79,8 @@ fn rule(buf: &mut Buffer, inner: Rect, y: u16) {
     }
 }
 
-/// `--all`'s root has no transcript of its own: show every session in one place instead.
-fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
-    let mut right = vec![];
-    if let Some(c) = i.u.cost_usd {
-        right.push(format!("${c:.2}"));
-    }
-    if let Some(l) = &i.u.five_h {
-        right.push(format!("5h {:.0}%", l.pct));
-    }
-    let n =
-        i.st.agents
-            .iter()
-            .filter(|a| a.parent.as_deref() == Some("main"))
-            .count();
-    let inner = frame(
-        buf,
-        area,
-        vec![Span::styled(format!("◆ you · {n} sessions"), bold())],
-        (!right.is_empty())
-            .then(|| Span::styled(right.join(" · "), dim()))
-            .into_iter()
-            .collect(),
-        node_style(i, &i.st.agents[0]),
-        true,
-    );
-    sessions(buf, inner, i);
-}
-
-/// `--all`: one row per session, the ones that need you first, and a footer of open errors
-/// and messages between sessions. Shared by the `you` tile and its zoom.
-pub(crate) fn sessions(buf: &mut Buffer, inner: Rect, i: &Input) {
-    let mut ss: Vec<&Agent> =
-        i.st.agents
-            .iter()
-            .filter(|a| a.parent.as_deref() == Some("main"))
-            .collect();
-    ss.sort_by_key(|a| !super::needs_you(a)); // stable: most recently active stays first
-    let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
-    let xr = inner.right().saturating_sub(2);
-    for (y, s) in (inner.y..).zip(ss) {
-        if y + 2 >= inner.bottom() {
-            break;
-        }
-        let (t, ts) = super::agents::state_text(i, s);
-        let act = match (&s.waiting, &s.act) {
-            (Some((_, w)), _) => format!(": {w}"),
-            (None, Some(a)) if !s.done => format!("  {a}"),
-            _ => String::new(),
-        };
-        // Narrow tiles drop the folder column.
-        let head = if w >= 80 {
-            format!("{:<16}{:<14}", s.label(), s.kind)
-        } else {
-            format!("{:<12}", s.label())
-        };
-        let nx = put(buf, x, y, &head, w, node_style(i, s));
-        let ctx = ctx_of(i, s).map_or(String::new(), |(_, p)| format!("ctx {p:.0}%"));
-        put(
-            buf,
-            nx,
-            y,
-            &format!("{t}{act}"),
-            xr.saturating_sub(nx + ctx.len() as u16 + 1),
-            ts,
-        );
-        rput(buf, xr, y, &ctx, dim());
-    }
-    rule(buf, inner, inner.bottom() - 2);
-    let key = |id: &str| id.split('/').next().unwrap_or(id).to_string();
-    let across =
-        i.st.messages
-            .iter()
-            .filter(|m| key(&m.from) != key(&m.to))
-            .count();
-    put(
-        buf,
-        x,
-        inner.bottom() - 1,
-        &format!(
-            "{} errors open · {across} {}",
-            i.st.open_errors(),
-            if w >= 80 {
-                "messages between sessions"
-            } else {
-                "msgs across"
-            }
-        ),
-        w,
-        faint(),
-    );
-}
-
 /// Draw agent `a` over `area`; `scroll` moves the timeline up from its newest line.
 pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, scroll: usize) {
-    if a.id == "main" && i.u.project.as_deref() == Some("all sessions") {
-        return overview(buf, area, i);
-    }
     let st = node_style(i, a);
     let (g, gs) = glyph(i, a);
     let l = ledger(i, a);
@@ -735,35 +640,6 @@ mod tests {
             out.join("\n")
         );
         assert!(last.trim_end().ends_with('╯'), "{last}");
-    }
-
-    #[test]
-    fn zoom_you_lists_sessions_needs_you_first() {
-        let mut st = with_main(vec![kid("s1", "main", 1), kid("s2", "main", 2)]);
-        st.agents[2].waiting = Some((90_000, "Bash(cargo test)".into()));
-        let u = crate::usage::Usage {
-            project: Some("all sessions".into()),
-            ..Default::default()
-        };
-        let (x, cfg) = Default::default();
-        let i = Input {
-            st: &st,
-            u: &u,
-            x: &x,
-            cfg: &cfg,
-            now: 100_000,
-            clock: "",
-        };
-        let mut buf = Buffer::empty(Rect::new(0, 0, 168, 46));
-        let area = buf.area;
-        draw(&mut buf, area, &i, &st.agents[0], 0);
-        let out: Vec<String> = crate::panel::to_plain(&crate::hub::to_lines(&buf, false))
-            .lines()
-            .map(String::from)
-            .collect();
-        assert!(out[0].contains("you · 2 sessions"), "{}", out.join("\n"));
-        assert!(row(&out, "needs you: Bash(cargo test)") < row(&out, "s1"));
-        assert!(out.iter().any(|l| l.contains("0 errors open")));
     }
 
     #[test]
