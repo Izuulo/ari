@@ -11,7 +11,8 @@ expression: text
 │ ├─⠋ Explore grep refresh_token 3s · 14 calls · 1m12s               │ 5h  ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62%  ↺ 1h40m                               │
 │ ├─✓ tests   done 38s · 12 passed                                   ├─ session ───────────────────────────────────────────────────────────┤
 │ └─? Plan    stale 6m · reading big.log                             │ cost    $2.69 · $0.67/task done                                     │
-├─ errors ───────────────────────────────────────────────────────────┤ time    14m00s · claude 71%                                         │
-│ ✗ 5s   edit lib.rs · String to replace not found in file.          │                                                                     │
-│ 1 fixed (e)                                                        │                                                                     │
+│                                                                    │ time    14m00s · claude 71%                                         │
+│                                                                    ├─ errors ────────────────────────────────────────────────────────────┤
+│                                                                    │ ✗ 5s   edit lib.rs · String to replace not found in file.           │
+│                                                                    │ 1 fixed (e)                                                         │
 ╰────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────╯
