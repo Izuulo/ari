@@ -396,7 +396,7 @@ fn live(i: &Input, a: &Agent, show_done: bool) -> bool {
     show_done || !a.done || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000
 }
 
-/// `--all`: under each session node, its live subagents as a tree of boxes, as on the session
+/// `--all`: under each session node, its active subagents as a tree of boxes, as on the session
 /// cards. Returns the row after the tallest tree.
 #[allow(clippy::too_many_arguments)]
 fn subs_tree(
@@ -419,7 +419,8 @@ fn subs_tree(
     for (n, (k, r)) in lay.nodes.iter().enumerate() {
         let subs: Vec<(usize, usize)> = super::subtree(st, *k)
             .into_iter()
-            .filter(|&(s, _)| live(i, &st.agents[s], show_done))
+            // Active only, as on the cards: finished ones would push live ones out of view.
+            .filter(|&(s, _)| show_done || !st.agents[s].done)
             .collect();
         if subs.is_empty() || h < 3 {
             continue;
