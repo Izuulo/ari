@@ -10,6 +10,11 @@ fn tmp(name: &str) -> PathBuf {
 }
 
 fn doctor(d: &Path, with_binary: bool) -> (Output, String) {
+    // Desktop notifications default on, which is a problem on a Linux box without notify-send.
+    let cfg = d.join("config/ari/config.toml");
+    if !cfg.exists() {
+        write(cfg, "[notify]\ndesktop = false\n");
+    }
     if with_binary && !d.join("bin/ari").exists() {
         std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ari"), d.join("bin/ari")).unwrap();
     }
@@ -46,7 +51,7 @@ fn all_good() {
     );
     write(
         d.join("config/ari/config.toml"),
-        "[chain]\ncommands = [\"printf '[P]'\"]\n",
+        "[chain]\ncommands = [\"printf '[P]'\"]\n\n[notify]\ndesktop = false\n",
     );
     write(
         d.join("state/ari/sessions/s1/events.jsonl"),
@@ -54,7 +59,7 @@ fn all_good() {
     );
     let (out, text) = doctor(&d, true);
     assert!(out.status.success(), "{text}");
-    assert_eq!(text.matches('✓').count(), 8, "{text}");
+    assert_eq!(text.matches('✓').count(), 7, "{text}");
     assert!(text.contains("All good."));
 }
 
