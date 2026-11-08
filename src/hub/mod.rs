@@ -286,6 +286,27 @@ pub(crate) fn merged(i: &Input) -> bool {
     i.u.project.as_deref() == Some("all sessions")
 }
 
+/// The repo agent `a` works in, and the folder its file keys are anchored to: in `--all`
+/// its session's (keys are `{dir}/{path}`), else the watched session's (keys are bare paths).
+pub(crate) fn repo<'a>(i: &'a Input, a: &Agent) -> Option<(&'a crate::git::Git, &'a str)> {
+    if !merged(i) {
+        return i.x.git.as_ref().map(|g| (g, ""));
+    }
+    let k = i.st.agents.iter().position(|x| x.id == a.id)?;
+    let key = &i.st.agents[top_of(i.st, k)].id;
+    let r = i.x.repos.iter().find(|r| &r.key == key)?;
+    Some((&r.git, r.dir.as_str()))
+}
+
+/// A changed path as an agent's file key: anchored to `dir` in `--all`.
+pub(crate) fn file_key(dir: &str, path: &str) -> String {
+    if dir.is_empty() {
+        path.to_string()
+    } else {
+        format!("{dir}/{path}")
+    }
+}
+
 /// The agent's ancestor right under main (in `--all`, its session's lead); main maps to itself.
 pub(crate) fn top_of(st: &State, k: usize) -> usize {
     let mut cur = k;
@@ -560,7 +581,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let fixed = !v.all && merged(i);
     let keys: Vec<_> = keys
         .into_iter()
-        .filter(|k| !(fixed && k.0 == "a") && !(merged(i) && k.0 == "b"))
+        .filter(|k| !(fixed && k.0 == "a"))
         .collect();
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
@@ -575,8 +596,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         2
     };
     agents::tiles(buf, a.tiles, i, v, across);
-    // shortcut: git is the watched session's repo only, so merged views keep messages; per-session git if asked.
-    if v.git && !merged(i) {
+    if v.git {
         let (g, u) = match a.lanes {
             Some(l) => (a.messages, l),
             None => {
@@ -588,7 +608,11 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
                 )
             }
         };
-        feed::git(buf, g, i);
+        if merged(i) {
+            feed::repos(buf, g, i);
+        } else {
+            feed::git(buf, g, i, i.x.git.as_ref());
+        }
         feed::uncommitted(buf, u, i);
     } else {
         feed::messages(buf, a.messages, i);
