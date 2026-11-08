@@ -81,12 +81,6 @@ fn rule(buf: &mut Buffer, inner: Rect, y: u16) {
 
 /// `--all`'s root has no transcript of its own: show every session in one place instead.
 fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
-    let mut ss: Vec<&Agent> =
-        i.st.agents
-            .iter()
-            .filter(|a| a.parent.as_deref() == Some("main"))
-            .collect();
-    ss.sort_by_key(|a| !super::needs_you(a)); // stable: most recently active stays first
     let mut right = vec![];
     if let Some(c) = i.u.cost_usd {
         right.push(format!("${c:.2}"));
@@ -94,13 +88,15 @@ fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
     if let Some(l) = &i.u.five_h {
         right.push(format!("5h {:.0}%", l.pct));
     }
+    let n =
+        i.st.agents
+            .iter()
+            .filter(|a| a.parent.as_deref() == Some("main"))
+            .count();
     let inner = frame(
         buf,
         area,
-        vec![Span::styled(
-            format!("◆ you · {} sessions", ss.len()),
-            bold(),
-        )],
+        vec![Span::styled(format!("◆ you · {n} sessions"), bold())],
         (!right.is_empty())
             .then(|| Span::styled(right.join(" · "), dim()))
             .into_iter()
@@ -108,6 +104,18 @@ fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
         node_style(i, &i.st.agents[0]),
         true,
     );
+    sessions(buf, inner, i);
+}
+
+/// `--all`: one row per session, the ones that need you first, and a footer of open errors
+/// and messages between sessions. Shared by the `you` tile and its zoom.
+pub(crate) fn sessions(buf: &mut Buffer, inner: Rect, i: &Input) {
+    let mut ss: Vec<&Agent> =
+        i.st.agents
+            .iter()
+            .filter(|a| a.parent.as_deref() == Some("main"))
+            .collect();
+    ss.sort_by_key(|a| !super::needs_you(a)); // stable: most recently active stays first
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
     let xr = inner.right().saturating_sub(2);
     for (y, s) in (inner.y..).zip(ss) {
@@ -120,14 +128,13 @@ fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
             (None, Some(a)) if !s.done => format!("  {a}"),
             _ => String::new(),
         };
-        let nx = put(
-            buf,
-            x,
-            y,
-            &format!("{:<16}{:<14}", s.label(), s.kind),
-            w,
-            node_style(i, s),
-        );
+        // Narrow tiles drop the folder column.
+        let head = if w >= 80 {
+            format!("{:<16}{:<14}", s.label(), s.kind)
+        } else {
+            format!("{:<12}", s.label())
+        };
+        let nx = put(buf, x, y, &head, w, node_style(i, s));
         let ctx = ctx_of(i, s).map_or(String::new(), |(_, p)| format!("ctx {p:.0}%"));
         put(
             buf,
@@ -151,8 +158,13 @@ fn overview(buf: &mut Buffer, area: Rect, i: &Input) {
         x,
         inner.bottom() - 1,
         &format!(
-            "{} errors open · {across} messages between sessions",
-            i.st.open_errors()
+            "{} errors open · {across} {}",
+            i.st.open_errors(),
+            if w >= 80 {
+                "messages between sessions"
+            } else {
+                "msgs across"
+            }
         ),
         w,
         faint(),

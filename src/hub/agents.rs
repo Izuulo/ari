@@ -332,6 +332,9 @@ fn tile(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, more: usize)
     if inner.height < 8 {
         return;
     }
+    if a.id == "main" && i.u.project.as_deref() == Some("all sessions") {
+        return super::zoom::sessions(buf, inner, i);
+    }
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
     let xr = inner.right().saturating_sub(2);
     let tok = l.map_or(String::new(), |l| {
@@ -518,6 +521,35 @@ mod tests {
 
     fn six() -> State {
         with_main((1..=5).map(|n| kid(&format!("a{n}"), "main", n)).collect())
+    }
+
+    #[test]
+    fn all_sessions_you_tile_lists_sessions() {
+        let mut st = with_main(vec![kid("s1", "main", 1), kid("s2", "main", 2)]);
+        st.agents[2].waiting = Some((90_000, "Bash(cargo test)".into()));
+        let u = crate::usage::Usage {
+            project: Some("all sessions".into()),
+            ..Default::default()
+        };
+        let (x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 100_000,
+            clock: "",
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 50, 20));
+        let area = buf.area;
+        tile(&mut buf, area, &i, &st.agents[0], false, 0);
+        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+        let s2 = out.find("s2").expect(&out);
+        assert!(s2 < out.find("s1").expect(&out), "{out}");
+        assert!(
+            out.contains("needs you: Bash") && !out.contains("filled by"),
+            "{out}"
+        );
     }
 
     #[test]
