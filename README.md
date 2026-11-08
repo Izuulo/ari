@@ -42,6 +42,8 @@ Start a new Claude Code session (or `/reload-plugins`) and the row appears. Some
 ● ON TRACK │ ▰▰▰▰▰▰▱▱▱▱ 4/7 │ ⠼ 2 agents │ ✗ 0 │ ✓ 70 tests │ ctx ▰▰▰▰▱ 71% │ 5h 62% ↺1h40m │ 7d 34% ↺4d │ $2.69 │ 6.2M tok
 ```
 
+When the week's pace would run out the 7d limit before it resets, the 7d segment shows when (`▲Thu 14:00`) and the panel says `▲ 7d runs out Thu ~14:00 at this pace`. The pace is the last 6 h across all your Claude Code sessions.
+
 **A full panel** in a second pane with `ari watch` (`tmux split-window ari watch` works fine). It follows the latest session in the current directory:
 
 <p align="center"><img src="docs/panel.png" alt="The ARI panel mid-run: STUCK because python3 test_calc.py failed 3 times in a row, 1 of 4 tasks, the AssertionError under errors, usage bars, and session cost and tokens" width="620"></p>
@@ -133,7 +135,7 @@ ARI also follows Codex and DeepSeek Harness (`dsh`) sessions. They appear in `ar
 | **Permission waits** | Which agent is waiting on you, for what call and how long; ARI never answers for you |
 | **Notifications** | A desktop notification (or ntfy push) once when a session needs you, gets stuck, blocks or finishes |
 | **Cache savings** | Hit rate, roughly what caching saved, and an alert when the cache suddenly stops hitting |
-| **Rate-limit foresight** | Warns when you'll hit the 5-hour limit before it resets |
+| **Rate-limit foresight** | Warns when you'll hit the 5-hour or the weekly limit before it resets |
 | **Plays nice** | Chains your existing statusline instead of replacing it; `ari uninstall` restores it byte for byte |
 | **Zero tokens** | Nothing is ever injected into Claude's context |
 

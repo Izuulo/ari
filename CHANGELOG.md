@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Weekly limit forecast.** When your pace over the last 6 h, across all your Claude Code sessions, would run out the 7d limit before it resets, the statusline's 7d segment adds `▲Thu 14:00` and the panel says `▲ 7d runs out Thu ~14:00 at this pace`. Silent when you're on pace to last. Claude Code's limit only, not Codex; no config keys.
+
 ## 0.3.9 - 2026-11-07
 
 - **Notifications.** A desktop notification (`ARI: <repo>` with the verdict and reason) fires once when a session flips to NEEDS YOU, STUCK, BLOCKED or DONE, from the hooks, so no `ari watch` is needed. `[notify]` keys: `desktop` (default true), `on` (verdicts to notify on; also `idle`) and `ntfy` (optional URL such as `https://ntfy.sh/your-topic` that also gets the text; off by default, the only thing ARI sends off your machine). Turn off with `desktop = false` or in settings; clear `ntfy` to stop pushes. A session already DONE or BLOCKED when you upgrade may notify once.
