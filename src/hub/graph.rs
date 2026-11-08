@@ -909,6 +909,45 @@ mod tests {
     }
 
     #[test]
+    fn all_sessions_hang_active_subagent_boxes() {
+        let mut st = State {
+            agents: vec![
+                kid("s1", "main", 1),
+                kid("rev", "s1", 2),
+                kid("old", "s1", 3),
+                kid("s2", "main", 4),
+            ],
+            ..Default::default()
+        };
+        st.agents[2].done = true;
+        let u = crate::usage::Usage {
+            project: Some("all sessions".into()),
+            ..Default::default()
+        };
+        let (x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 100_000,
+            clock: "",
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 20));
+        let area = buf.area;
+        draw(&mut buf, area, &i, Some("rev"), false, false, false);
+        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+        let rev = out.lines().find(|l| l.contains(" rev")).expect(&out);
+        assert!(rev.contains('┏'), "rev is a selected box: {rev}");
+        assert!(out.contains("╰─┫"), "joined to s1 by a tree line: {out}");
+        assert!(
+            !out.contains(" old"),
+            "finished subagents stay off the graph: {out}"
+        );
+        assert!(out.contains("3 open"), "{out}");
+    }
+
+    #[test]
     fn no_agents_yet() {
         let out = pane(&with_main(vec![]), 1, 100, 20);
         assert!(out.contains("no agents yet"), "{out}");
