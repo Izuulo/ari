@@ -368,6 +368,33 @@ fn body(buf: &mut Buffer, inner: Rect, i: &Input, a: &Agent) {
         dim(),
     );
     let mut y = inner.y + 1;
+    // The watch's plan row: progress bar, count, then the task in progress if there's room.
+    let plan = super::plan_of(i, a);
+    if let Some((done, total, what, now)) = &plan {
+        let nx = put(buf, x, y, "plan ", 5, faint());
+        let s = Style::new().fg(ratatui::style::Color::Cyan);
+        let nx = put(
+            buf,
+            nx,
+            y,
+            &cells(*done as f64 / *total as f64, 15, '▰', '▱'),
+            15,
+            s,
+        );
+        let mut tail = format!(" {done}/{total} {what}");
+        if let Some(t) = now {
+            tail += &format!(" · ▸ {t}");
+        }
+        put(
+            buf,
+            nx,
+            y,
+            &tail,
+            xr.saturating_sub(nx) + 1,
+            Style::default(),
+        );
+        y += 1;
+    }
     if let Some((n, pct)) = ctx_of(i, a) {
         let s = ctx_style(i, pct);
         let nx = put(buf, x, y, "ctx ", 4, faint());
@@ -405,7 +432,7 @@ fn body(buf: &mut Buffer, inner: Rect, i: &Input, a: &Agent) {
         }
     };
     rule(buf, y);
-    let rows = inner.height.saturating_sub(7) as usize;
+    let rows = inner.height.saturating_sub(7 + plan.is_some() as u16) as usize;
     let calls: Vec<_> = a.recent.iter().rev().take(rows).collect();
     for (n, c) in calls.iter().rev().enumerate() {
         let cy = y + 1 + n as u16;
@@ -969,8 +996,14 @@ mod tests {
     #[test]
     fn few_tiles_fill_the_row_and_preview_their_zoom() {
         let previews = |kids: usize| {
-            let st = with_main((0..kids).map(|n| kid(&format!("k{n}"), "main", 1)).collect());
-            let out = draw_with(&st, 168, 20, |b, r, i| tiles(b, r, i, &HubView::default(), 4));
+            let st = with_main(
+                (0..kids)
+                    .map(|n| kid(&format!("k{n}"), "main", 1))
+                    .collect(),
+            );
+            let out = draw_with(&st, 168, 20, |b, r, i| {
+                tiles(b, r, i, &HubView::default(), 4)
+            });
             out.matches("context window").count()
         };
         assert_eq!(previews(0), 1, "main alone gets the whole row");
