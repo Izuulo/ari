@@ -10,11 +10,11 @@ expression: "out.join(\"\\n\")"
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠏ main   thinking…                                   │
+├─ session ────────────────────────────────────────────┤
+│ time    10s · claude 87% · tools 13%                 │
 ├─ errors ─────────────────────────────────────────────┤
 │ ✗ 0s   python3 test_calc.py · AssertionError         │
 │ 1s on failed calls                                   │
-├─ session ────────────────────────────────────────────┤
-│ time    10s · claude 87% · tools 13%                 │
 ╰──────────────────────────────────────────────────────╯
 --- two agents ---
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
@@ -26,10 +26,10 @@ expression: "out.join(\"\\n\")"
 │ ⠦ main      agent Explore: Describe test_calc.py · … │
 │ ├─⠦ Explore thinking… · 1 call · 1s                  │
 │ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
-├─ errors ─────────────────────────────────────────────┤
-│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ session ────────────────────────────────────────────┤
 │ time    16s · claude 92% · tools 8%                  │
+├─ errors ─────────────────────────────────────────────┤
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ╰──────────────────────────────────────────────────────╯
 --- end ---
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
@@ -40,8 +40,8 @@ expression: "out.join(\"\\n\")"
 │ ◌ main      idle                                     │
 │ ├─✓ Explore done 2s · calc.py defines an add(a, b) … │
 │ └─✓ Explore done 1s · The file imports add from a c… │
-├─ errors ─────────────────────────────────────────────┤
-│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ├─ session ────────────────────────────────────────────┤
 │ time    20s · claude 81% · tools 19%                 │
+├─ errors ─────────────────────────────────────────────┤
+│ no open errors · 1 fixed · 1s on failed calls (e)    │
 ╰──────────────────────────────────────────────────────╯
