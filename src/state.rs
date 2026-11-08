@@ -352,6 +352,18 @@ impl Verdict {
         }
     }
 
+    pub fn id(self) -> &'static str {
+        match self {
+            Verdict::NeedsYou => "needs_you",
+            Verdict::Blocked => "blocked",
+            Verdict::Stuck => "stuck",
+            Verdict::Retrying => "retrying",
+            Verdict::OnTrack => "on_track",
+            Verdict::Done => "done",
+            Verdict::Idle => "idle",
+        }
+    }
+
     pub fn glyph(self) -> char {
         match self {
             Verdict::NeedsYou => '◉',
@@ -1225,6 +1237,26 @@ mod tests {
 
     use super::*;
     use crate::event::{TaskRef, Todo};
+
+    #[test]
+    fn verdict_ids() {
+        use Verdict::*;
+        let all = [
+            (NeedsYou, "needs_you"),
+            (Blocked, "blocked"),
+            (Stuck, "stuck"),
+            (Retrying, "retrying"),
+            (OnTrack, "on_track"),
+            (Done, "done"),
+            (Idle, "idle"),
+        ];
+        for (v, id) in all {
+            assert_eq!(v.id(), id);
+        }
+        for id in crate::config::NOTIFY_ON {
+            assert!(all.iter().any(|(v, _)| v.id() == id), "{id}");
+        }
+    }
 
     #[test]
     fn a_passing_script_does_not_fix_a_different_failing_one() {

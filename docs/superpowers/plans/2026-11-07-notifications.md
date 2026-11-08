@@ -46,15 +46,15 @@
   - `pub fn Verdict::id(self) -> &'static str`: `needs_you`, `blocked`, `stuck`, `retrying`, `on_track`, `done`, `idle`.
   - `problems` gains: `notify.on: unknown verdict "<id>"` for an id not in `NOTIFY_ON`; `notify.ntfy: not an http(s) URL "<value>"` when non-empty and not starting with `https://` or `http://`, or containing whitespace.
 
-- [ ] **Step 1: Write the failing tests** in `config.rs` tests:
+- [x] **Step 1: Write the failing tests** in `config.rs` tests:
   - `notify_defaults_and_parse`: `parse("")` → `notify.desktop == true`, `notify.on == ["needs_you", "stuck", "blocked", "done"]`, `notify.ntfy == ""`; `parse("[notify]\ndesktop = false\non = [\"done\"]\nntfy = \"https://ntfy.sh/x\"\n")` → those values.
   - `round_trip` extended: set `notify.ntfy = "https://ntfy.sh/t"` and `notify.on = ["idle"]`; still round-trips.
   - `problems_name_bad_notify_values`: `on = ["nope", "done"]`, `ntfy = "-o /tmp/x"` → exactly 2 problems, containing `nope` and `-o /tmp/x`; `ntfy = "https://ntfy.sh/x"` → no problem.
   - In `state.rs` tests, `verdict_ids`: every `Verdict` maps to the id above, and each `NOTIFY_ON` id is the `id()` of some verdict.
-- [ ] **Step 2: Run** `cargo test config:: state::tests::verdict_ids` — expect FAIL (no `notify`, no `id`).
-- [ ] **Step 3: Implement** the struct, default, constant, `problems` lines and `Verdict::id`.
-- [ ] **Step 4: Run** `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): notify config keys and verdict ids`.
+- [x] **Step 2: Run** `cargo test config:: state::tests::verdict_ids` — expect FAIL (no `notify`, no `id`).
+- [x] **Step 3: Implement** the struct, default, constant, `problems` lines and `Verdict::id`.
+- [x] **Step 4: Run** `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(notify): notify config keys and verdict ids`.
 
 ---
 
