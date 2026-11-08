@@ -32,6 +32,8 @@ pub struct Extras {
     pub git: Option<crate::git::Git>,
     /// `ari hub --all`: each live session's repo, in place of `git`.
     pub repos: Vec<crate::git::Repo>,
+    /// `ari hub --all`: each session's checkbox plan file, by session key, in place of `plan`.
+    pub plans: Vec<(String, crate::state::PlanFile)>,
 }
 
 /// Forecasts are only worth showing this close.

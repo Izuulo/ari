@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hub agent windows and `ari hub --all` session cards get a plan row above the context bar, as in the watch: progress bar, done/total and the task in progress. Main and each session show their session's task list (or a checkbox plan file it wrote); a subagent shows the tasks it owns. Hidden when there's no plan.
+- Hub tiles: when fewer agents are showing than the row has room for, they share the whole row, and each wide one previews its zoom view beside it (context window and what filled it, messages or git with `b`, files, tasks and errors).
 - `b` works in `ari hub --all` too: the git pane shows a row per session (branch, changed files, newest PR or commit), and each agent's uncommitted edits are checked against its own session's repo. Each live session's repo refreshes in the background every 30 s.
 - **Git in the hub.** `b` swaps the hub's messages and activity panes for a git pane (branch, last commits and PRs) and an uncommitted pane listing each agent's edits that are still uncommitted. In a zoom, `b` puts the git pane where messages were, and the files pane marks each file ● uncommitted or ✓ committed, with the branch in its title.
 - `ari watch` wide panel: turns move under agents on the left, where they get the room; errors move to the right column between session and git and shrink first when space runs out.

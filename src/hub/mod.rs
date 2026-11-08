@@ -298,6 +298,43 @@ pub(crate) fn repo<'a>(i: &'a Input, a: &Agent) -> Option<(&'a crate::git::Git, 
     Some((&r.git, r.dir.as_str()))
 }
 
+/// The plan row of agent `a`'s window: (done, total, what, task in progress). A session's
+/// lead (main, or each session in `--all`) has its session's task list, else its checkbox
+/// plan file; a subagent has the tasks it owns. None: no plan, no row.
+pub(crate) fn plan_of(i: &Input, a: &Agent) -> Option<(usize, usize, String, Option<String>)> {
+    let all = merged(i);
+    let lead = if all {
+        a.parent.as_deref() == Some("main")
+    } else {
+        a.id == "main"
+    };
+    // `--all` prefixes task ids with their session's key, as it does agent ids.
+    let key = a.id.split('/').next().unwrap_or_default();
+    let me = a.label();
+    let tasks: Vec<_> =
+        i.st.tasks
+            .iter()
+            .filter(|t| !all || t.id.split('/').next() == Some(key))
+            .filter(|t| lead || t.owner.as_deref() == Some(me.as_str()))
+            .collect();
+    if tasks.is_empty() {
+        let p = match all {
+            _ if !lead => None,
+            true => i.x.plans.iter().find(|p| p.0 == key).map(|p| &p.1),
+            false => i.x.plan.as_ref(),
+        }?;
+        return Some((p.done, p.total, p.name.clone(), None));
+    }
+    let done = tasks.iter().filter(|t| t.status == "completed").count();
+    let now = tasks.iter().find(|t| t.status == "in_progress");
+    Some((
+        done,
+        tasks.len(),
+        "tasks".into(),
+        now.map(|t| t.subject.clone()),
+    ))
+}
+
 /// A changed path as an agent's file key: anchored to `dir` in `--all`.
 pub(crate) fn file_key(dir: &str, path: &str) -> String {
     if dir.is_empty() {
@@ -769,6 +806,57 @@ mod tests {
         assert_eq!(style(2), faint(), "stale kid");
         assert_eq!(style(3), faint(), "finished kid");
         assert_eq!(style(4).fg, Some(Color::Red), "blocked session");
+    }
+
+    #[test]
+    fn plan_row_lead_gets_session_plan_subagent_its_own_tasks() {
+        use crate::state::{PlanFile, Task};
+        let mut st = with_main(vec![kid("impl", "main", 1), kid("rev", "main", 1)]);
+        let (u, cfg) = Default::default();
+        let mut x = Extras {
+            plan: Some(PlanFile {
+                name: "plan.md".into(),
+                done: 1,
+                total: 4,
+            }),
+            ..Default::default()
+        };
+        let plan = |st: &State, x: &Extras, k: usize| {
+            let i = Input {
+                st,
+                u: &u,
+                x,
+                cfg: &cfg,
+                now: 1,
+                clock: "",
+            };
+            plan_of(&i, &st.agents[k]).map(|p| (p.0, p.1, p.2, p.3))
+        };
+        // No tasks: main falls back to the plan file; subagents have no row.
+        assert_eq!(plan(&st, &x, 0), Some((1, 4, "plan.md".into(), None)));
+        assert_eq!(plan(&st, &x, 1), None);
+        let t = |id: &str, status: &str, owner: Option<&str>| Task {
+            id: id.into(),
+            subject: format!("task {id}"),
+            status: status.into(),
+            owner: owner.map(String::from),
+            ..Default::default()
+        };
+        st.tasks = vec![
+            t("1", "completed", Some("impl")),
+            t("2", "in_progress", Some("impl")),
+            t("3", "pending", None),
+        ];
+        x.plan = None;
+        assert_eq!(
+            plan(&st, &x, 0),
+            Some((1, 3, "tasks".into(), Some("task 2".into())))
+        );
+        assert_eq!(
+            plan(&st, &x, 1),
+            Some((1, 2, "tasks".into(), Some("task 2".into())))
+        );
+        assert_eq!(plan(&st, &x, 2), None, "rev owns no tasks");
     }
 
     #[test]

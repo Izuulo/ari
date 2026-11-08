@@ -387,6 +387,10 @@ impl App {
             return (vec![line], None);
         }
         let parts = hub::all::load(&self.root, now);
+        let plans = parts
+            .iter()
+            .filter_map(|p| Some((p.key.clone(), state::plan_file(&p.st)?)))
+            .collect();
         let mut repos = vec![];
         for p in &parts {
             let Some(dir) = p.u.dir.clone() else { continue };
@@ -407,6 +411,7 @@ impl App {
         let x = bar::Extras {
             tokens: Some(tokens),
             repos,
+            plans,
             ..Default::default()
         };
         let clock = panel::local_hhmm(now);
