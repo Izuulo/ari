@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `ari hub --all` drops the `you` node: each session's main sits on the graph's top row with its live subagents under it as a tree of boxes (state, name, message count, context, what it's doing), and the header counts the agents still open. Each session gets one card instead of a window per agent: its main's calls on the left, a tree of its active subagents on the right, one small box each with what it's doing, its context and its message count. `↑`/`↓` highlights a box and `⏎` zooms into it.
 - **Git section in the panel.** `ari watch` shows the session repo's branch, how far it is ahead of or behind upstream, how many files changed, the last 3 commits and the last 3 GitHub PRs (open, draft, merged or closed), each with its age. It refreshes every 30 s in the background. PRs need the `gh` CLI, logged in. Hide it with `hide_panel = ["git"]` or in settings → PANEL.
 - `a` in the hub switches between the watched session and every live session (`ari hub --all`), and back.
 - `ari hub --all`: each session's box, tile and zoom view name the repo (or folder) it works in.

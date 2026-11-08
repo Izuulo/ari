@@ -127,22 +127,26 @@ pub(crate) struct Layout {
     pub ky: u16,
 }
 
-/// Lead centered one row below the top; kids in a row 3 rows under it (1 when tight).
-/// Big nodes need 21 rows; under 14, nodes shrink to 3 rows so they stay inside the pane.
-pub(crate) fn layout(area: Rect, kids: &[usize], big: bool) -> Layout {
+/// Lead centered one row below the top; kids in a row 3 rows under it (1 when tight), or on the
+/// top row with no lead (`--all`). Big nodes need 21 rows; under 14, nodes shrink to 3 rows.
+pub(crate) fn layout(area: Rect, kids: &[usize], big: bool, has_lead: bool) -> Layout {
     let big = big && area.height >= 21;
     let tight = !big && area.height < 14;
     let (pref, nh) = if big {
         (34, 7)
     } else if tight {
         (20, 3)
+    } else if !has_lead {
+        (30, 4) // `--all`: wider columns for the subagent boxes under each session
     } else {
         (20, 4)
     };
     let inner_w = area.width.saturating_sub(2);
     let lw = pref.min(inner_w);
     let lead = Rect::new(area.x + (area.width - lw) / 2, area.y + 1, lw, nh);
-    let (bus, ky) = if tight {
+    let (bus, ky) = if !has_lead {
+        (area.y + 1, area.y + 1)
+    } else if tight {
         (lead.bottom(), lead.bottom() + 1)
     } else {
         (lead.bottom() + 1, lead.bottom() + 3)
@@ -387,6 +391,63 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
     );
 }
 
+/// Shown in the graph: running, or finished under 5 minutes ago, or every one with `show_done`.
+fn live(i: &Input, a: &Agent, show_done: bool) -> bool {
+    show_done || !a.done || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000
+}
+
+/// `--all`: under each session node, its active subagents as a tree of boxes, as on the session
+/// cards. Returns the row after the tallest tree.
+#[allow(clippy::too_many_arguments)]
+fn subs_tree(
+    buf: &mut Buffer,
+    i: &Input,
+    lay: &Layout,
+    kb: u16,
+    arcs: u16,
+    sel: Option<&str>,
+    legend_y: u16,
+    right_edge: u16,
+    show_done: bool,
+) -> u16 {
+    let st = i.st;
+    // Below the kid ↔ kid arcs, if any.
+    let y0 = if arcs == 0 { kb } else { kb + 1 + arcs };
+    let h = legend_y.saturating_sub(y0);
+    let sel = sel.and_then(|s| st.agents.iter().position(|a| a.id == s));
+    let mut bottom = y0;
+    for (n, (k, r)) in lay.nodes.iter().enumerate() {
+        let subs: Vec<(usize, usize)> = super::subtree(st, *k)
+            .into_iter()
+            // Active only, as on the cards: finished ones would push live ones out of view.
+            .filter(|&(s, _)| show_done || !st.agents[s].done)
+            .collect();
+        if subs.is_empty() || h < 3 {
+            continue;
+        }
+        // The tree's first line runs down from the box's bottom border, 2 columns in.
+        let tx = r.x + 2;
+        buf[(tx, r.bottom() - 1)].set_symbol("┬");
+        for y in r.bottom()..y0 {
+            let c = &mut buf[(tx, y)];
+            match c.symbol() {
+                " " => {
+                    c.set_symbol("│").set_style(faint());
+                }
+                "━" => {
+                    c.set_symbol("┿");
+                }
+                _ => {}
+            }
+        }
+        let xr = lay.nodes.get(n + 1).map_or(right_edge, |(_, r)| r.x);
+        let area = Rect::new(tx - 1, y0, xr.saturating_sub(tx), h);
+        super::agents::sub_boxes(buf, area, i, &subs, sel, false);
+        bottom = bottom.max(y0 + (subs.len() as u16 * 3).min(h));
+    }
+    bottom
+}
+
 /// Draw the graph pane into `area` (its frame included). Kids finished over 5 minutes ago
 /// drop out unless `show_done`.
 pub(crate) fn draw(
@@ -401,16 +462,18 @@ pub(crate) fn draw(
     let st = i.st;
     let all = edges(st);
     let lifted = lift(st, &all);
+    let open = st.agents.iter().filter(|a| !a.done).count();
+    let count = if super::merged(i) {
+        format!("{open} open · {}", plural(st.agents.len(), "agent"))
+    } else {
+        plural(st.agents.len(), "agent")
+    };
     let inner = frame(
         buf,
         area,
         vec![Span::styled("graph", bold())],
         vec![Span::styled(
-            format!(
-                "{} · {}",
-                plural(st.agents.len(), "agent"),
-                plural(all.len(), "link")
-            ),
+            format!("{count} · {}", plural(all.len(), "link")),
             dim(),
         )],
         faint(),
@@ -422,9 +485,7 @@ pub(crate) fn draw(
             let a = &st.agents[k];
             a.id != "main"
                 && a.parent.as_deref().unwrap_or("main") == "main"
-                && (show_done
-                    || !a.done
-                    || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
+                && live(i, a, show_done)
         })
         .collect();
     // Whoever needs you comes first, so it never folds into `+N more`.
@@ -432,13 +493,25 @@ pub(crate) fn draw(
         let a = &st.agents[k];
         (!super::needs_you(a), a.done, a.started)
     });
-    let lay = layout(area, &kids, big);
-    let big = lay.big;
     let main = st.agents.iter().find(|a| a.id == "main");
+    let lay = layout(area, &kids, big, main.is_some());
+    let big = lay.big;
     let legend_y = inner.bottom().saturating_sub(1);
     if lay.nodes.is_empty() {
         match main {
             Some(m) => node(buf, lay.lead, i, m, sel == Some("main"), big),
+            None if super::merged(i) => {
+                let t = "no live sessions";
+                put(
+                    buf,
+                    area.x + (area.width - t.width() as u16) / 2,
+                    lay.ky,
+                    t,
+                    inner.width,
+                    dim(),
+                );
+                return;
+            }
             None => {
                 frame(
                     buf,
@@ -469,16 +542,19 @@ pub(crate) fn draw(
     let mut drops: Vec<(String, u16)> = lay
         .nodes
         .iter()
+        .filter(|_| main.is_some())
         .map(|(k, r)| (st.agents[*k].id.clone(), drop_x(r)))
         .collect();
-    if let Some(r) = lay.more_rect {
+    if let Some(r) = lay.more_rect.filter(|_| main.is_some()) {
         drops.push((String::new(), drop_x(&r)));
     }
     let lo = drops.iter().map(|d| d.1).min().unwrap_or(tx).min(tx);
     let hi = drops.iter().map(|d| d.1).max().unwrap_or(tx).max(tx);
-    lines.run((tx, top), (tx, bus), false, dim());
-    lines.poke(tx, top, U, false, dim());
-    lines.run((lo, bus), (hi, bus), false, dim());
+    if main.is_some() {
+        lines.run((tx, top), (tx, bus), false, dim());
+        lines.poke(tx, top, U, false, dim());
+        lines.run((lo, bus), (hi, bus), false, dim());
+    }
     for (id, dx) in &drops {
         let done = st.agents.iter().any(|a| &a.id == id && a.done);
         let s = if done { faint() } else { dim() };
@@ -575,11 +651,13 @@ pub(crate) fn draw(
     // Junctions on borders, drawn after the nodes.
     let lead_heavy = paths.iter().any(|(e, _)| e.a == "main" || e.b == "main");
     let lead_sel = sel == Some("main");
-    buf[(tx, top - 1)].set_symbol(match (lead_sel, lead_heavy) {
-        (true, _) => "┳",
-        (false, true) => "┰",
-        _ => "┬",
-    });
+    if main.is_some() {
+        buf[(tx, top - 1)].set_symbol(match (lead_sel, lead_heavy) {
+            (true, _) => "┳",
+            (false, true) => "┰",
+            _ => "┬",
+        });
+    }
     for (id, dx) in &drops {
         let heavy = paths
             .iter()
@@ -595,8 +673,22 @@ pub(crate) fn draw(
         buf[(*xa, kb - 1)].set_symbol("┰").set_style(msg());
         buf[(*xb, kb - 1)].set_symbol("┰").set_style(msg());
     }
+    let mut label_y = kb + 1 + drawn.len() as u16;
+    if super::merged(i) && !lay.tight {
+        label_y = label_y.max(subs_tree(
+            buf,
+            i,
+            &lay,
+            kb,
+            drawn.len() as u16,
+            sel,
+            legend_y,
+            inner.right(),
+            show_done,
+        ));
+    }
     if labels {
-        let mut y = kb + 1 + drawn.len() as u16;
+        let mut y = label_y;
         let name = |id: &str| {
             st.agents
                 .iter()
@@ -731,7 +823,7 @@ mod tests {
     #[test]
     fn layout_fits_four_and_overflows_twelve() {
         let area = Rect::new(0, 0, 100, 20);
-        let l = layout(area, &[1, 2, 3, 4], false);
+        let l = layout(area, &[1, 2, 3, 4], false, true);
         assert_eq!(l.nodes.len(), 4);
         assert_eq!(l.more, 0);
         for (k, (_, r)) in l.nodes.iter().enumerate() {
@@ -744,7 +836,7 @@ mod tests {
             }
         }
         let kids: Vec<usize> = (1..=12).collect();
-        let l = layout(area, &kids, false);
+        let l = layout(area, &kids, false, true);
         assert_eq!(l.more, 12 - l.nodes.len());
         assert!(l.more > 0 && l.more_rect.is_some());
         assert!(l.nodes.iter().all(|(_, r)| r.width >= 16));
@@ -814,6 +906,45 @@ mod tests {
         let st = four();
         assert!(pane(&st, 60_000, 100, 20).contains("a4"));
         assert!(!pane(&st, 6 * 60_000, 100, 20).contains("a4"));
+    }
+
+    #[test]
+    fn all_sessions_hang_active_subagent_boxes() {
+        let mut st = State {
+            agents: vec![
+                kid("s1", "main", 1),
+                kid("rev", "s1", 2),
+                kid("old", "s1", 3),
+                kid("s2", "main", 4),
+            ],
+            ..Default::default()
+        };
+        st.agents[2].done = true;
+        let u = crate::usage::Usage {
+            project: Some("all sessions".into()),
+            ..Default::default()
+        };
+        let (x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 100_000,
+            clock: "",
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 20));
+        let area = buf.area;
+        draw(&mut buf, area, &i, Some("rev"), false, false, false);
+        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+        let rev = out.lines().find(|l| l.contains(" rev")).expect(&out);
+        assert!(rev.contains('┏'), "rev is a selected box: {rev}");
+        assert!(out.contains("╰─┫"), "joined to s1 by a tree line: {out}");
+        assert!(
+            !out.contains(" old"),
+            "finished subagents stay off the graph: {out}"
+        );
+        assert!(out.contains("3 open"), "{out}");
     }
 
     #[test]
