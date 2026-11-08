@@ -591,24 +591,35 @@ fn card(
         buf[(left.right(), y)].set_symbol("┆").set_style(faint());
     }
     let tree = Rect::new(left.right() + 1, inner.y, tree_w, inner.height);
-    sub_boxes(buf, tree, i, &subs, sel);
+    sub_boxes(buf, tree, i, &subs, sel, true);
 }
 
-/// The subagent tree: `◆ main` on top, then a 3-row box per subagent, indented 3 columns a level,
-/// joined by tree lines. Scrolls to keep the selected box in view.
-fn sub_boxes(buf: &mut Buffer, r: Rect, i: &Input, subs: &[(usize, usize)], sel: Option<usize>) {
+/// The subagent tree: `◆ main` on top (with `header`; the graph hangs it off the session's box
+/// instead), then a 3-row box per subagent, indented 3 columns a level, joined by tree lines.
+/// Scrolls to keep the selected box in view.
+pub(crate) fn sub_boxes(
+    buf: &mut Buffer,
+    r: Rect,
+    i: &Input,
+    subs: &[(usize, usize)],
+    sel: Option<usize>,
+    header: bool,
+) {
     let st = i.st;
-    let open = subs.iter().filter(|&&(k, _)| !st.agents[k].done).count();
-    let x = put(buf, r.x + 1, r.y, "◆ main", r.width, bold());
-    put(
-        buf,
-        x,
-        r.y,
-        &format!("  {open} active"),
-        r.width.saturating_sub(x - r.x),
-        faint(),
-    );
-    let fit = (r.height.saturating_sub(1) / 3) as usize;
+    let top = header as u16;
+    if header {
+        let open = subs.iter().filter(|&&(k, _)| !st.agents[k].done).count();
+        let x = put(buf, r.x + 1, r.y, "◆ main", r.width, bold());
+        put(
+            buf,
+            x,
+            r.y,
+            &format!("  {open} active"),
+            r.width.saturating_sub(x - r.x),
+            faint(),
+        );
+    }
+    let fit = (r.height.saturating_sub(top) / 3) as usize;
     if fit == 0 {
         return;
     }
@@ -635,7 +646,7 @@ fn sub_boxes(buf: &mut Buffer, r: Rect, i: &Input, subs: &[(usize, usize)], sel:
     for (row, j) in (start..subs.len()).take(room).enumerate() {
         let (k, d) = subs[j];
         let a = &st.agents[k];
-        let y = r.y + 1 + 3 * row as u16;
+        let y = r.y + top + 3 * row as u16;
         // Each level's column: a line where that level's ancestor has a later sibling.
         for lvl in 1..d {
             let anc = (0..j).rev().find(|&p| subs[p].1 == lvl);
@@ -721,12 +732,12 @@ fn sub_boxes(buf: &mut Buffer, r: Rect, i: &Input, subs: &[(usize, usize)], sel:
             s,
         );
     }
-    if overflow && r.y + 1 + 3 * (room as u16) < r.bottom() {
+    if overflow && r.y + top + 3 * (room as u16) < r.bottom() {
         let hidden = subs.len() - room;
         put(
             buf,
             r.x + 1,
-            r.y + 1 + 3 * room as u16,
+            r.y + top + 3 * room as u16,
             &format!("+{hidden} more · ↑↓ to scroll"),
             r.width.saturating_sub(2),
             faint(),

@@ -136,6 +136,8 @@ pub(crate) fn layout(area: Rect, kids: &[usize], big: bool, has_lead: bool) -> L
         (34, 7)
     } else if tight {
         (20, 3)
+    } else if !has_lead {
+        (30, 4) // `--all`: wider columns for the subagent boxes under each session
     } else {
         (20, 4)
     };
@@ -394,14 +396,13 @@ fn live(i: &Input, a: &Agent, show_done: bool) -> bool {
     show_done || !a.done || i.now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000
 }
 
-/// `--all`: under each session node, its live subagents as a tree, one row each: state, name,
-/// `✉` when it has messages (`●` while one is in flight), what it's doing. Returns the row after.
+/// `--all`: under each session node, its live subagents as a tree of boxes, as on the session
+/// cards. Returns the row after the tallest tree.
 #[allow(clippy::too_many_arguments)]
 fn subs_tree(
     buf: &mut Buffer,
     i: &Input,
     lay: &Layout,
-    edges: &[Edge],
     kb: u16,
     arcs: u16,
     sel: Option<&str>,
@@ -412,28 +413,25 @@ fn subs_tree(
     let st = i.st;
     // Below the kid ↔ kid arcs, if any.
     let y0 = if arcs == 0 { kb } else { kb + 1 + arcs };
-    let rows = legend_y.saturating_sub(y0) as usize;
+    let h = legend_y.saturating_sub(y0);
+    let sel = sel.and_then(|s| st.agents.iter().position(|a| a.id == s));
     let mut bottom = y0;
     for (n, (k, r)) in lay.nodes.iter().enumerate() {
         let subs: Vec<(usize, usize)> = super::subtree(st, *k)
             .into_iter()
             .filter(|&(s, _)| live(i, &st.agents[s], show_done))
             .collect();
-        if subs.is_empty() || rows == 0 {
+        if subs.is_empty() || h < 3 {
             continue;
         }
+        // The tree's first line runs down from the box's bottom border, 2 columns in.
         let tx = r.x + 2;
-        let xr = lay
-            .nodes
-            .get(n + 1)
-            .map_or(right_edge, |(_, r)| r.x)
-            .saturating_sub(2);
         buf[(tx, r.bottom() - 1)].set_symbol("┬");
         for y in r.bottom()..y0 {
             let c = &mut buf[(tx, y)];
             match c.symbol() {
                 " " => {
-                    c.set_symbol("│").set_style(dim());
+                    c.set_symbol("│").set_style(faint());
                 }
                 "━" => {
                     c.set_symbol("┿");
@@ -441,53 +439,10 @@ fn subs_tree(
                 _ => {}
             }
         }
-        let (shown, more) = if subs.len() <= rows {
-            (subs.len(), 0)
-        } else {
-            (rows - 1, subs.len() - (rows - 1))
-        };
-        for (row, &(s, depth)) in subs.iter().take(shown).enumerate() {
-            let y = y0 + row as u16;
-            let a = &st.agents[s];
-            let last = row + 1 == shown && more == 0;
-            put(buf, tx, y, if last { "╰" } else { "├" }, 1, dim());
-            let mut x = tx + 1 + 2 * (depth as u16).saturating_sub(1);
-            let w = |x: u16| (xr + 1).saturating_sub(x);
-            let (g, gs) = glyph(i, a);
-            x = put(buf, x, y, &format!(" {g} "), w(x), gs);
-            let mut ns = node_style(i, a).add_modifier(Modifier::BOLD);
-            if sel == Some(a.id.as_str()) {
-                ns = ns.add_modifier(Modifier::REVERSED);
-            }
-            x = put(buf, x, y, &a.label(), w(x), ns);
-            let mine: Vec<&Edge> = edges
-                .iter()
-                .filter(|e| e.a == a.id || e.b == a.id)
-                .collect();
-            if !mine.is_empty() {
-                let flying = mine.iter().any(|e| i.now.saturating_sub(e.t) < PACKET_MS);
-                x = put(buf, x, y, if flying { " ●" } else { " ✉" }, w(x), msg());
-            }
-            let (act, s) = if a.waiting.is_some() {
-                ("needs you".to_string(), msg())
-            } else if a.done {
-                ("done".to_string(), faint())
-            } else {
-                (a.act.clone().unwrap_or_else(|| "—".into()), dim())
-            };
-            put(buf, x, y, &format!(" {act}"), w(x), s);
-        }
-        if more > 0 {
-            put(
-                buf,
-                tx,
-                y0 + shown as u16,
-                &format!("╰ +{more} more"),
-                (xr + 1).saturating_sub(tx),
-                faint(),
-            );
-        }
-        bottom = bottom.max(y0 + shown as u16 + (more > 0) as u16);
+        let xr = lay.nodes.get(n + 1).map_or(right_edge, |(_, r)| r.x);
+        let area = Rect::new(tx - 1, y0, xr.saturating_sub(tx), h);
+        super::agents::sub_boxes(buf, area, i, &subs, sel, false);
+        bottom = bottom.max(y0 + (subs.len() as u16 * 3).min(h));
     }
     bottom
 }
@@ -723,7 +678,6 @@ pub(crate) fn draw(
             buf,
             i,
             &lay,
-            &all,
             kb,
             drawn.len() as u16,
             sel,
