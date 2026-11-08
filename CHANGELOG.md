@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- **Git in the hub.** `b` swaps the hub's messages and activity panes for a git pane (branch, last commits and PRs) and an uncommitted pane listing each agent's edits that are still uncommitted. In a zoom, `b` puts the git pane where messages were, and the files pane marks each file ● uncommitted or ✓ committed, with the branch in its title. Not in `ari hub --all` yet.
+- `b` works in `ari hub --all` too: the git pane shows a row per session (branch, changed files, newest PR or commit), and each agent's uncommitted edits are checked against its own session's repo. Each live session's repo refreshes in the background every 30 s.
+- **Git in the hub.** `b` swaps the hub's messages and activity panes for a git pane (branch, last commits and PRs) and an uncommitted pane listing each agent's edits that are still uncommitted. In a zoom, `b` puts the git pane where messages were, and the files pane marks each file ● uncommitted or ✓ committed, with the branch in its title.
 - `ari watch` wide panel: turns move under agents on the left, where they get the room; errors move to the right column between session and git and shrink first when space runs out.
 - Roadmap §7: eleven fixes for common Claude Code complaints (alerts, weekly forecast, edit churn, compaction redo, test tampering, risky commands, quality baseline, recap review order, startup context, `ari find`, spend alerts), each with an implementation plan in `docs/superpowers/plans/`.
 - `ari hub --all` drops the `you` node: each session's main sits on the graph's top row with its live subagents under it as a tree of boxes (state, name, message count, context, what it's doing), and the header counts the agents still open. Each session gets one card instead of a window per agent: its main's calls on the left, a tree of its active subagents on the right, one small box each with what it's doing, its context and its message count. `↑`/`↓` highlights a box and `⏎` zooms into it.

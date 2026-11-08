@@ -252,8 +252,8 @@ pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, a: &Agent, v: &super
     context(buf, Rect::new(rx, area.y, rw, ch), i, a);
     let mh = (area.height - ch) * 2 / 5;
     let mr = Rect::new(rx, area.y + ch, rw, mh);
-    if v.git && !super::merged(i) {
-        super::feed::git(buf, mr, i);
+    if v.git {
+        super::feed::git(buf, mr, i, super::repo(i, a).map(|r| r.0));
     } else {
         messages(buf, mr, i, a);
     }
@@ -433,13 +433,17 @@ fn messages(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
 }
 
 fn files(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
+    let repo = super::repo(i, a);
+    let dirty = |p: &str| {
+        repo.is_some_and(|(g, dir)| g.changed.iter().any(|c| super::file_key(dir, c) == p))
+    };
     let inner = frame(
         buf,
         r,
         vec![Span::styled("files", bold())],
         vec![Span::styled(
-            i.x.git.as_ref().map_or("edits from hooks".into(), |g| {
-                let n = a.files.keys().filter(|p| g.changed.contains(p)).count();
+            repo.map_or("edits from hooks".into(), |(g, _)| {
+                let n = a.files.keys().filter(|p| dirty(p)).count();
                 format!("{} · {n} uncommitted", g.branch)
             }),
             dim(),
@@ -470,7 +474,7 @@ fn files(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
             format!("⚠ {} edited it too", others.join(", "))
         };
         // ● still uncommitted, ✓ committed since; blank before git has loaded.
-        let mark = i.x.git.as_ref().map(|g| g.changed.contains(p));
+        let mark = repo.map(|_| dirty(p));
         let (m, ms) = match mark {
             Some(true) => ("● ", warn()),
             Some(false) => ("✓ ", faint()),

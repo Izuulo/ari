@@ -426,6 +426,58 @@ mod tests {
     }
 
     #[test]
+    fn uncommitted_matches_each_agent_to_its_own_repo() {
+        let (mut a, mut b) = two();
+        for (p, dir) in [(&mut a, "/a"), (&mut b, "/b")] {
+            p.u.dir = Some(dir.into());
+            p.st.agents[1]
+                .files
+                .insert("README.md".into(), Default::default());
+        }
+        let repo = |key: &str, dir: &str, changed: &[&str]| crate::git::Repo {
+            key: key.into(),
+            dir: dir.into(),
+            git: crate::git::Git {
+                branch: "main".into(),
+                changed: changed.iter().map(|c| c.to_string()).collect(),
+                ..Default::default()
+            },
+        };
+        let (st, u, _) = merge(vec![a, b], 0);
+        let x = crate::bar::Extras {
+            // /b's README.md is committed; its notes.md is no agent's.
+            repos: vec![
+                repo("aaaaaaaa", "/a", &["README.md"]),
+                repo("bbbbbbbb", "/b", &["notes.md"]),
+            ],
+            ..Default::default()
+        };
+        let cfg = Default::default();
+        let i = crate::hub::Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 1,
+            clock: "",
+        };
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 70, 6));
+        let area = buf.area;
+        super::super::feed::uncommitted(&mut buf, area, &i);
+        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+        let rows: Vec<&str> = out.lines().filter(|l| l.contains("  1  ")).collect();
+        assert_eq!(rows.len(), 2, "{out}");
+        assert!(
+            rows[0].contains("rev") && rows[0].contains("README.md"),
+            "{out}"
+        );
+        assert!(
+            rows[1].contains("other") && rows[1].contains("web: notes.md"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn same_relative_path_in_two_repos_is_not_shared() {
         let files = |dir: &str| {
             let (mut p, _) = two();

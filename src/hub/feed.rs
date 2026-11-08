@@ -8,6 +8,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
+use unicode_width::UnicodeWidthStr;
 
 const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
@@ -259,9 +260,9 @@ pub(crate) fn tasks(buf: &mut Buffer, area: Rect, i: &Input) {
     let _ = (SPINNER, msg);
 }
 
-/// `b`: the watch panel's git rows, branch and working tree in the title.
-pub(crate) fn git(buf: &mut Buffer, area: Rect, i: &Input) {
-    let mut rows = crate::panel::git_rows(i.x, i.now);
+/// `b`: one repo's git rows as the watch panel shows them, branch and working tree in the title.
+pub(crate) fn git(buf: &mut Buffer, area: Rect, i: &Input, g: Option<&crate::git::Git>) {
+    let mut rows = crate::panel::git_rows(g, i.now);
     let right = if rows.is_empty() {
         vec![]
     } else {
@@ -276,57 +277,170 @@ pub(crate) fn git(buf: &mut Buffer, area: Rect, i: &Input) {
         false,
     );
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
-    if i.x.git.is_none() {
-        put(buf, x, inner.y, "no repo here, or still loading", w, faint());
+    if g.is_none() {
+        put(
+            buf,
+            x,
+            inner.y,
+            "no repo here, or still loading",
+            w,
+            faint(),
+        );
     }
     for (n, r) in rows.into_iter().take(inner.height as usize).enumerate() {
         buf.set_line(x, inner.y + n as u16, &r.into(), w);
     }
 }
 
-/// `b`: each agent's edits that git still shows as changed, then changes no agent made.
-pub(crate) fn uncommitted(buf: &mut Buffer, area: Rect, i: &Input) {
-    let changed = i.x.git.as_ref().map_or(&[][..], |g| &g.changed[..]);
+/// `b` in `--all`: a row per session: branch, changed files, then its newest PR or commit.
+pub(crate) fn repos(buf: &mut Buffer, area: Rect, i: &Input) {
     let inner = frame(
         buf,
         area,
-        vec![Span::styled("uncommitted", bold())],
-        vec![Span::styled(format!("{} files · by agent", changed.len()), dim())],
+        vec![Span::styled("git", bold())],
+        vec![Span::styled(format!("{} repos", i.x.repos.len()), dim())],
         faint(),
         false,
     );
     let (x0, w) = (inner.x + 1, inner.width.saturating_sub(2));
-    if changed.is_empty() {
+    if i.x.repos.is_empty() {
+        put(
+            buf,
+            x0,
+            inner.y,
+            "no repos yet, or still loading",
+            w,
+            faint(),
+        );
+    }
+    let head = |g: &crate::git::Git| {
+        let mut h = g.branch.clone();
+        if g.ahead > 0 {
+            h += &format!(" ↑{}", g.ahead);
+        }
+        if g.behind > 0 {
+            h += &format!(" ↓{}", g.behind);
+        }
+        h
+    };
+    // One branch column for every row, as wide as the longest branch (at most a third).
+    let bw =
+        i.x.repos
+            .iter()
+            .map(|r| head(&r.git).width())
+            .max()
+            .unwrap_or(0);
+    let bw = bw.min(w as usize / 3);
+    for (n, r) in i.x.repos.iter().take(inner.height as usize).enumerate() {
+        let y = inner.y + n as u16;
+        let g = &r.git;
+        let lead = i.st.agents.iter().find(|a| a.id == r.key);
+        let (name, s) = lead.map_or((r.key.clone(), dim()), |a| (a.label(), node_style(i, a)));
+        let x = put(buf, x0, y, &format!("{:<9} ", super::clip(&name, 9)), 10, s);
+        let h = super::clip(&head(g), bw);
+        let pad = bw.saturating_sub(h.width());
+        let x = put(
+            buf,
+            x,
+            y,
+            &format!("{h}{}  ", " ".repeat(pad)),
+            bw as u16 + 2,
+            bold(),
+        );
+        let tree = match g.changed.len() {
+            0 => (format!("{:<12}", "clean"), faint()),
+            c => (format!("{:<12}", format!("{c} changed")), warn()),
+        };
+        let x = put(buf, x, y, &tree.0, 13, tree.1);
+        // The panel's rows after the branch row: commits then PRs; show the newest PR, else commit.
+        let rows = crate::panel::git_rows(Some(g), i.now);
+        let last = rows.get(1 + g.commits.len()).or(rows.get(1));
+        if let Some(r) = last {
+            buf.set_line(x, y, &r.clone().into(), (x0 + w).saturating_sub(x));
+        }
+    }
+}
+
+/// `b`: each agent's edits git still shows as changed, then each repo's changes no agent made.
+pub(crate) fn uncommitted(buf: &mut Buffer, area: Rect, i: &Input) {
+    let all = super::merged(i);
+    let repos: Vec<(&crate::git::Git, &str, String)> = if all {
+        i.x.repos
+            .iter()
+            .map(|r| {
+                let name = i.st.agents.iter().find(|a| a.id == r.key);
+                (
+                    &r.git,
+                    r.dir.as_str(),
+                    name.map_or(r.key.clone(), |a| a.label()),
+                )
+            })
+            .collect()
+    } else {
+        i.x.git.iter().map(|g| (g, "", String::new())).collect()
+    };
+    let total: usize = repos.iter().map(|r| r.0.changed.len()).sum();
+    let inner = frame(
+        buf,
+        area,
+        vec![Span::styled("uncommitted", bold())],
+        vec![Span::styled(format!("{total} files · by agent"), dim())],
+        faint(),
+        false,
+    );
+    let (x0, w) = (inner.x + 1, inner.width.saturating_sub(2));
+    if total == 0 {
         put(buf, x0, inner.y, "working tree clean", w, faint());
         return;
     }
-    let mut rows: Vec<(String, Style, Vec<&str>)> = order(i.st)
+    // (who, style, count, files)
+    let mut rows: Vec<(String, Style, usize, String)> = order(i.st)
         .into_iter()
         .map(|k| &i.st.agents[k])
-        .map(|a| {
-            let mine: Vec<&str> = changed
+        .filter_map(|a| {
+            let (g, dir) = super::repo(i, a)?;
+            let mine: Vec<&str> = g
+                .changed
                 .iter()
-                .filter(|c| a.files.contains_key(*c))
+                .filter(|c| a.files.contains_key(&super::file_key(dir, c)))
                 .map(String::as_str)
                 .collect();
             let s = if a.done { faint() } else { node_style(i, a) };
-            (a.label(), s, mine)
+            (!mine.is_empty()).then(|| (a.label(), s, mine.len(), mine.join(", ")))
         })
-        .filter(|r| !r.2.is_empty())
         .collect();
-    let other: Vec<&str> = changed
-        .iter()
-        .filter(|c| !i.st.agents.iter().any(|a| a.files.contains_key(*c)))
-        .map(String::as_str)
-        .collect();
-    if !other.is_empty() {
-        rows.push(("other".into(), dim(), other));
+    for (g, dir, name) in &repos {
+        let other: Vec<&str> = g
+            .changed
+            .iter()
+            .filter(|c| {
+                let k = super::file_key(dir, c);
+                !i.st.agents.iter().any(|a| a.files.contains_key(&k))
+            })
+            .map(String::as_str)
+            .collect();
+        if !other.is_empty() {
+            // `--all`: say whose repo the leftovers are in.
+            let lead = if all {
+                format!("{name}: ")
+            } else {
+                String::new()
+            };
+            rows.push(("other".into(), dim(), other.len(), lead + &other.join(", ")));
+        }
     }
-    for (n, (who, s, files)) in rows.iter().take(inner.height as usize).enumerate() {
+    for (n, (who, s, count, files)) in rows.iter().take(inner.height as usize).enumerate() {
         let y = inner.y + n as u16;
         let x = put(buf, x0, y, &format!("{:<9} ", super::clip(who, 9)), 10, *s);
-        let x = put(buf, x, y, &format!("{:>3}  ", files.len()), 5, warn());
-        put(buf, x, y, &files.join(", "), (x0 + w).saturating_sub(x), Style::default());
+        let x = put(buf, x, y, &format!("{count:>3}  "), 5, warn());
+        put(
+            buf,
+            x,
+            y,
+            files,
+            (x0 + w).saturating_sub(x),
+            Style::default(),
+        );
     }
 }
 
@@ -438,8 +552,12 @@ mod tests {
     #[test]
     fn uncommitted_by_agent() {
         let mut st = with_main(vec![kid("a1", "main", 1)]);
-        st.agents[1].files.insert("src/x.rs".into(), Default::default());
-        st.agents[1].files.insert("src/done.rs".into(), Default::default());
+        st.agents[1]
+            .files
+            .insert("src/x.rs".into(), Default::default());
+        st.agents[1]
+            .files
+            .insert("src/done.rs".into(), Default::default());
         let x = crate::bar::Extras {
             git: Some(crate::git::Git {
                 branch: "main".into(),
