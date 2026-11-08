@@ -1,7 +1,7 @@
 //! `ari hook`: called synchronously by Claude Code, Codex and dsh on every hook event.
 //! Rules: always exit 0, never print, append one line, do nothing heavy.
 
-use crate::{app::App, config, event, paths};
+use crate::{app::App, config, event, notify, paths};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -49,11 +49,15 @@ fn handle(app: App) {
     }
     // Create-only, on any event: sessions that began before ARI was installed still get a cwd.
     write_meta(&dir, &raw, t, app);
+    let cfg = config::load();
     if ev.e == "SessionStart" {
-        let days = config::load().retention_days.max(1);
+        let days = cfg.retention_days.max(1);
         prune(&root, Duration::from_secs(days * 86_400), &dir);
     }
     let _ = append(&dir.join("events.jsonl"), event::to_line(&ev).as_bytes());
+    if let Some(n) = notify::check(&dir, &cfg, t) {
+        notify::send(&n, &cfg.notify);
+    }
 }
 
 pub fn now_ms() -> u64 {

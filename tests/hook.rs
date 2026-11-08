@@ -10,7 +10,15 @@ fn tmp(name: &str) -> PathBuf {
     d
 }
 
+/// Keep `cargo test` from popping real desktop notifications.
+fn quiet_config(state: &Path) {
+    let d = state.join("config/ari");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("config.toml"), "[notify]\ndesktop = false\n").unwrap();
+}
+
 fn hook(state: &Path, stdin: &[u8]) -> Output {
+    quiet_config(state);
     let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
         .arg("hook")
         .env("XDG_STATE_HOME", state)
@@ -166,6 +174,7 @@ fn first_event_writes_meta_once() {
 }
 
 fn hook_args(state: &Path, args: &[&str], stdin: &[u8]) -> Output {
+    quiet_config(state);
     let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
         .arg("hook")
         .args(args)

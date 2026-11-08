@@ -113,20 +113,20 @@
   - `pub fn check(dir: &Path, cfg: &Config, now: u64) -> Option<Note>`: returns `None` at once when `!cfg.notify.desktop && cfg.notify.ntfy.is_empty()`. Otherwise opens (creating) `dir/notify.json`, `libc::flock(fd, LOCK_EX)`, reads `Seen` (default on empty/broken), `load_session`, `verdict_with(cfg.thresholds.stuck_repeats)`, `decide`, writes the new `Seen` in place (`set_len(0)`, seek 0, `write_all` — not `write_atomic`, which would swap the inode under the lock), unlocks by drop. Returns `Some(note)` on fire. It does not send.
   - `hook::handle`: after the `events.jsonl` append: `let cfg = config::load();` (move the existing `SessionStart` load to reuse it), then `if let Some(n) = notify::check(&dir, &cfg, t) { notify::send(&n, &cfg.notify) }`.
 
-- [ ] **Step 1: Write the failing `decide` tests** in `notify.rs`:
+- [x] **Step 1: Write the failing `decide` tests** in `notify.rs`:
   - `fires_once_per_flip`: from `Seen::default()`, `OnTrack` → no fire; `Stuck` → fire; `Stuck` again → no fire; `OnTrack` then `Stuck` 2 min later → fire.
   - `not_in_on_list_never_fires`: `on = ["done"]`, `NeedsYou` → no fire, but `Seen.v == "needs_you"` (so a later flip still counts).
   - `same_verdict_within_repeat_ms_is_quiet`: `Stuck` fire at t, `Retrying` at t+10 s, `Stuck` at t+20 s → no fire; at t+REPEAT_MS+1 → fire.
   - `idle_prompt_after_done_does_not_double_notify`: `Done` (turn_active false, turns 3) fires; `NeedsYou` (turn_active false, turns 3) 60 s later → no fire; next turn `OnTrack` (turns 4) then `NeedsYou` with turn_active true → fire.
   - `idle_prompt_after_unnotified_idle_fires`: default `on`, `Idle` (turns 3) → no fire; `NeedsYou` (turn_active false, turns 3) → fire.
-- [ ] **Step 2: Write the failing `check` tests** (temp session dir; write `events.jsonl` lines with `event::to_line` as other tests do):
+- [x] **Step 2: Write the failing `check` tests** (temp session dir; write `events.jsonl` lines with `event::to_line` as other tests do):
   - `off_does_nothing`: `desktop = false`, `ntfy = ""`, events that make the session STUCK → `None`; neither `notify.json` nor `state.json` exists afterwards.
   - `check_reports_stuck_once`: events making the verdict STUCK (three identical failing Bash calls, as in `state.rs`'s stuck tests) → first `check` is `Some(note)` with body starting `↻ STUCK · `; second `check` → `None`.
   - `concurrent_checks_fire_once`: same STUCK dir, 8 threads call `check` at once → exactly one `Some`.
-- [ ] **Step 3: Run** `cargo test notify::` — FAIL.
-- [ ] **Step 4: Implement** `Seen`, `decide`, `note`, `check`, and the two lines in `hook::handle`.
-- [ ] **Step 5: Run** `cargo test` — PASS.
-- [ ] **Step 6: Commit** `feat(notify): notify once when a session flips, from the hook`.
+- [x] **Step 3: Run** `cargo test notify::` — FAIL.
+- [x] **Step 4: Implement** `Seen`, `decide`, `note`, `check`, and the two lines in `hook::handle`.
+- [x] **Step 5: Run** `cargo test` — PASS.
+- [x] **Step 6: Commit** `feat(notify): notify once when a session flips, from the hook`.
 
 ---
 
