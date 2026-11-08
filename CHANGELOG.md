@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `ari hub --all`: zooming `you` lists every session with its state, current action and context, the ones that need you first, with total cost, the 5h limit, open errors and messages between sessions.
+- `ari hub --all`: the `you` tile and its zoom list every session with its state, current action and context, the ones that need you first, with total cost, the 5h limit, open errors and messages between sessions.
 - **Git section in the panel.** `ari watch` shows the session repo's branch, how far it is ahead of or behind upstream, how many files changed, the last 3 commits and the last 3 GitHub PRs (open, draft, merged or closed), each with its age. It refreshes every 30 s in the background. PRs need the `gh` CLI, logged in. Hide it with `hide_panel = ["git"]` or in settings → PANEL.
 - `a` in the hub switches between the watched session and every live session (`ari hub --all`), and back.
 - `ari hub --all`: each session's box, tile and zoom view name the repo (or folder) it works in.
