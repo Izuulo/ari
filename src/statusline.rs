@@ -36,15 +36,20 @@ fn own_row(input: &[u8], cfg: &config::Config) -> String {
     let mut x = bar::Extras::default();
     let st = session_dir(&u)
         .map(|dir| {
+            let root = paths::state_root();
             if raw.is_object() && std::fs::create_dir_all(&dir).is_ok() {
                 let _ = paths::write_atomic(&dir.join("usage.json"), input);
                 burn::record(&dir, &u, now);
+                if let Some(root) = &root {
+                    burn::record_week(root, u.seven_d, now);
+                }
             }
             let st = state::load_session(&dir);
             x.compacts_in = burn::forecast(&dir, &st, cfg);
             x.plan = state::plan_file(&st);
-            if let Some(root) = paths::state_root() {
-                x.conflicts = crate::conflicts::cached(&root, &dir, now);
+            if let Some(root) = &root {
+                x.conflicts = crate::conflicts::cached(root, &dir, now);
+                x.week_eta = burn::week_projection(&burn::load_week(root, now), u.seven_d, now);
             }
             x.tokens = Some(tokens::update_debounced(&dir, &st, &u));
             x.transcript_age_ms =

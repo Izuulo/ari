@@ -46,17 +46,17 @@
   - `pub fn load_week(root: &Path, now: u64) -> Vec<Sample>`: tail 64 KiB, samples within `WEEK_WINDOW_MS`, sorted by `t`.
   - `pub fn week_projection(samples: &[Sample], now: u64) -> Option<u64>` = `eta(samples, now, WEEK_WINDOW_MS, WEEK_MIN_SPAN_MS)`.
 
-- [ ] **Step 1: Write the failing tests** in `burn.rs` tests (reuse `series`, which steps one sample per minute; add a `series_h(start_pct, per_hour, hours, resets_in_s)` with one sample per 10 min):
+- [x] **Step 1: Write the failing tests** in `burn.rs` tests (reuse `series`, which steps one sample per minute; add a `series_h(start_pct, per_hour, hours, resets_in_s)` with one sample per 10 min):
   - `week_pace_warns_before_reset`: 40% → 46% over 3 h (2%/h), resets in 3 days → `week_projection` ≈ 27 h (within 1 min); resets in 20 h → `None`.
   - `week_needs_an_hour_of_samples`: 50 min of rising samples → `None`; samples 7 h old only → `None`.
   - `week_ignores_previous_window`: old window at 90% rising with one `resets_at`, then a flat 2% hour with a new one → `None`.
   - `week_fit_survives_out_of_order_lines`: the rising series with two neighbours swapped → same ETA as sorted, no panic.
   - `record_week_dedupes_and_loads`: same pct at `NOW` and `NOW + 60_000` → one line; same pct at `NOW + WEEK_GAP_MS` → two; new pct at `NOW + 61_000` → appended; `load_week(root, NOW + WEEK_WINDOW_MS + 1)` drops the first.
   - `record_week_skips_missing_limit`: `record_week(root, None, NOW)` creates no file.
-- [ ] **Step 2: Run** `cargo test burn::` — FAIL.
-- [ ] **Step 3: Implement** the constants and functions; turn `projection` into a call to `eta`.
-- [ ] **Step 4: Run** `cargo test burn::` — PASS, including the untouched 5h tests.
-- [ ] **Step 5: Commit** `feat(burn): sample and forecast the 7-day limit`.
+- [x] **Step 2: Run** `cargo test burn::` — FAIL.
+- [x] **Step 3: Implement** the constants and functions; turn `projection` into a call to `eta`.
+- [x] **Step 4: Run** `cargo test burn::` — PASS, including the untouched 5h tests.
+- [x] **Step 5: Commit** `feat(burn): sample and forecast the 7-day limit`.
 
 ---
 
@@ -78,16 +78,16 @@
   - `statusline::own_row`: inside the session-dir closure, after `burn::record`: `if let Some(root) = paths::state_root() { burn::record_week(&root, u.seven_d, now); x.week_eta = burn::week_projection(&burn::load_week(&root, now), now); }` (merge with the existing `state_root` call for conflicts).
   - `watch::refresh`: `self.x.week_eta = (self.session_app == App::Claude).then(|| burn::week_projection(&burn::load_week(&self.root, now), now)).flatten();` Watch never writes `week.jsonl`.
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - `panel.rs` `weekday_names`: `local_weekday(0)` is one of `Wed`/`Thu` (time-zone dependent); for every `ms` in a week stepped by 6 h, the result is in `["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]`; seven consecutive days give seven distinct names.
   - `bar.rs` `week_forecast_on_the_7d_segment`: with the existing fixture `st`/`u` and `Extras { week_eta: Some(30 * 3_600_000), .. }` → row contains `format!("7d 34% ↺4d ▲{} {}", local_weekday(NOW + eta), local_hhmm(NOW + eta))`; `week_eta: None` → row identical to today's expected string; `hide = ["7d"]` → no `▲`; `ascii = true` → contains `^` and no `▲`.
   - `panel.rs` `week_runs_out_row`: `lines(...)` with `week_eta: Some(eta)` → plain text contains `▲ 7d runs out ` + weekday + ` ~` + `local_hhmm(NOW + eta)` + ` at this pace`; without → no `7d runs out`.
   - `watch.rs` `watch_reads_week_from_its_root`: `app_on(root, "s1", events)`; write a rising `week.jsonl` under `root` (via `burn::record_week` at past times) and a `usage.json` with `rate_limits.seven_day` resetting in 3 days; `refresh` → `app.x.week_eta.is_some()`; a Codex session (`meta.json` `"agent":"codex"`) → `None`.
-- [ ] **Step 2: Run** `cargo test bar:: panel:: watch::` — FAIL.
-- [ ] **Step 3: Implement** the field, `local_weekday`, the segment suffix, the panel row, and the two wiring lines.
-- [ ] **Step 4: Run** `cargo test` — PASS with no snapshot changes (fixtures have no `week.jsonl`). `scripts/bench-statusline.sh` still exits 0 (p95 < 50 ms).
+- [x] **Step 2: Run** `cargo test bar:: panel:: watch::` — FAIL.
+- [x] **Step 3: Implement** the field, `local_weekday`, the segment suffix, the panel row, and the two wiring lines.
+- [x] **Step 4: Run** `cargo test` — PASS with no snapshot changes (fixtures have no `week.jsonl`). `scripts/bench-statusline.sh` still exits 0 (p95 < 50 ms).
 - [ ] **Step 5: Real check.** `cargo install --path . --root ~/.local --force` (rm first per local-install memory). With a session open for an hour of work, `tail ~/.local/state/ari/week.jsonl` shows samples about every 10 min or on change; the forecast appears only when the pace would finish before the reset.
-- [ ] **Step 6: Commit** `feat(burn): 7d forecast in the statusline and panel`.
+- [x] **Step 6: Commit** `feat(burn): 7d forecast in the statusline and panel`.
 
 ---
 
@@ -96,7 +96,7 @@
 **Files:**
 - Modify: `README.md`, `CHANGELOG.md`, `Cargo.toml`, `.claude-plugin/plugin.json`, `Cargo.lock`
 
-- [ ] **Step 1: README.** Why-ARI "Rate-limit foresight" row: `Warns when you'll hit the 5-hour or the weekly limit before it resets`. "What you get": one sentence after the statusline example: when the week's pace would run out the 7d limit before it resets, the 7d segment shows when (`▲Thu 14:00`) and the panel says `▲ 7d runs out Thu ~14:00 at this pace`; the pace is the last 6 h across all your Claude Code sessions.
-- [ ] **Step 2: Changelog and version.** One bullet under `## Unreleased` (**Weekly limit forecast**). Bump the patch version in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo check` refreshes `Cargo.lock`.
-- [ ] **Step 3: Run** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — PASS.
-- [ ] **Step 4: Commit** `docs: weekly limit forecast` and `chore: bump version`, push, open the PR with a bullet body.
+- [x] **Step 1: README.** Why-ARI "Rate-limit foresight" row: `Warns when you'll hit the 5-hour or the weekly limit before it resets`. "What you get": one sentence after the statusline example: when the week's pace would run out the 7d limit before it resets, the 7d segment shows when (`▲Thu 14:00`) and the panel says `▲ 7d runs out Thu ~14:00 at this pace`; the pace is the last 6 h across all your Claude Code sessions.
+- [x] **Step 2: Changelog and version.** One bullet under `## Unreleased` (**Weekly limit forecast**). Bump the patch version in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo check` refreshes `Cargo.lock`.
+- [x] **Step 3: Run** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — PASS.
+- [x] **Step 4: Commit** `docs: weekly limit forecast` and `chore: bump version`, push, open the PR with a bullet body.
