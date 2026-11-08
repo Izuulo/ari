@@ -987,6 +987,7 @@ mod tests {
             since: 1,
             n: 3,
             last: "editing a.rs".into(),
+            ..Default::default()
         });
         let out = draw_with(&st, 68, 12, |b, r, i| table(b, r, i, 0));
         assert!(

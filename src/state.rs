@@ -143,6 +143,8 @@ pub struct Redo {
     pub n: u32,
     /// The latest redone call's activity.
     pub last: String,
+    /// Hashes already counted, so re-running one command counts once.
+    pub seen: Vec<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -1180,18 +1182,23 @@ impl State {
                 .as_deref()
                 .and_then(|s| s.split_once(':'))
                 .map_or("", |c| c.1);
-            if REORIENT.iter().any(|w| {
-                cmd.strip_prefix(w)
-                    .is_some_and(|r| r.is_empty() || r.starts_with(' '))
-            }) {
+            // Test runs whose output had no counts (`go test`, `bun test`) aren't work either.
+            if crate::event::runs_tests(cmd)
+                || REORIENT.iter().any(|w| {
+                    cmd.strip_prefix(w)
+                        .is_some_and(|r| r.is_empty() || r.starts_with(' '))
+                })
+            {
                 return;
             }
         }
         let Some(h) = ev.h else { return };
         if let Some(r) = &mut self.redo
             && ev.t >= r.since
+            && !r.seen.contains(&h)
             && self.work.iter().any(|&(t, wh)| wh == h && t < r.since)
         {
+            r.seen.push(h);
             r.n += 1;
             r.last = ev.act.clone().unwrap_or_default();
         }
@@ -2615,6 +2622,28 @@ mod tests {
         evs.extend(before(1_051));
         evs.push(post(1_060, None, "Edit", "Edit:c.rs", 99, true));
         assert_eq!(run(&evs).redo.unwrap().n, 0);
+    }
+
+    #[test]
+    fn redo_skips_test_runs_without_counts() {
+        let mut evs = vec![at_prompt(1_000, "build")];
+        evs.push(post(1_001, None, "Bash", "Bash:go test", 20, true));
+        evs.push(compact(1_050, "PreCompact"));
+        for t in 1_051..1_054 {
+            evs.push(post(t, None, "Bash", "Bash:go test", 20, true));
+        }
+        assert_eq!(run(&evs).redo.unwrap().n, 0);
+    }
+
+    #[test]
+    fn redo_counts_each_repeat_once() {
+        let mut evs = vec![at_prompt(1_000, "build")];
+        evs.push(post(1_001, None, "Bash", "Bash:cargo build", 3, true));
+        evs.push(compact(1_050, "PreCompact"));
+        for t in 1_051..1_054 {
+            evs.push(post(t, None, "Bash", "Bash:cargo build", 3, true));
+        }
+        assert_eq!(run(&evs).redo.unwrap().n, 1);
     }
 
     #[test]

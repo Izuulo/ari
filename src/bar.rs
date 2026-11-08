@@ -504,6 +504,7 @@ mod tests {
             since: 1,
             n: 3,
             last: "editing a.rs".into(),
+            ..Default::default()
         });
         let v = st.verdict();
         let row = render(&st, &u, x, cfg, NOW, 200, false);

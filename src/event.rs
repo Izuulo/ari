@@ -350,20 +350,23 @@ fn lists(raw: &Value, ev: &mut Event) {
     });
 }
 
+/// A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
+pub fn runs_tests(cmd: &str) -> bool {
+    cmd.split_whitespace().any(|w| {
+        let w = w.rsplit('/').next().unwrap_or(w);
+        w == "test"
+            || w.starts_with("test:")
+            || ["pytest", "jest", "vitest", "nextest", "mocha"].contains(&w)
+    })
+}
+
 /// (passed, failed) in a test command's output: cargo, pytest, jest and vitest all print
 /// `N passed` and `N failed`.
 // shortcut: sums every count (cargo prints one line per test binary) and skips jest/vitest
 // suite and file totals; teach it other runners' summaries when they show up.
 fn test_run(input: &Value, out: &str) -> Option<(u32, u32, bool)> {
     let cmd = input.get("command").and_then(Value::as_str)?;
-    // A runner or a `test` subcommand, not any command mentioning tests (`grep … tests/`).
-    let runs_tests = cmd.split_whitespace().any(|w| {
-        let w = w.rsplit('/').next().unwrap_or(w);
-        w == "test"
-            || w.starts_with("test:")
-            || ["pytest", "jest", "vitest", "nextest", "mocha"].contains(&w)
-    });
-    if !runs_tests {
+    if !runs_tests(cmd) {
         return None;
     }
     let mut sum = None;

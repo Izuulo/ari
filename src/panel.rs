@@ -2185,6 +2185,7 @@ mod tests {
             since: 1,
             n: 3,
             last: "editing a.rs".into(),
+            ..Default::default()
         });
         let out = render_x(&st, &Extras::default(), 80, 40);
         assert!(
