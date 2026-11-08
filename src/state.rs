@@ -1024,19 +1024,20 @@ impl State {
                 .copied()
                 .filter(|r| r.agent == agent && r.path == path)
                 .collect();
-            // Rule C: an edit (o, n) undoes an earlier (n, o).
-            let undone: Vec<u64> = mine
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| {
-                    let (o, n) = r.h?;
-                    mine[..i].iter().find(|e| e.h == Some((n, o))).map(|e| e.t)
-                })
-                .collect();
-            if undone.len() >= UNDO_REPEATS {
+            // Rule C: an edit (o, n) undoes an earlier (n, o); counted per change, so
+            // removing two different debug prints isn't "back and forth".
+            let mut undos = BTreeMap::<(u64, u64), (usize, u64)>::new();
+            for (i, r) in mine.iter().enumerate() {
+                let Some((o, n)) = r.h else { continue };
+                if let Some(e) = mine[..i].iter().find(|e| e.h == Some((n, o))) {
+                    let u = undos.entry((o.min(n), o.max(n))).or_insert((0, e.t));
+                    u.0 += 1;
+                }
+            }
+            if let Some(&(n, since)) = undos.values().find(|(n, _)| *n >= UNDO_REPEATS) {
                 return Some(Stuck {
-                    why: format!("{} edited back and forth {}×", file(path), undone.len()),
-                    since: undone.iter().copied().min().unwrap_or(0),
+                    why: format!("{} edited back and forth {n}×", file(path)),
+                    since,
                 });
             }
             // Rule D: many edits since the last green test run; ticking a plan doesn't count.
@@ -1879,6 +1880,19 @@ mod tests {
         let mut evs = vec![prompt("go")];
         evs.extend(edits(1_010, 3, "main", p));
         assert_eq!(run(&evs).verdict(), Verdict::OnTrack, "no hashes, no undo");
+    }
+
+    #[test]
+    fn two_unrelated_reverts_are_not_back_and_forth() {
+        let p = "/r/src/a.rs";
+        let s = run(&[
+            prompt("go"),
+            edit(1_010, "main", p, Some((1, 2))), // add a debug print
+            edit(1_011, "main", p, Some((3, 4))), // and another
+            edit(1_012, "main", p, Some((2, 1))), // remove the first
+            edit(1_013, "main", p, Some((4, 3))), // and the second
+        ]);
+        assert_eq!(s.verdict(), Verdict::OnTrack);
     }
 
     #[test]
