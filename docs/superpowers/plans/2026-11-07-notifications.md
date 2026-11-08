@@ -46,15 +46,15 @@
   - `pub fn Verdict::id(self) -> &'static str`: `needs_you`, `blocked`, `stuck`, `retrying`, `on_track`, `done`, `idle`.
   - `problems` gains: `notify.on: unknown verdict "<id>"` for an id not in `NOTIFY_ON`; `notify.ntfy: not an http(s) URL "<value>"` when non-empty and not starting with `https://` or `http://`, or containing whitespace.
 
-- [ ] **Step 1: Write the failing tests** in `config.rs` tests:
+- [x] **Step 1: Write the failing tests** in `config.rs` tests:
   - `notify_defaults_and_parse`: `parse("")` → `notify.desktop == true`, `notify.on == ["needs_you", "stuck", "blocked", "done"]`, `notify.ntfy == ""`; `parse("[notify]\ndesktop = false\non = [\"done\"]\nntfy = \"https://ntfy.sh/x\"\n")` → those values.
   - `round_trip` extended: set `notify.ntfy = "https://ntfy.sh/t"` and `notify.on = ["idle"]`; still round-trips.
   - `problems_name_bad_notify_values`: `on = ["nope", "done"]`, `ntfy = "-o /tmp/x"` → exactly 2 problems, containing `nope` and `-o /tmp/x`; `ntfy = "https://ntfy.sh/x"` → no problem.
   - In `state.rs` tests, `verdict_ids`: every `Verdict` maps to the id above, and each `NOTIFY_ON` id is the `id()` of some verdict.
-- [ ] **Step 2: Run** `cargo test config:: state::tests::verdict_ids` — expect FAIL (no `notify`, no `id`).
-- [ ] **Step 3: Implement** the struct, default, constant, `problems` lines and `Verdict::id`.
-- [ ] **Step 4: Run** `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): notify config keys and verdict ids`.
+- [x] **Step 2: Run** `cargo test config:: state::tests::verdict_ids` — expect FAIL (no `notify`, no `id`).
+- [x] **Step 3: Implement** the struct, default, constant, `problems` lines and `Verdict::id`.
+- [x] **Step 4: Run** `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(notify): notify config keys and verdict ids`.
 
 ---
 
@@ -78,17 +78,17 @@
   - `pub fn spawn_all(cmds: &[Vec<String>])`: each via `std::process::Command` with null stdin/stdout/stderr and `std::os::unix::process::CommandExt::process_group(0)`; `spawn()` errors ignored; never waits.
   - `pub fn send(note: &Note, n: &Notify)`: `spawn_all(&commands(note, n, std::env::consts::OS))`.
 
-- [ ] **Step 1: Write the failing tests** in `notify.rs`:
+- [x] **Step 1: Write the failing tests** in `notify.rs`:
   - `macos_and_linux_commands`: for `Note { title: "ARI: proj", body: "◉ NEEDS YOU · Bash" }` with defaults: `commands(.., "macos")` is exactly the osascript argv above with the title and body as its last two elements; `"linux"` gives the notify-send argv; `"windows"` gives `[]`; `desktop = false` gives `[]`.
   - `ntfy_only_when_set_and_valid`: `ntfy = "https://ntfy.sh/t"` adds a curl argv ending `["--", "https://ntfy.sh/t"]` with `"Title: ARI: proj"`; `ntfy = "ftp://x"` or `"-K /etc/passwd"` adds nothing.
   - `hostile_text_stays_one_argv_element`: body `"\"; do shell script \"rm -rf ~\" --\n@/etc/passwd $(id)"` → appears as exactly one argv element in each command (newline turned into a space), and the three `-e` script lines are the constant ones.
   - `long_text_is_cut`: a 500-char body → `chars().count() <= NOTE_MAX_CHARS`.
   - `title_from_cwd`: a temp session dir with `meta.json` `{"cwd":"/x/tankobon"}` → `ARI: tankobon`; no meta → `ARI`.
   - `spawn_ignores_missing_binary`: `spawn_all(&[vec!["/nonexistent/ari-notify".into()]])` returns without panic.
-- [ ] **Step 2: Run** `cargo test notify::` — FAIL.
-- [ ] **Step 3: Implement** `src/notify.rs` as above.
-- [ ] **Step 4: Run** `cargo test notify::` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): desktop and ntfy notifier, spawned detached`.
+- [x] **Step 2: Run** `cargo test notify::` — FAIL.
+- [x] **Step 3: Implement** `src/notify.rs` as above.
+- [x] **Step 4: Run** `cargo test notify::` — PASS.
+- [x] **Step 5: Commit** `feat(notify): desktop and ntfy notifier, spawned detached`.
 
 ---
 
@@ -113,20 +113,20 @@
   - `pub fn check(dir: &Path, cfg: &Config, now: u64) -> Option<Note>`: returns `None` at once when `!cfg.notify.desktop && cfg.notify.ntfy.is_empty()`. Otherwise opens (creating) `dir/notify.json`, `libc::flock(fd, LOCK_EX)`, reads `Seen` (default on empty/broken), `load_session`, `verdict_with(cfg.thresholds.stuck_repeats)`, `decide`, writes the new `Seen` in place (`set_len(0)`, seek 0, `write_all` — not `write_atomic`, which would swap the inode under the lock), unlocks by drop. Returns `Some(note)` on fire. It does not send.
   - `hook::handle`: after the `events.jsonl` append: `let cfg = config::load();` (move the existing `SessionStart` load to reuse it), then `if let Some(n) = notify::check(&dir, &cfg, t) { notify::send(&n, &cfg.notify) }`.
 
-- [ ] **Step 1: Write the failing `decide` tests** in `notify.rs`:
+- [x] **Step 1: Write the failing `decide` tests** in `notify.rs`:
   - `fires_once_per_flip`: from `Seen::default()`, `OnTrack` → no fire; `Stuck` → fire; `Stuck` again → no fire; `OnTrack` then `Stuck` 2 min later → fire.
   - `not_in_on_list_never_fires`: `on = ["done"]`, `NeedsYou` → no fire, but `Seen.v == "needs_you"` (so a later flip still counts).
   - `same_verdict_within_repeat_ms_is_quiet`: `Stuck` fire at t, `Retrying` at t+10 s, `Stuck` at t+20 s → no fire; at t+REPEAT_MS+1 → fire.
   - `idle_prompt_after_done_does_not_double_notify`: `Done` (turn_active false, turns 3) fires; `NeedsYou` (turn_active false, turns 3) 60 s later → no fire; next turn `OnTrack` (turns 4) then `NeedsYou` with turn_active true → fire.
   - `idle_prompt_after_unnotified_idle_fires`: default `on`, `Idle` (turns 3) → no fire; `NeedsYou` (turn_active false, turns 3) → fire.
-- [ ] **Step 2: Write the failing `check` tests** (temp session dir; write `events.jsonl` lines with `event::to_line` as other tests do):
+- [x] **Step 2: Write the failing `check` tests** (temp session dir; write `events.jsonl` lines with `event::to_line` as other tests do):
   - `off_does_nothing`: `desktop = false`, `ntfy = ""`, events that make the session STUCK → `None`; neither `notify.json` nor `state.json` exists afterwards.
   - `check_reports_stuck_once`: events making the verdict STUCK (three identical failing Bash calls, as in `state.rs`'s stuck tests) → first `check` is `Some(note)` with body starting `↻ STUCK · `; second `check` → `None`.
   - `concurrent_checks_fire_once`: same STUCK dir, 8 threads call `check` at once → exactly one `Some`.
-- [ ] **Step 3: Run** `cargo test notify::` — FAIL.
-- [ ] **Step 4: Implement** `Seen`, `decide`, `note`, `check`, and the two lines in `hook::handle`.
-- [ ] **Step 5: Run** `cargo test` — PASS.
-- [ ] **Step 6: Commit** `feat(notify): notify once when a session flips, from the hook`.
+- [x] **Step 3: Run** `cargo test notify::` — FAIL.
+- [x] **Step 4: Implement** `Seen`, `decide`, `note`, `check`, and the two lines in `hook::handle`.
+- [x] **Step 5: Run** `cargo test` — PASS.
+- [x] **Step 6: Commit** `feat(notify): notify once when a session flips, from the hook`.
 
 ---
 
@@ -149,15 +149,15 @@
     - else pass with detail the channels joined by ` + `: `desktop`, `ntfy <host>` (host only: the topic in the path works like a password).
   - `checks()` pushes `notify_status(&loaded_cfg.notify, std::env::consts::OS, |b| setup::which(b).is_some())`.
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
   - `settings.rs` `items_cover_every_role_and_feature`: length 44; every `NOTIFY_ON` id has a `notify_on.<id>` row in `ALERTS`. Groups order unchanged.
   - `settings.rs` `notify_rows`: default → `notify.desktop` `on`, `notify_on.needs_you` `on`, `notify_on.idle` `off`; step `notify_on.needs_you` twice → `cfg.notify.on` equals the default list in the same order; `reset` after a change → `Config::default()`.
   - `every_item_has_a_value_and_steps_back` and `reset_restores_default` pass unchanged for the new rows.
   - `doctor.rs` `notify_check_reports`: the five cases above, incl. `ntfy = "https://ntfy.sh/secret-topic"` → detail `desktop + ntfy ntfy.sh` and does not contain `secret-topic`.
-- [ ] **Step 2: Run** `cargo test settings:: doctor::` — FAIL.
-- [ ] **Step 3: Implement** the rows, value/step/reset cases, `KEYS`, `notify_status` and its call.
-- [ ] **Step 4: Run** `INSTA_UPDATE=always cargo test settings::`, review the `settings_screen_snapshot` diff (new rows and the key hint only), then `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(notify): notification settings and doctor check`.
+- [x] **Step 2: Run** `cargo test settings:: doctor::` — FAIL.
+- [x] **Step 3: Implement** the rows, value/step/reset cases, `KEYS`, `notify_status` and its call.
+- [x] **Step 4: Run** `INSTA_UPDATE=always cargo test settings::`, review the `settings_screen_snapshot` diff (new rows and the key hint only), then `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(notify): notification settings and doctor check`.
 
 ---
 
@@ -167,9 +167,9 @@
 - Modify: `scripts/bench-hook.sh` (set `XDG_CONFIG_HOME` to the temp dir too, so the bench runs with default config: notifications on)
 - Modify: `README.md`, `CHANGELOG.md`, `Cargo.toml`, `.claude-plugin/plugin.json`, `Cargo.lock`
 
-- [ ] **Step 1: Latency.** On `main`, run `scripts/bench-hook.sh 500` and note p50/p95; on this branch, run it again. Expected: exit 0 and p95 no more than 1 ms above `main`'s. If it is, skip the notify path for `PreToolUse` events (they can't end a turn or add a failure) and re-measure. Put both numbers in the PR body.
-- [ ] **Step 2: Real run.** `cargo install --path . --root ~/.local --force` (per local-install memory: `rm ~/.local/bin/ari` first if the copy gets killed), start a Claude Code session, trigger a permission prompt: exactly one desktop notification `ARI: <repo>` / `◉ NEEDS YOU · …`, also with two `ari watch` panes open and with none. Let a turn finish with all tasks done: one `✓ DONE`, no second one 60 s later. Set `ntfy` to a throwaway `https://ntfy.sh/<random>` topic and confirm one push arrives; clear it again.
-- [ ] **Step 3: Docs.** README Config block: a `[notify]` table (`desktop = true`, `on = ["needs_you", "stuck", "blocked", "done"]  # also: idle`, `ntfy = ""  # optional, e.g. "https://ntfy.sh/your-topic"; the only thing ARI ever sends off your machine`). README "What you get": one paragraph on notifications (once per flip, from the hooks, works with no `ari watch` open; macOS may ask once to allow notifications from Script Editor). README FAQ "Where does my data go?": add "unless you set `notify.ntfy`: then the notification text goes to that URL". Update the FAQ hook timing if Step 1 changed it. Why-ARI table: a `Notifications` row.
-- [ ] **Step 4: Changelog and version.** `CHANGELOG.md` under `## Unreleased`: one **Notifications** bullet (what fires, `[notify]` keys, how to turn off, ntfy opt-in). Bump the patch version in `Cargo.toml` and `.claude-plugin/plugin.json`, then `cargo check` to refresh `Cargo.lock`.
-- [ ] **Step 5: Run** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — PASS.
-- [ ] **Step 6: Commit** `docs: notifications` and `chore: bump version` (two commits), push, open the PR with a bullet body.
+- [x] **Step 1: Latency.** On `main`, run `scripts/bench-hook.sh 500` and note p50/p95; on this branch, run it again. Expected: exit 0 and p95 no more than 1 ms above `main`'s. If it is, skip the notify path for `PreToolUse` events (they can't end a turn or add a failure) and re-measure. Put both numbers in the PR body.
+- [x] **Step 2: Real run (run with fixture hook events against the release binary, not a live session or ntfy).** `cargo install --path . --root ~/.local --force` (per local-install memory: `rm ~/.local/bin/ari` first if the copy gets killed), start a Claude Code session, trigger a permission prompt: exactly one desktop notification `ARI: <repo>` / `◉ NEEDS YOU · …`, also with two `ari watch` panes open and with none. Let a turn finish with all tasks done: one `✓ DONE`, no second one 60 s later. Set `ntfy` to a throwaway `https://ntfy.sh/<random>` topic and confirm one push arrives; clear it again.
+- [x] **Step 3: Docs.** README Config block: a `[notify]` table (`desktop = true`, `on = ["needs_you", "stuck", "blocked", "done"]  # also: idle`, `ntfy = ""  # optional, e.g. "https://ntfy.sh/your-topic"; the only thing ARI ever sends off your machine`). README "What you get": one paragraph on notifications (once per flip, from the hooks, works with no `ari watch` open; macOS may ask once to allow notifications from Script Editor). README FAQ "Where does my data go?": add "unless you set `notify.ntfy`: then the notification text goes to that URL". Update the FAQ hook timing if Step 1 changed it. Why-ARI table: a `Notifications` row.
+- [x] **Step 4: Changelog and version.** `CHANGELOG.md` under `## Unreleased`: one **Notifications** bullet (what fires, `[notify]` keys, how to turn off, ntfy opt-in). Bump the patch version in `Cargo.toml` and `.claude-plugin/plugin.json`, then `cargo check` to refresh `Cargo.lock`.
+- [x] **Step 5: Run** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` — PASS.
+- [x] **Step 6: Commit** `docs: notifications` and `chore: bump version` (two commits), push, open the PR with a bullet body.

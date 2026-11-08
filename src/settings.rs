@@ -1,6 +1,6 @@
 //! The settings screen in `ari watch` (`s`): every row, its value, how it steps, and the screen.
 
-use crate::config::{COLOR_CYCLE, Config, Position, THEMES};
+use crate::config::{self, COLOR_CYCLE, Config, Position, THEMES};
 use crate::event::truncate;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,7 +10,8 @@ use unicode_width::UnicodeWidthStr;
 pub const LIST_W: u16 = 48;
 /// The narrowest window that gets the preview.
 pub const PREVIEW_MIN_W: u16 = 110;
-const KEYS: &str = "↑↓ move · ←→ change · d default · esc back · chain and prices: edit the file";
+const KEYS: &str =
+    "↑↓ move · ←→ change · d default · esc back · chain, prices, ntfy: edit the file";
 const LABEL_W: usize = 25;
 
 pub struct Screen<'a> {
@@ -35,7 +36,7 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 38] = [
+const ITEMS: [(&str, &str, &str); 44] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
@@ -69,6 +70,12 @@ const ITEMS: [(&str, &str, &str); 38] = [
     ("PANEL", "hide_panel.git", "git · commits, PRs"),
     ("PANEL", "auto_clear", "auto-clear done agents"),
     ("ALERTS", "bell", "bell"),
+    ("ALERTS", "notify.desktop", "desktop notifications"),
+    ("ALERTS", "notify_on.needs_you", "notify · needs you"),
+    ("ALERTS", "notify_on.stuck", "notify · stuck"),
+    ("ALERTS", "notify_on.blocked", "notify · blocked"),
+    ("ALERTS", "notify_on.done", "notify · done"),
+    ("ALERTS", "notify_on.idle", "notify · idle (turn ended)"),
     ("ALERTS", "ctx_warn", "context warn"),
     ("ALERTS", "ctx_crit", "context critical"),
     ("ALERTS", "stuck_repeats", "stuck after"),
@@ -117,7 +124,11 @@ pub fn value(cfg: &Config, key: &str) -> String {
     if let Some((list, id)) = switch(cfg, key) {
         return on(!list.iter().any(|h| h == id));
     }
+    if let Some(id) = key.strip_prefix("notify_on.") {
+        return on(cfg.notify.on.iter().any(|v| v == id));
+    }
     match key {
+        "notify.desktop" => on(cfg.notify.desktop),
         "theme" => cfg.theme.clone(),
         "face" => on(cfg.face),
         "ascii" => on(cfg.ascii),
@@ -172,6 +183,22 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         }
         return;
     }
+    if let Some(id) = key.strip_prefix("notify_on.") {
+        let set = !cfg.notify.on.iter().any(|v| v == id);
+        let cur = &cfg.notify.on;
+        cfg.notify.on = config::NOTIFY_ON
+            .iter()
+            .filter(|n| {
+                if **n == id {
+                    set
+                } else {
+                    cur.iter().any(|o| o == **n)
+                }
+            })
+            .map(|n| n.to_string())
+            .collect();
+        return;
+    }
     let t = &mut cfg.thresholds;
     match key {
         "theme" => {
@@ -183,6 +210,7 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         "face" => cfg.face ^= true,
         "ascii" => cfg.ascii ^= true,
         "bell" => cfg.bell ^= true,
+        "notify.desktop" => cfg.notify.desktop ^= true,
         "auto_clear" => cfg.auto_clear ^= true,
         "position" => {
             cfg.position = match cfg.position {
@@ -333,8 +361,16 @@ pub fn reset(cfg: &mut Config, key: &str) {
         list.retain(|h| h != id);
         return;
     }
+    if let Some(id) = key.strip_prefix("notify_on.") {
+        let set = def.notify.on.iter().any(|v| v == id);
+        if cfg.notify.on.iter().any(|v| v == id) != set {
+            step(cfg, key, 1);
+        }
+        return;
+    }
     let (t, dt) = (&mut cfg.thresholds, &def.thresholds);
     match key {
+        "notify.desktop" => cfg.notify.desktop = def.notify.desktop,
         "theme" => cfg.theme = def.theme,
         "face" => cfg.face = def.face,
         "ascii" => cfg.ascii = def.ascii,
@@ -359,7 +395,14 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 38);
+        assert_eq!(it.len(), 44);
+        for n in crate::config::NOTIFY_ON {
+            let i = it
+                .iter()
+                .find(|i| i.key == format!("notify_on.{n}"))
+                .unwrap();
+            assert_eq!(i.group, "ALERTS", "{n}");
+        }
         for r in ROLES {
             assert!(it.iter().any(|i| i.key == format!("color.{r}")), "{r}");
         }
@@ -540,6 +583,23 @@ mod tests {
         assert_eq!(c.hide, ["cost"]);
         reset(&mut c, "hide_panel.turns");
         assert!(c.hide_panel.is_empty());
+    }
+
+    #[test]
+    fn notify_rows() {
+        let mut c = Config::default();
+        assert_eq!(value(&c, "notify.desktop"), "on");
+        assert_eq!(value(&c, "notify_on.needs_you"), "on");
+        assert_eq!(value(&c, "notify_on.idle"), "off");
+        step(&mut c, "notify_on.needs_you", 1);
+        assert_eq!(value(&c, "notify_on.needs_you"), "off");
+        step(&mut c, "notify_on.needs_you", 1);
+        assert_eq!(c.notify.on, Config::default().notify.on);
+        step(&mut c, "notify_on.idle", 1);
+        step(&mut c, "notify.desktop", 1);
+        reset(&mut c, "notify_on.idle");
+        reset(&mut c, "notify.desktop");
+        assert_eq!(c, Config::default());
     }
 
     #[test]

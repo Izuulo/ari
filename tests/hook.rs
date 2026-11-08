@@ -10,7 +10,20 @@ fn tmp(name: &str) -> PathBuf {
     d
 }
 
+/// Keep `cargo test` from popping real desktop notifications.
+fn quiet_config(state: &Path) {
+    let d = state.join("config/ari");
+    std::fs::create_dir_all(&d).unwrap();
+    let f = d.join("config.toml");
+    let mut cfg = std::fs::read_to_string(&f).unwrap_or_default();
+    if !cfg.contains("[notify]") {
+        cfg += "\n[notify]\ndesktop = false\n";
+        std::fs::write(&f, cfg).unwrap();
+    }
+}
+
 fn hook(state: &Path, stdin: &[u8]) -> Output {
+    quiet_config(state);
     let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
         .arg("hook")
         .env("XDG_STATE_HOME", state)
@@ -166,6 +179,7 @@ fn first_event_writes_meta_once() {
 }
 
 fn hook_args(state: &Path, args: &[&str], stdin: &[u8]) -> Output {
+    quiet_config(state);
     let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
         .arg("hook")
         .args(args)
@@ -213,4 +227,38 @@ fn no_flag_and_unknown_flag_mean_claude() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("meta.json"), r#"{"cwd":"/p"}"#).unwrap();
     assert_eq!(ari_cli::app::of(&dir), ari_cli::app::App::Claude);
+}
+
+#[test]
+fn notifications_on_with_no_notifier_stay_silent() {
+    let s = tmp("notify-on");
+    let empty = s.join("emptybin");
+    std::fs::create_dir_all(&empty).unwrap();
+    let run = |stdin: &[u8]| {
+        // Not through quiet_config: notifications stay on, but no notifier is on PATH.
+        let mut child = Command::new(env!("CARGO_BIN_EXE_ari"))
+            .arg("hook")
+            .env("XDG_STATE_HOME", &s)
+            .env("XDG_CONFIG_HOME", s.join("config"))
+            .env("PATH", &empty)
+            .env_remove("ARI_RAW_LOG")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(stdin).unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let prompt = serde_json::json!({"session_id": "s1", "hook_event_name": "UserPromptSubmit",
+        "cwd": "/p", "prompt": "go"});
+    assert_silent(&run(prompt.to_string().as_bytes()));
+    let fail = serde_json::json!({"session_id": "s1", "hook_event_name": "PostToolUseFailure",
+        "cwd": "/p", "tool_name": "Bash", "tool_input": {"command": "cargo build"},
+        "tool_use_id": "toolu_1", "error": "boom"});
+    for _ in 0..3 {
+        assert_silent(&run(fail.to_string().as_bytes()));
+    }
+    let seen = std::fs::read_to_string(s.join("ari/sessions/s1/notify.json")).unwrap();
+    assert!(seen.contains(r#""fired":"stuck""#), "{seen}");
 }

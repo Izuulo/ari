@@ -12,6 +12,7 @@ pub mod event;
 pub mod git;
 pub mod hook;
 pub mod hub;
+pub mod notify;
 pub mod panel;
 pub mod paths;
 pub mod recap;

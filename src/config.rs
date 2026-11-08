@@ -83,6 +83,7 @@ pub struct Config {
     pub retention_days: u64,
     pub chain: Chain,
     pub thresholds: Thresholds,
+    pub notify: Notify,
     /// Role → colour (`"red"`, `"#rrggbb"`, `"114"`), over the theme's.
     pub colors: BTreeMap<String, String>,
     pub prices: BTreeMap<String, Price>,
@@ -113,6 +114,24 @@ pub struct Thresholds {
     pub compact_pct: u8,
 }
 
+/// Verdict ids `notify.on` accepts, in settings order.
+pub const NOTIFY_ON: [&str; 5] = ["needs_you", "stuck", "blocked", "done", "idle"];
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Notify {
+    pub desktop: bool,
+    pub on: Vec<String>,
+    /// ntfy topic URL; empty is off.
+    pub ntfy: String,
+}
+
+/// A usable ntfy URL: http(s), no whitespace.
+pub fn ntfy_ok(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && !url.contains(char::is_whitespace)
+}
+
 /// Dollars per million tokens.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(default)]
@@ -138,6 +157,7 @@ impl Default for Config {
             retention_days: 7,
             chain: Chain::default(),
             thresholds: Thresholds::default(),
+            notify: Notify::default(),
             colors: BTreeMap::new(),
             prices: BTreeMap::new(),
         }
@@ -160,6 +180,18 @@ impl Default for Thresholds {
             ctx_crit: 80,
             stuck_repeats: 3,
             compact_pct: 90,
+        }
+    }
+}
+
+impl Default for Notify {
+    fn default() -> Self {
+        Notify {
+            desktop: true,
+            on: ["needs_you", "stuck", "blocked", "done"]
+                .map(String::from)
+                .to_vec(),
+            ntfy: String::new(),
         }
     }
 }
@@ -234,6 +266,17 @@ pub fn problems(cfg: &Config) -> Vec<String> {
             out.push(format!("hide_panel: unknown section \"{id}\""));
         }
     }
+    for id in &cfg.notify.on {
+        if !NOTIFY_ON.contains(&id.as_str()) {
+            out.push(format!("notify.on: unknown verdict \"{id}\""));
+        }
+    }
+    if !cfg.notify.ntfy.is_empty() && !ntfy_ok(&cfg.notify.ntfy) {
+        out.push(format!(
+            "notify.ntfy: not an http(s) URL \"{}\"",
+            cfg.notify.ntfy
+        ));
+    }
     out
 }
 
@@ -279,6 +322,8 @@ mod tests {
         c.hide = vec!["cost".into(), "tokens".into()];
         c.theme = "mono".into();
         c.colors.insert("bad".into(), "lightred".into());
+        c.notify.ntfy = "https://ntfy.sh/t".into();
+        c.notify.on = vec!["idle".into()];
         assert_eq!(parse(&toml::to_string_pretty(&c).unwrap()), c);
     }
 
@@ -377,6 +422,36 @@ mod tests {
             assert!(p.iter().any(|l| l.contains(word)), "{word} in {p:?}");
         }
         assert!(problems(&Config::default()).is_empty());
+    }
+
+    #[test]
+    fn notify_defaults_and_parse() {
+        let d = parse("");
+        assert!(d.notify.desktop);
+        assert_eq!(d.notify.on, ["needs_you", "stuck", "blocked", "done"]);
+        assert_eq!(d.notify.ntfy, "");
+        let c = parse("[notify]\ndesktop = false\non = [\"done\"]\nntfy = \"https://ntfy.sh/x\"\n");
+        assert!(!c.notify.desktop);
+        assert_eq!(c.notify.on, ["done"]);
+        assert_eq!(c.notify.ntfy, "https://ntfy.sh/x");
+    }
+
+    #[test]
+    fn problems_name_bad_notify_values() {
+        let mut c = Config::default();
+        c.notify.on = vec!["nope".into(), "done".into()];
+        c.notify.ntfy = "-o /tmp/x".into();
+        let p = problems(&c);
+        assert_eq!(p.len(), 2, "{p:?}");
+        assert!(p.iter().any(|l| l.contains("nope")));
+        assert!(p.iter().any(|l| l.contains("-o /tmp/x")));
+        c.notify.on = vec!["idle".into()];
+        c.notify.ntfy = "https://ntfy.sh/x".into();
+        assert!(problems(&c).is_empty());
+        assert!(ntfy_ok("http://h/t"));
+        assert!(!ntfy_ok(""));
+        assert!(!ntfy_ok("https://h/a b"));
+        assert!(!ntfy_ok("ftp://h/t"));
     }
 
     #[test]
