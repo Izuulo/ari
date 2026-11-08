@@ -30,6 +30,8 @@ pub struct Extras {
     pub app: crate::app::App,
     /// The session repo's branch, commits and PRs (panel only, fetched in the background).
     pub git: Option<crate::git::Git>,
+    /// `ari hub --all`: each live session's repo, in place of `git`.
+    pub repos: Vec<crate::git::Repo>,
 }
 
 /// Forecasts are only worth showing this close.

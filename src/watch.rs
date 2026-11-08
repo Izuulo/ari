@@ -48,6 +48,8 @@ struct App {
     x: bar::Extras,
     /// The session repo's git section, refreshed off-thread.
     git: crate::git::Watcher,
+    /// `ari hub --all`: each live session's repo, by session folder.
+    gits: std::collections::HashMap<String, crate::git::Watcher>,
     mtimes: (Option<SystemTime>, Option<SystemTime>),
     picked_at: Option<Instant>,
     /// When the recap view was last built, and whether events arrived since.
@@ -365,7 +367,7 @@ impl App {
 
     /// `ari hub --all`: every live session in one hub; a note while the window is too small.
     fn all_hub_lines(
-        &self,
+        &mut self,
         width: u16,
         height: u16,
         now: u64,
@@ -384,10 +386,27 @@ impl App {
             ));
             return (vec![line], None);
         }
-        let (mut st, usage, tokens) = hub::all::merge(hub::all::load(&self.root, now), now);
+        let parts = hub::all::load(&self.root, now);
+        let mut repos = vec![];
+        for p in &parts {
+            let Some(dir) = p.u.dir.clone() else { continue };
+            let w = self.gits.entry(dir.clone()).or_default();
+            w.poll(Some(&dir));
+            if let Some(git) = w.git.clone() {
+                repos.push(crate::git::Repo {
+                    key: p.key.clone(),
+                    dir,
+                    git,
+                });
+            }
+        }
+        let live: Vec<_> = parts.iter().filter_map(|p| p.u.dir.clone()).collect();
+        self.gits.retain(|d, _| live.contains(d));
+        let (mut st, usage, tokens) = hub::all::merge(parts, now);
         st.clear_done(self.clear_cut());
         let x = bar::Extras {
             tokens: Some(tokens),
+            repos,
             ..Default::default()
         };
         let clock = panel::local_hhmm(now);
@@ -850,6 +869,7 @@ pub fn run(args: &[String]) -> ! {
         usage: Usage::default(),
         x: bar::Extras::default(),
         git: Default::default(),
+        gits: Default::default(),
         mtimes: (None, None),
         picked_at: None,
         recap_built: None,
@@ -1281,6 +1301,7 @@ mod key_tests {
             usage: Usage::default(),
             x: bar::Extras::default(),
             git: Default::default(),
+            gits: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1762,6 +1783,7 @@ mod key_tests {
             usage: Usage::default(),
             x: bar::Extras::default(),
             git: Default::default(),
+            gits: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,
@@ -1840,6 +1862,7 @@ mod key_tests {
             usage: Usage::default(),
             x: bar::Extras::default(),
             git: Default::default(),
+            gits: Default::default(),
             mtimes: (None, None),
             picked_at: None,
             recap_built: None,

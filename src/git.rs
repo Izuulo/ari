@@ -21,6 +21,16 @@ pub struct Git {
     pub prs: Vec<Pr>,
 }
 
+/// `ari hub --all`: one live session's repo.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Repo {
+    /// The session's key, its lead's id in the merged state.
+    pub key: String,
+    /// The session's folder: merged file keys are `{dir}/{path}`.
+    pub dir: String,
+    pub git: Git,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commit {
     pub hash: String,
@@ -181,10 +191,7 @@ mod tests {
         let g = parse_status(
             "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n1 .M N... 100644 100644 100644 a b src/x.rs\n2 R. N... 100644 100644 100644 a b R100 new name.rs\told.rs\n? new.txt\n",
         );
-        assert_eq!(
-            (g.branch.as_str(), g.ahead, g.behind),
-            ("main", 2, 1)
-        );
+        assert_eq!((g.branch.as_str(), g.ahead, g.behind), ("main", 2, 1));
         assert_eq!(g.changed, ["src/x.rs", "new name.rs", "new.txt"]);
     }
 

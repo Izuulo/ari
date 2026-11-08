@@ -273,7 +273,7 @@ pub fn lines(
         },
         Section {
             title: Some("git"),
-            rows: git(x, &rc, now),
+            rows: git(x.git.as_ref(), &rc, now),
         },
     ];
     // A section with nothing to say, or switched off in config, is left out.
@@ -1437,13 +1437,20 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
 }
 
 /// The git section's rows, colored, for the hub's git panes.
-pub(crate) fn git_rows(x: &Extras, now: u64) -> Vec<Vec<Span<'static>>> {
-    git(x, &Ctx { color: true, inner: 0 }, now)
+pub(crate) fn git_rows(g: Option<&crate::git::Git>, now: u64) -> Vec<Vec<Span<'static>>> {
+    git(
+        g,
+        &Ctx {
+            color: true,
+            inner: 0,
+        },
+        now,
+    )
 }
 
 /// Branch and working tree, then recent commits and PRs, each led by its age.
-fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
-    let Some(g) = &x.git else { return vec![] };
+fn git(g: Option<&crate::git::Git>, c: &Ctx, now: u64) -> Vec<Row> {
+    let Some(g) = g else { return vec![] };
     let mut head = g.branch.clone();
     if g.ahead > 0 {
         head += &format!(" ↑{}", g.ahead);
