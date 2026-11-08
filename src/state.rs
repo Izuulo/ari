@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 12;
+const CACHE_VERSION: u32 = 13;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -16,6 +16,11 @@ pub const LANE_MS: u64 = 12_000;
 pub const LANES: usize = 50;
 const MESSAGES: usize = 60;
 const SPAWNS: usize = 16;
+/// Edits of one file in one turn, with no passing test between, that count as churn.
+const CHURN_EDITS: usize = 12;
+/// Undos of an earlier edit that count as flip-flopping; one revert is normal.
+const UNDO_REPEATS: usize = 2;
+const EDIT_LOG: usize = 60;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 /// Bookkeeping tools that repeat by design.
 const NOT_LOOPS: [&str; 6] = [
@@ -90,6 +95,25 @@ pub struct State {
     pub messages: VecDeque<Msg>,
     /// Agent tool calls whose subagent hasn't shown up yet.
     pub spawns: VecDeque<Spawn>,
+    /// Successful file edits, oldest first, for churn detection.
+    pub edit_log: VecDeque<EditRec>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct EditRec {
+    pub t: u64,
+    pub agent: String,
+    pub path: String,
+    /// Hashes of (old_string, new_string), `Edit` only.
+    pub h: Option<(u64, u64)>,
+}
+
+/// Why Claude looks stuck, and since when.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stuck {
+    pub why: String,
+    pub since: u64,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -322,6 +346,7 @@ pub struct ErrorRec {
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Call {
+    pub t: u64,
     pub agent: String,
     pub tool: String,
     pub h: u64,
@@ -516,6 +541,7 @@ impl State {
                     _ => {}
                 }
                 self.calls.push_back(Call {
+                    t: ev.t,
                     agent: aid.into(),
                     tool: ev.tool.clone().unwrap_or_default(),
                     h: ev.h.unwrap_or(0),
@@ -916,6 +942,16 @@ impl State {
 
     /// Why Claude looks stuck, if it does (PRD 7.4). `repeats` = `thresholds.stuck_repeats`.
     pub fn stuck_reason(&self, repeats: u8) -> Option<String> {
+        self.stuck(repeats).map(|s| s.why)
+    }
+
+    /// Start of the current turn: the last real prompt's time.
+    pub fn turn_start(&self) -> u64 {
+        self.prompts.back().copied().unwrap_or(0)
+    }
+
+    /// Why Claude looks stuck and since when, if it does.
+    pub fn stuck(&self, repeats: u8) -> Option<Stuck> {
         let repeats = repeats.max(2) as usize;
         // Rule B: the same signature failing again and again without a success in between.
         if let Some(e) = self.errors.iter().rev().find(|e| {
@@ -923,11 +959,14 @@ impl State {
                 && e.retries as usize + 1 >= repeats
                 && self.recent.iter().any(|(ok, sig)| !ok && *sig == e.sig)
         }) {
-            return Some(format!(
-                "{} failed {}× in a row",
-                crate::panel::sig_words(e),
-                e.retries + 1
-            ));
+            return Some(Stuck {
+                why: format!(
+                    "{} failed {}× in a row",
+                    crate::panel::sig_words(e),
+                    e.retries + 1
+                ),
+                since: e.first_t,
+            });
         }
         // Rule A: one agent repeating an identical call with no file edit in between.
         let mut agents: Vec<&str> = self.calls.iter().map(|c| c.agent.as_str()).collect();
@@ -949,11 +988,73 @@ impl State {
                 let edited = (first..=last)
                     .any(|i| !same.contains(&i) && FILE_EDITS.contains(&window[i].tool.as_str()));
                 if !edited {
-                    return Some(format!("same call {}× · {}", same.len(), c.act));
+                    return Some(Stuck {
+                        why: format!("same call {}× · {}", same.len(), c.act),
+                        since: window[first].t,
+                    });
                 }
             }
         }
-        None
+        self.edit_churn()
+    }
+
+    /// Rules C (an edit undone and redone) and D (one file edited over and over),
+    /// per agent and file, in the current turn only.
+    fn edit_churn(&self) -> Option<Stuck> {
+        let start = self.turn_start();
+        let turn: Vec<&EditRec> = self.edit_log.iter().filter(|r| r.t >= start).collect();
+        let mut keys: Vec<(&str, &str)> = turn
+            .iter()
+            .map(|r| (r.agent.as_str(), r.path.as_str()))
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let file = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+        let green = self
+            .test_runs
+            .iter()
+            .filter(|r| r.fail == 0 && r.pass > 0)
+            .map(|r| r.t)
+            .max()
+            .unwrap_or(0);
+        let mut churn = None;
+        for &(agent, path) in &keys {
+            let mine: Vec<&EditRec> = turn
+                .iter()
+                .copied()
+                .filter(|r| r.agent == agent && r.path == path)
+                .collect();
+            // Rule C: an edit (o, n) undoes an earlier (n, o).
+            let undone: Vec<u64> = mine
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| {
+                    let (o, n) = r.h?;
+                    mine[..i].iter().find(|e| e.h == Some((n, o))).map(|e| e.t)
+                })
+                .collect();
+            if undone.len() >= UNDO_REPEATS {
+                return Some(Stuck {
+                    why: format!("{} edited back and forth {}×", file(path), undone.len()),
+                    since: undone.iter().copied().min().unwrap_or(0),
+                });
+            }
+            // Rule D: many edits since the last green test run; ticking a plan doesn't count.
+            if churn.is_none() && !path.ends_with(".md") {
+                let since: Vec<u64> = mine.iter().map(|r| r.t).filter(|&t| t > green).collect();
+                if since.len() >= CHURN_EDITS {
+                    churn = Some(Stuck {
+                        why: format!(
+                            "{} edited {}× with no passing test",
+                            file(path),
+                            since.len()
+                        ),
+                        since: since[0],
+                    });
+                }
+            }
+        }
+        churn
     }
 
     pub fn verdict_with(&self, repeats: u8) -> Verdict {
@@ -980,7 +1081,7 @@ impl State {
                 Verdict::Idle
             };
         }
-        if self.stuck_reason(repeats).is_some() {
+        if self.stuck(repeats).is_some() {
             return Verdict::Stuck;
         }
         if self
@@ -1009,6 +1110,15 @@ impl State {
             }
             "Edit" | "Write" | "MultiEdit" | "NotebookEdit" if ev.ok == Some(true) => {
                 self.edits.insert(path.to_string(), ev.t);
+                self.edit_log.push_back(EditRec {
+                    t: ev.t,
+                    agent: aid.into(),
+                    path: path.into(),
+                    h: ev.edit,
+                });
+                if self.edit_log.len() > EDIT_LOG {
+                    self.edit_log.pop_front();
+                }
                 self.reads.retain(|k, _| !k.ends_with(&format!("\t{path}")));
             }
             _ => {}
@@ -1675,6 +1785,127 @@ mod tests {
         );
         s.apply(&tool("PostToolUse", "Bash:cargo build", Some(true)));
         assert_eq!(s.verdict(), Verdict::OnTrack);
+    }
+
+    fn edit(t: u64, agent: &str, path: &str, h: Option<(u64, u64)>) -> Event {
+        Event {
+            t,
+            a: (agent != "main").then(|| agent.to_string()),
+            tool: Some("Edit".into()),
+            sig: Some(format!("Edit:{path}")),
+            act: Some(format!("editing {path}")),
+            ok: Some(true),
+            edit: h,
+            ..ev("PostToolUse")
+        }
+    }
+    fn tests_run(t: u64, pass: u32, fail: u32) -> Event {
+        Event {
+            t,
+            tests: Some((pass, fail)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        }
+    }
+    fn edits(from: u64, n: u64, agent: &str, path: &str) -> Vec<Event> {
+        (from..from + n)
+            .map(|t| edit(t, agent, path, None))
+            .collect()
+    }
+
+    #[test]
+    fn churn_same_file_without_passing_test() {
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 12, "main", "/r/src/a.rs"));
+        let s = run(&evs);
+        assert_eq!(s.verdict(), Verdict::Stuck);
+        assert_eq!(
+            s.stuck(3),
+            Some(Stuck {
+                why: "a.rs edited 12× with no passing test".into(),
+                since: 1_010
+            })
+        );
+        assert_eq!(run(&evs[..12]).verdict(), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn passing_test_resets_churn() {
+        for ((pass, fail), want) in [((5, 0), Verdict::OnTrack), ((4, 1), Verdict::Stuck)] {
+            let mut evs = vec![prompt("go")];
+            evs.extend(edits(1_010, 6, "main", "/r/a.rs"));
+            evs.push(tests_run(1_020, pass, fail));
+            evs.extend(edits(1_030, 6, "main", "/r/a.rs"));
+            assert_eq!(run(&evs).verdict(), want, "run {pass}/{fail}");
+        }
+    }
+
+    #[test]
+    fn churn_ignores_markdown_other_agents_and_old_turns() {
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 12, "main", "/r/plan.md"));
+        assert_eq!(run(&evs).verdict(), Verdict::OnTrack, "markdown");
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 6, "main", "/r/a.rs"));
+        evs.extend(edits(1_020, 6, "a1", "/r/a.rs"));
+        assert_eq!(run(&evs).verdict(), Verdict::OnTrack, "per agent");
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 8, "main", "/r/a.rs"));
+        evs.push(Event {
+            t: 2_000,
+            ..prompt("next")
+        });
+        evs.extend(edits(2_010, 8, "main", "/r/a.rs"));
+        assert_eq!(run(&evs).verdict(), Verdict::OnTrack, "per turn");
+    }
+
+    #[test]
+    fn undo_flip_flop_is_stuck() {
+        let p = "/r/src/a.rs";
+        let mut s = run(&[
+            prompt("go"),
+            edit(1_010, "main", p, Some((1, 2))),
+            edit(1_011, "main", p, Some((2, 1))),
+        ]);
+        assert_eq!(s.verdict(), Verdict::OnTrack, "one revert is normal");
+        s.apply(&edit(1_012, "main", p, Some((1, 2))));
+        assert_eq!(s.verdict(), Verdict::Stuck);
+        assert_eq!(
+            s.stuck(3),
+            Some(Stuck {
+                why: "a.rs edited back and forth 2×".into(),
+                since: 1_010
+            })
+        );
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 3, "main", p));
+        assert_eq!(run(&evs).verdict(), Verdict::OnTrack, "no hashes, no undo");
+    }
+
+    #[test]
+    fn churn_needs_an_active_turn() {
+        let mut evs = vec![prompt("go")];
+        evs.extend(edits(1_010, 12, "main", "/r/a.rs"));
+        evs.push(Event {
+            t: 1_100,
+            ..stop(0)
+        });
+        assert_ne!(run(&evs).verdict(), Verdict::Stuck);
+    }
+
+    #[test]
+    fn stuck_since_per_rule() {
+        let fail = |t| Event {
+            t,
+            ..tool("PostToolUseFailure", "Bash:cargo build", Some(false))
+        };
+        let s = run(&[prompt("go"), fail(1_010), fail(1_020), fail(1_030)]);
+        assert_eq!(s.stuck(3).map(|s| s.since), Some(1_010));
+        let r = |t| Event {
+            t,
+            ..call("main", "Read", 7, "reading a.rs")
+        };
+        let s = run(&[prompt("go"), r(1_010), r(1_020), r(1_030)]);
+        assert_eq!(s.stuck(3).map(|s| s.since), Some(1_010));
     }
 
     #[test]
