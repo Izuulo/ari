@@ -16,7 +16,8 @@ for line in open(raw):
     p["session_id"] = "bench"
     subprocess.run([bin, "hook"], input=json.dumps(p).encode(), env=env, check=True)
 payload = json.dumps({"session_id": "bench", "context_window": {"used_percentage": 40},
-    "rate_limits": {"five_hour": {"used_percentage": 30, "resets_at": int(time.time()) + 3600}},
+    "rate_limits": {"five_hour": {"used_percentage": 30, "resets_at": int(time.time()) + 3600},
+                    "seven_day": {"used_percentage": 20, "resets_at": int(time.time()) + 3 * 86400}},
     "cost": {"total_cost_usd": 1.23}}).encode()
 times = []
 for _ in range(n):
