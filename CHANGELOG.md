@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- After a compaction, ARI warns "⟲ redo ×N" when Claude repeats edits or commands it had already done. The hub's zoom view and activity lanes mark each compaction.
+
 ## 0.3.12 - 2026-11-08
 
 - STUCK also fires when Claude edits one file 12 times without a passing test, or keeps undoing its own edit. STUCK shows the tokens spent since it began, in the statusline and the panel.
