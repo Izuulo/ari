@@ -13,8 +13,8 @@ pub struct Git {
     pub branch: String,
     pub ahead: u32,
     pub behind: u32,
-    /// Changed or untracked files.
-    pub dirty: u32,
+    /// Changed or untracked files, relative to the session's cwd like agents' edits.
+    pub changed: Vec<String>,
     /// Newest first.
     pub commits: Vec<Commit>,
     /// Most recently updated first; empty without `gh` or a GitHub remote.
@@ -56,6 +56,14 @@ fn run(cmd: &mut Command) -> Option<String> {
 pub fn fetch(cwd: &str) -> Option<Git> {
     let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(cwd).args(args));
     let mut g = parse_status(&git(&["status", "--porcelain=v2", "--branch"])?);
+    // Porcelain paths are repo-root relative; agents' edits are cwd relative.
+    let prefix = git(&["rev-parse", "--show-prefix"]).unwrap_or_default();
+    let prefix = prefix.trim_end();
+    for p in &mut g.changed {
+        if let Some(r) = p.strip_prefix(prefix) {
+            *p = r.to_string();
+        }
+    }
     g.commits =
         parse_log(&git(&["log", "-n", "3", "--format=%h%x09%ct%x09%s"]).unwrap_or_default());
     g.prs = run(Command::new("gh").current_dir(cwd).args([
@@ -89,7 +97,14 @@ fn parse_status(s: &str) -> Git {
                 .and_then(|b| b.trim_start_matches('-').parse().ok())
                 .unwrap_or(0);
         } else if !l.starts_with('#') && !l.is_empty() {
-            g.dirty += 1;
+            // shortcut: quoted paths (odd characters) stay quoted; fine for matching normal names.
+            let path = match l.as_bytes()[0] {
+                b'1' => l.splitn(9, ' ').nth(8),
+                b'2' => l.splitn(10, ' ').nth(9).and_then(|p| p.split('\t').next()),
+                b'u' => l.splitn(11, ' ').nth(10),
+                _ => l.get(2..),
+            };
+            g.changed.push(path.unwrap_or(l).to_string());
         }
     }
     g
@@ -164,12 +179,13 @@ mod tests {
     #[test]
     fn status_branch_ahead_dirty() {
         let g = parse_status(
-            "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n1 .M N... 100644 100644 100644 a b src/x.rs\n? new.txt\n",
+            "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n1 .M N... 100644 100644 100644 a b src/x.rs\n2 R. N... 100644 100644 100644 a b R100 new name.rs\told.rs\n? new.txt\n",
         );
         assert_eq!(
-            (g.branch.as_str(), g.ahead, g.behind, g.dirty),
-            ("main", 2, 1, 2)
+            (g.branch.as_str(), g.ahead, g.behind),
+            ("main", 2, 1)
         );
+        assert_eq!(g.changed, ["src/x.rs", "new name.rs", "new.txt"]);
     }
 
     #[test]

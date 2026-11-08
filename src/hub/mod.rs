@@ -46,6 +46,8 @@ pub struct HubView {
     pub scroll: usize,
     /// `a`: every live session merged, in place of the watched one.
     pub all: bool,
+    /// `b`: git panes in place of messages and activity (hub) or messages (zoom).
+    pub git: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -489,6 +491,7 @@ fn zoom_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let keys = [
         ("↑↓", "agent".to_string()),
         ("pgup pgdn", "scroll".into()),
+        ("b", git_key(v)),
         ("esc", "back".into()),
         ("g", "graph".into()),
         ("s", "settings".into()),
@@ -497,7 +500,7 @@ fn zoom_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
     let k = ord[v.sel.min(ord.len() - 1)];
-    zoom::draw(buf, Rect::new(0, 2, w, h - 3), i, &i.st.agents[k], v.scroll);
+    zoom::draw(buf, Rect::new(0, 2, w, h - 3), i, &i.st.agents[k], v);
 }
 
 /// The graph over most of the height, the tasks board under it.
@@ -548,6 +551,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
             }
             .into(),
         ),
+        ("b", git_key(v)),
         ("x", "back to panel".into()),
         ("s", "settings".into()),
         ("q", "quit".into()),
@@ -556,7 +560,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let fixed = !v.all && merged(i);
     let keys: Vec<_> = keys
         .into_iter()
-        .filter(|k| !(fixed && k.0 == "a"))
+        .filter(|k| !(fixed && k.0 == "a") && !(merged(i) && k.0 == "b"))
         .collect();
     chrome(buf, i, &a, &keys);
     let ord = order(i.st);
@@ -571,10 +575,31 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         2
     };
     agents::tiles(buf, a.tiles, i, v, across);
-    feed::messages(buf, a.messages, i);
-    if let Some(l) = a.lanes {
-        feed::lanes(buf, l, i);
+    // shortcut: git is the watched session's repo only, so merged views keep messages; per-session git if asked.
+    if v.git && !merged(i) {
+        let (g, u) = match a.lanes {
+            Some(l) => (a.messages, l),
+            None => {
+                let m = a.messages;
+                let gw = m.width * 55 / 100;
+                (
+                    Rect { width: gw, ..m },
+                    Rect::new(m.x + gw, m.y, m.width - gw, m.height),
+                )
+            }
+        };
+        feed::git(buf, g, i);
+        feed::uncommitted(buf, u, i);
+    } else {
+        feed::messages(buf, a.messages, i);
+        if let Some(l) = a.lanes {
+            feed::lanes(buf, l, i);
+        }
     }
+}
+
+fn git_key(v: &HubView) -> String {
+    if v.git { "messages" } else { "git" }.into()
 }
 
 #[cfg(test)]

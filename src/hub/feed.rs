@@ -259,6 +259,77 @@ pub(crate) fn tasks(buf: &mut Buffer, area: Rect, i: &Input) {
     let _ = (SPINNER, msg);
 }
 
+/// `b`: the watch panel's git rows, branch and working tree in the title.
+pub(crate) fn git(buf: &mut Buffer, area: Rect, i: &Input) {
+    let mut rows = crate::panel::git_rows(i.x, i.now);
+    let right = if rows.is_empty() {
+        vec![]
+    } else {
+        rows.remove(0).split_off(1)
+    };
+    let inner = frame(
+        buf,
+        area,
+        vec![Span::styled("git", bold())],
+        right,
+        faint(),
+        false,
+    );
+    let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
+    if i.x.git.is_none() {
+        put(buf, x, inner.y, "no repo here, or still loading", w, faint());
+    }
+    for (n, r) in rows.into_iter().take(inner.height as usize).enumerate() {
+        buf.set_line(x, inner.y + n as u16, &r.into(), w);
+    }
+}
+
+/// `b`: each agent's edits that git still shows as changed, then changes no agent made.
+pub(crate) fn uncommitted(buf: &mut Buffer, area: Rect, i: &Input) {
+    let changed = i.x.git.as_ref().map_or(&[][..], |g| &g.changed[..]);
+    let inner = frame(
+        buf,
+        area,
+        vec![Span::styled("uncommitted", bold())],
+        vec![Span::styled(format!("{} files · by agent", changed.len()), dim())],
+        faint(),
+        false,
+    );
+    let (x0, w) = (inner.x + 1, inner.width.saturating_sub(2));
+    if changed.is_empty() {
+        put(buf, x0, inner.y, "working tree clean", w, faint());
+        return;
+    }
+    let mut rows: Vec<(String, Style, Vec<&str>)> = order(i.st)
+        .into_iter()
+        .map(|k| &i.st.agents[k])
+        .map(|a| {
+            let mine: Vec<&str> = changed
+                .iter()
+                .filter(|c| a.files.contains_key(*c))
+                .map(String::as_str)
+                .collect();
+            let s = if a.done { faint() } else { node_style(i, a) };
+            (a.label(), s, mine)
+        })
+        .filter(|r| !r.2.is_empty())
+        .collect();
+    let other: Vec<&str> = changed
+        .iter()
+        .filter(|c| !i.st.agents.iter().any(|a| a.files.contains_key(*c)))
+        .map(String::as_str)
+        .collect();
+    if !other.is_empty() {
+        rows.push(("other".into(), dim(), other));
+    }
+    for (n, (who, s, files)) in rows.iter().take(inner.height as usize).enumerate() {
+        let y = inner.y + n as u16;
+        let x = put(buf, x0, y, &format!("{:<9} ", super::clip(who, 9)), 10, *s);
+        let x = put(buf, x, y, &format!("{:>3}  ", files.len()), 5, warn());
+        put(buf, x, y, &files.join(", "), (x0 + w).saturating_sub(x), Style::default());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +433,38 @@ mod tests {
         assert!(at("⊘ blocked by #4") < col);
         assert!((col..2 * col).contains(&at("impl")));
         assert!(at("#1 task 1") >= 2 * col);
+    }
+
+    #[test]
+    fn uncommitted_by_agent() {
+        let mut st = with_main(vec![kid("a1", "main", 1)]);
+        st.agents[1].files.insert("src/x.rs".into(), Default::default());
+        st.agents[1].files.insert("src/done.rs".into(), Default::default());
+        let x = crate::bar::Extras {
+            git: Some(crate::git::Git {
+                branch: "main".into(),
+                changed: vec!["src/x.rs".into(), "notes.md".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (u, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 1,
+            clock: "",
+        };
+        let mut buf = Buffer::empty(Rect::new(0, 0, 70, 6));
+        let area = buf.area;
+        uncommitted(&mut buf, area, &i);
+        let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
+        let row = |who: &str| out.lines().find(|l| l.contains(who)).unwrap().to_string();
+        assert!(row("a1").contains("1  src/x.rs"), "{out}");
+        assert!(!out.contains("done.rs"), "{out}");
+        assert!(row("other").contains("notes.md"), "{out}");
+        assert!(!out.lines().any(|l| l.contains("main ")), "{out}");
     }
 }

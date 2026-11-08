@@ -1436,6 +1436,11 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
     rows
 }
 
+/// The git section's rows, colored, for the hub's git panes.
+pub(crate) fn git_rows(x: &Extras, now: u64) -> Vec<Vec<Span<'static>>> {
+    git(x, &Ctx { color: true, inner: 0 }, now)
+}
+
 /// Branch and working tree, then recent commits and PRs, each led by its age.
 fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     let Some(g) = &x.git else { return vec![] };
@@ -1446,7 +1451,7 @@ fn git(x: &Extras, c: &Ctx, now: u64) -> Vec<Row> {
     if g.behind > 0 {
         head += &format!(" ↓{}", g.behind);
     }
-    let tree = match g.dirty {
+    let tree = match g.changed.len() {
         0 => "clean".to_string(),
         n => format!("{n} changed"),
     };
@@ -2154,7 +2159,7 @@ mod tests {
         x.git = Some(crate::git::Git {
             branch: "main".into(),
             ahead: 2,
-            dirty: 3,
+            changed: vec!["a".into(), "b".into(), "c".into()],
             commits: vec![crate::git::Commit {
                 hash: "1ec1c52".into(),
                 subject: "Merge pull request #38".into(),
