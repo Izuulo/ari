@@ -180,6 +180,11 @@ ascii = false               # ASCII-only glyphs everywhere
 max_width = 0               # compact row width; 0 = terminal width
 retention_days = 7          # session logs older than this are deleted (at least 1)
 
+[view]                      # how each surface draws itself: full · calm · constellation
+watch = "full"              # ari watch (the panel)
+hub = "full"                # ari hub
+hub_all = "full"            # ari hub --all
+
 [notify]
 desktop = true              # a desktop notification when a session flips
 on = ["needs_you", "stuck", "blocked", "done"]   # also: idle

@@ -7,6 +7,9 @@ expression: to_plain(&out)
    theme                     default            ││ ● ON TRACK      │                                                    
    face                      off                │
    ascii glyphs              off                │
+   watch view                full               │
+   hub view                  full               │
+   hub --all view            full               │
  COLOURS                                        │
    good                      ■ theme            │
    warn                      ■ theme            │
@@ -15,11 +18,11 @@ expression: to_plain(&out)
    highlight                 ■ theme            │
    info                      ■ theme            │
    muted                     ■ theme            │
-   bar                       ■ theme            │
+ ▸ bar                       ■ theme            │
  STATUSLINE                                     │
    row                       top                │
    width                     auto               │
- ▸ conflicts · file clashes  on                 │
+   conflicts · file clashes  on                 │
    now · current step        on                 │
    tasks · task progress     on                 │
    agents · running count    on                 │
@@ -38,7 +41,4 @@ expression: to_plain(&out)
    session · cost, time      on                 │
    calls · recent tool calls on                 │
    turns · recent turns      on                 │
-   git · commits, PRs        on                 │
-   auto-clear done agents    off                │
-   hide stale agents         off                │
  ↑↓ move · ←→ change · d default · esc back · chain, prices, ntfy: edit the file

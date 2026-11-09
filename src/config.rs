@@ -65,6 +65,69 @@ pub const COLOR_CYCLE: [&str; 15] = [
 
 const HEADER: &str = "# ARI settings. Edit here or press s in ari watch; changes apply live.\n# Every key: https://github.com/Izuulo/ari#config\n\n";
 
+/// How a surface draws itself; an unknown name in the file counts as `full`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Look {
+    Calm,
+    Constellation,
+    #[default]
+    #[serde(other)]
+    Full,
+}
+
+impl Look {
+    pub fn next(self) -> Look {
+        match self {
+            Look::Full => Look::Calm,
+            Look::Calm => Look::Constellation,
+            Look::Constellation => Look::Full,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Look::Full => "full",
+            Look::Calm => "calm",
+            Look::Constellation => "constellation",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Surface {
+    Watch,
+    Hub,
+    HubAll,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Views {
+    pub watch: Look,
+    pub hub: Look,
+    pub hub_all: Look,
+}
+
+impl Views {
+    pub fn get(&self, s: Surface) -> Look {
+        match s {
+            Surface::Watch => self.watch,
+            Surface::Hub => self.hub,
+            Surface::HubAll => self.hub_all,
+        }
+    }
+
+    pub fn bump(&mut self, s: Surface) {
+        let l = match s {
+            Surface::Watch => &mut self.watch,
+            Surface::Hub => &mut self.hub,
+            Surface::HubAll => &mut self.hub_all,
+        };
+        *l = l.next();
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -86,6 +149,7 @@ pub struct Config {
     pub chain: Chain,
     pub thresholds: Thresholds,
     pub notify: Notify,
+    pub view: Views,
     /// Role → colour (`"red"`, `"#rrggbb"`, `"114"`), over the theme's.
     pub colors: BTreeMap<String, String>,
     pub prices: BTreeMap<String, Price>,
@@ -161,6 +225,7 @@ impl Default for Config {
             chain: Chain::default(),
             thresholds: Thresholds::default(),
             notify: Notify::default(),
+            view: Views::default(),
             colors: BTreeMap::new(),
             prices: BTreeMap::new(),
         }
@@ -327,7 +392,32 @@ mod tests {
         c.colors.insert("bad".into(), "lightred".into());
         c.notify.ntfy = "https://ntfy.sh/t".into();
         c.notify.on = vec!["idle".into()];
+        c.view.hub = Look::Constellation;
         assert_eq!(parse(&toml::to_string_pretty(&c).unwrap()), c);
+    }
+
+    #[test]
+    fn view_defaults_cycles_and_parses() {
+        assert_eq!(Config::default().view, Views::default());
+        assert_eq!(Look::Full.next(), Look::Calm);
+        assert_eq!(Look::Calm.next(), Look::Constellation);
+        assert_eq!(Look::Constellation.next(), Look::Full);
+        let c = parse("[view]\nwatch = \"calm\"\nhub_all = \"constellation\"\n");
+        assert_eq!(
+            (c.view.watch, c.view.hub, c.view.hub_all),
+            (Look::Calm, Look::Full, Look::Constellation)
+        );
+        let mut v = Views::default();
+        v.bump(Surface::Hub);
+        assert_eq!(v.get(Surface::Hub), Look::Calm);
+        assert_eq!(v.get(Surface::Watch), Look::Full);
+    }
+
+    #[test]
+    fn unknown_view_is_full_and_keeps_other_settings() {
+        let c = parse("bell = true\n[view]\nwatch = \"zen\"\n");
+        assert_eq!(c.view.watch, Look::Full);
+        assert!(c.bell);
     }
 
     #[test]
