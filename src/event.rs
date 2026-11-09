@@ -74,7 +74,34 @@ pub struct Event {
     /// Edit that succeeded: hashes of (old_string, new_string), to spot an edit that undoes another. Never the text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edit: Option<(u64, u64)>,
+    /// Edit/Write/MultiEdit that succeeded: skip/xfail/only markers it added.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skips: Option<u32>,
+    /// Shell command that succeeded: test files it deleted (at most 5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rm: Option<Vec<String>>,
 }
+
+/// Markers that skip or narrow a test run.
+pub const SKIP_MARKERS: [&str; 17] = [
+    "#[ignore",
+    "@pytest.mark.skip",
+    "@pytest.mark.xfail",
+    "@unittest.skip",
+    "pytest.skip(",
+    "pytest.xfail(",
+    "it.skip(",
+    "it.only(",
+    "test.skip(",
+    "test.only(",
+    "describe.skip(",
+    "describe.only(",
+    "xit(",
+    "xdescribe(",
+    "t.Skip(",
+    "@Disabled",
+    "@Ignore",
+];
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
@@ -228,6 +255,11 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                 {
                     ev.edit = Some((fnv1a(o.as_bytes()), fnv1a(n.as_bytes())));
                 }
+            }
+            ev.skips = skips_added(ev.tool.as_deref().unwrap_or(""), input);
+            if matches!(ev.tool.as_deref(), Some("Bash" | "PowerShell")) {
+                let cmd = input.get("command").and_then(Value::as_str).unwrap_or("");
+                ev.rm = Some(removed_tests(cmd)).filter(|r| !r.is_empty());
             }
             task_tool(&mut ev, input, resp);
             let out = |k: &str| resp.get(k).and_then(Value::as_str).unwrap_or("");
@@ -458,6 +490,66 @@ fn edit_lines(tool: &str, input: &Value) -> Option<(u32, u32)> {
         }),
         _ => None,
     }
+}
+
+pub fn is_test_path(p: &str) -> bool {
+    let mut parts = p.split(['/', '\\']).filter(|c| !c.is_empty());
+    let name = parts.next_back().unwrap_or("");
+    let dir = |c: &str| matches!(c, "tests" | "test" | "__tests__" | "spec" | "specs");
+    dir(name)
+        || parts.any(dir)
+        || (name.starts_with("test_") && name.ends_with(".py"))
+        || ["_test.py", "_test.go", "_spec.rb", "Test.java", "Tests.cs"]
+            .iter()
+            .any(|s| name.ends_with(s))
+        || name.contains(".test.")
+        || name.contains(".spec.")
+}
+
+fn markers(s: &str) -> u32 {
+    SKIP_MARKERS
+        .iter()
+        .flat_map(|m| s.match_indices(m))
+        .filter(|(i, _)| {
+            !s[..*i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        })
+        .count() as u32
+}
+
+fn skips_added(tool: &str, input: &Value) -> Option<u32> {
+    let m = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map_or(0, markers);
+    let edit = |v: &Value| m(v, "new_string").saturating_sub(m(v, "old_string"));
+    let n = match tool {
+        "Edit" => edit(input),
+        "MultiEdit" => input
+            .get("edits")
+            .and_then(Value::as_array)
+            .map_or(0, |es| es.iter().map(edit).sum()),
+        // shortcut: a Write can't see the old file, so existing markers count as added; read the file in PreToolUse if this misfires.
+        "Write" => m(input, "content"),
+        _ => 0,
+    };
+    Some(n).filter(|n| *n > 0)
+}
+
+fn removed_tests(cmd: &str) -> Vec<String> {
+    cmd.split(['&', ';', '|', '\n'])
+        .flat_map(|part| {
+            let w: Vec<&str> = part.split_whitespace().collect();
+            let skip = match w.as_slice() {
+                ["git", "rm", ..] => 2,
+                ["rm" | "unlink" | "Remove-Item", ..] => 1,
+                _ => w.len(),
+            };
+            w.into_iter().skip(skip)
+        })
+        .filter(|a| !a.starts_with('-') && is_test_path(a))
+        .take(5)
+        .map(|a| truncate(a, 120))
+        .collect()
 }
 
 fn action(tool: &str, input: &Value, cwd: &str) -> String {
@@ -1178,5 +1270,80 @@ mod tests {
             ..Default::default()
         };
         assert!(to_line(&huge).len() < MAX_LINE);
+    }
+
+    #[test]
+    fn test_paths() {
+        for p in [
+            "tests/a.rs",
+            "/r/tests/x.py",
+            "src/foo.test.ts",
+            "app/foo.spec.js",
+            "test_calc.py",
+            "calc_test.go",
+            "spec/models/user_spec.rb",
+            "web/__tests__/a.js",
+            "src/FooTest.java",
+        ] {
+            assert!(is_test_path(p), "{p}");
+        }
+        for p in [
+            "src/state.rs",
+            "src/contest.rs",
+            "latest.py",
+            "attestation/x.rs",
+            "README.md",
+        ] {
+            assert!(!is_test_path(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn skips_added_counts_new_markers_only() {
+        let edit = |o: &str, nw: &str| {
+            post(
+                "Edit",
+                json!({"file_path": "/p/a", "old_string": o, "new_string": nw}),
+            )
+            .skips
+        };
+        assert_eq!(edit("fn a() {}", "#[ignore]\nfn a() {}"), Some(1));
+        assert_eq!(edit("#[ignore]\nfn a() {}", "fn a() {}"), None);
+        assert_eq!(edit("xs", "xs.iter().skip(1)"), None);
+        assert_eq!(edit("x", "bit.skip(2)"), None);
+        assert_eq!(edit("x", "it.only(\"x\", () => {})"), Some(1));
+        assert_eq!(edit("x", "@pytest.mark.xfail\ndef t(): pass"), Some(1));
+        let multi = json!({"file_path": "/p/a", "edits": [
+            {"old_string": "a", "new_string": "#[ignore]\na"},
+            {"old_string": "b", "new_string": "#[ignore]\nb"}]});
+        assert_eq!(post("MultiEdit", multi).skips, Some(2));
+        let write = json!({"file_path": "/p/a.test.js", "content": "describe.skip('x', f)"});
+        assert_eq!(post("Write", write).skips, Some(1));
+    }
+
+    #[test]
+    fn rm_collects_deleted_test_paths() {
+        assert_eq!(
+            removed_tests("rm tests/test_calc.py src/a.py"),
+            ["tests/test_calc.py"]
+        );
+        assert_eq!(
+            removed_tests("cd x && git rm -f calc_test.go"),
+            ["calc_test.go"]
+        );
+        assert_eq!(removed_tests("rm -rf tests/"), ["tests/"]);
+        assert!(removed_tests("grep rm tests/x").is_empty());
+        assert!(removed_tests("echo rm tests").is_empty());
+        let cmd = json!({"command": "rm tests/test_calc.py src/a.py"});
+        assert_eq!(
+            post("Bash", cmd.clone()).rm,
+            Some(vec!["tests/test_calc.py".to_string()])
+        );
+        assert_eq!(post("Bash", json!({"command": "ls"})).rm, None);
+        let fail = n(
+            json!({"hook_event_name": "PostToolUseFailure", "tool_name": "Bash",
+            "tool_input": cmd, "error": "x"}),
+        );
+        assert_eq!(fail.rm, None);
     }
 }
