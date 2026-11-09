@@ -187,3 +187,126 @@ fn merge_cost_is_claude_only() {
     assert_eq!(u.cost_usd, Some(1.0));
     assert_eq!(t.total().input, 300);
 }
+
+// --- Calm hub and hub --all ---
+
+fn calm(all: bool) -> Config {
+    use ari_cli::config::{Look, Views};
+    let mut view = Views::default();
+    if all {
+        view.hub_all = Look::Calm;
+    } else {
+        view.hub = Look::Calm;
+    }
+    Config {
+        view,
+        ..Default::default()
+    }
+}
+
+fn calm_team(now: Option<u64>) -> (String, State) {
+    let (s, x, t) = team();
+    let out = show_u(
+        &calm(false),
+        &s,
+        &Usage::default(),
+        &x,
+        now.unwrap_or(t),
+        HubView::default(),
+        168,
+        49,
+    );
+    (out, s)
+}
+
+#[test]
+fn calm_hub_team() {
+    let (out, _) = calm_team(None);
+    for bad in ["tok", "ctx", "$"] {
+        assert!(!out.contains(bad), "{bad} in:\n{out}");
+    }
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn calm_hub_packet_caption() {
+    let (_, s) = calm_team(None);
+    let m = s.messages.iter().max_by_key(|m| m.t).unwrap();
+    let head: String = m.text.chars().take(20).collect();
+    let (out, _) = calm_team(Some(m.t + 1000));
+    assert!(out.contains('→') && out.contains(&head), "{head}:\n{out}");
+    let (out, _) = calm_team(Some(m.t + 3500));
+    assert!(!out.contains(&head), "{out}");
+}
+
+fn calm_all(parts: Vec<Part>) -> String {
+    let (st, u, tokens) = merge(parts, 1000);
+    let x = Extras {
+        tokens: Some(tokens),
+        ..Default::default()
+    };
+    show_u(&calm(true), &st, &u, &x, 1000, HubView::default(), 168, 49)
+}
+
+#[test]
+fn calm_hub_all() {
+    use ari_cli::app::App;
+    let out = calm_all(vec![
+        bare("api", App::Claude, Usage::default(), 1),
+        bare("web", App::Claude, Usage::default(), 1),
+    ]);
+    for name in ["api", "web"] {
+        let n = out
+            .lines()
+            .filter(|l| l.contains(&format!(" {name} ")))
+            .count();
+        assert_eq!(n, 1, "{name}:\n{out}");
+    }
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn calm_cards_clip_wide_names() {
+    use ari_cli::app::App;
+    use unicode_width::UnicodeWidthStr;
+    let mut p = bare("aaaaaaaa", App::Claude, Usage::default(), 1);
+    p.name = "日本語プロジェクト".repeat(5);
+    let out = calm_all(vec![p]);
+    for l in out.lines() {
+        assert!(l.width() <= 168, "{l}");
+    }
+    let card: Vec<&str> = out.lines().filter(|l| l.starts_with('│')).collect();
+    assert!(!card.is_empty(), "{out}");
+    for l in card {
+        assert!(l.trim_end().ends_with('│'), "border missing: {l}");
+    }
+}
+
+#[test]
+fn calm_card_shows_the_ask() {
+    use ari_cli::app::App;
+    let mut p = bare("aaaaaaaa", App::Claude, Usage::default(), 1);
+    p.st.agents.push(ari_cli::state::Agent {
+        id: "main".into(),
+        waiting: Some((1, "run it".into())),
+        ..Default::default()
+    });
+    let out = calm_all(vec![p]);
+    let card = |l: &&str| l.starts_with('│') && l.contains("needs you: run it");
+    assert!(out.lines().any(|l| card(&l)), "{out}");
+}
+
+#[test]
+fn calm_hub_empty() {
+    let out = show_u(
+        &calm(false),
+        &State::default(),
+        &Usage::default(),
+        &Extras::default(),
+        1,
+        HubView::default(),
+        168,
+        49,
+    );
+    assert!(out.contains("no agents yet"), "{out}");
+}

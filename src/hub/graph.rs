@@ -2,7 +2,8 @@
 
 use super::{Input, bold, clip, dim, faint, frame, glyph, ledger, msg, node_style, put, rput};
 use crate::bar::{cells, fmt_tokens};
-use crate::state::{Agent, State};
+use crate::config::Look;
+use crate::state::{Agent, AgentStatus, State};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -20,7 +21,15 @@ fn plural(n: usize, word: &str) -> String {
     }
 }
 const GAP: u16 = 4;
-const PACKET_MS: u64 = 1600;
+
+fn calm(i: &Input) -> bool {
+    super::look(i) == Look::Calm
+}
+
+/// How long a message's `●` takes to travel its edge; Calm lets it glide.
+fn packet_ms(i: &Input) -> u64 {
+    if calm(i) { 3000 } else { 1600 }
+}
 
 /// Messages between two agents, either way. `a < b` by id.
 #[derive(Debug, Clone, PartialEq)]
@@ -309,6 +318,26 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
         sel,
     );
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
+    if calm(i) {
+        let working = a.waiting.is_none()
+            && i.st.agent_status(a, i.now) == AgentStatus::Running
+            && (a.id != "main" || i.st.turn_active);
+        let dots = if working {
+            crate::simple::dots(i.now)
+        } else {
+            ""
+        };
+        let p = crate::simple::phrase(i.st, a, i.now);
+        let st = if a.waiting.is_some() {
+            msg()
+        } else if a.done {
+            faint()
+        } else {
+            Style::default()
+        };
+        put(buf, x, inner.y, &format!("{p}{dots}"), w, st);
+        return;
+    }
     let l = ledger(i, a);
     let model = l
         .and_then(|l| l.last_model.as_deref())
@@ -389,6 +418,36 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
         w,
         faint(),
     );
+}
+
+/// Calm's legend row: the newest message in flight as `from → to  “text”`, else a head count.
+fn caption(i: &Input, ms: u64) -> String {
+    let st = i.st;
+    let name = |id: &str| {
+        st.agents
+            .iter()
+            .find(|a| a.id == id)
+            .map_or(id.to_string(), Agent::label)
+    };
+    let flying: Vec<_> = st
+        .messages
+        .iter()
+        .filter(|m| i.now.saturating_sub(m.t) < ms)
+        .collect();
+    match flying.iter().max_by_key(|m| m.t) {
+        Some(m) => {
+            let text: String = m.text.chars().take(40).collect();
+            format!("{} → {}  “{text}”", name(&m.from), name(&m.to))
+        }
+        None => {
+            let helpers = st.agents.iter().filter(|a| a.id != "main").count();
+            format!(
+                "{} · {} flying",
+                plural(helpers, "helper"),
+                plural(flying.len(), "message")
+            )
+        }
+    }
 }
 
 /// Shown in the graph: running, or finished under 5 minutes ago, or every one with `show_done`.
@@ -636,11 +695,13 @@ pub(crate) fn draw(
             faint(),
             false,
         );
+        // Calm has no agents table to point at.
+        let see = if calm(i) { "" } else { "see the agents table" };
         put(
             buf,
             inner.x + 1,
             inner.y,
-            "see the agents table",
+            see,
             inner.width.saturating_sub(2),
             faint(),
         );
@@ -727,17 +788,23 @@ pub(crate) fn draw(
             );
         }
     }
-    // A message under 1.6 s old travels its edge.
+    // A message under `packet_ms` old travels its edge.
+    let ms = packet_ms(i);
     for (e, p) in &paths {
         let age = i.now.saturating_sub(e.t);
-        if age < PACKET_MS && !p.is_empty() {
-            let (x, y) = p[(age as usize * p.len() / PACKET_MS as usize).min(p.len() - 1)];
+        if age < ms && !p.is_empty() {
+            let (x, y) = p[(age as usize * p.len() / ms as usize).min(p.len() - 1)];
             if inner.contains((x, y).into()) {
                 buf[(x, y)]
                     .set_symbol("●")
                     .set_style(msg().add_modifier(Modifier::BOLD));
             }
         }
+    }
+    if calm(i) {
+        let w = inner.width.saturating_sub(2);
+        put(buf, inner.x + 1, legend_y, &caption(i, ms), w, msg());
+        return;
     }
     let mut x = inner.x + 1;
     for (t, s) in [

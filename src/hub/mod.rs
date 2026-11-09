@@ -4,7 +4,7 @@
 pub(crate) mod agents;
 pub mod all;
 mod feed;
-mod graph;
+pub(crate) mod graph;
 mod zoom;
 
 use crate::bar::{self, Extras};
@@ -921,7 +921,7 @@ pub(crate) mod tests {
             project: Some("all sessions".into()),
             ..Default::default()
         };
-        assert!(draw(&one, HubView::default()).starts_with("calm (coming soon)"));
+        assert!(draw(&one, HubView::default()).contains("v constellation"));
         assert!(draw(&all, HubView::default()).starts_with("constellation (coming soon)"));
         let graph = HubView {
             screen: Screen::Graph,
