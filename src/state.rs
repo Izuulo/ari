@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 14;
+const CACHE_VERSION: u32 = 15;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -21,6 +21,8 @@ const CHURN_EDITS: usize = 12;
 /// Undos of an earlier edit that count as flip-flopping; one revert is normal.
 const UNDO_REPEATS: usize = 2;
 const EDIT_LOG: usize = 60;
+/// Test flags kept per session.
+pub const TEST_FLAGS: usize = 20;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 /// Repeats of earlier work after a compaction that count as redoing it.
 const REDO_MIN: u32 = 3;
@@ -133,6 +135,17 @@ pub struct State {
     pub work: VecDeque<(u64, u64)>,
     /// The open redo window after a compaction.
     pub redo: Option<Redo>,
+    /// Test files deleted, skips added, tests edited while red; oldest first.
+    pub test_flags: VecDeque<TestFlag>,
+}
+
+/// A change to the tests worth a look: `skip added`, `deleted` or `edited while failing`.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TestFlag {
+    pub t: u64,
+    pub path: String,
+    pub kind: String,
 }
 
 /// Work main repeats after a compaction.
@@ -632,6 +645,7 @@ impl State {
                         self.test_runs.pop_front();
                     }
                 }
+                self.track_test_flags(ev);
                 let a = self.agent_mut(aid, ev);
                 a.running_since = None;
                 let tool = ev.tool.as_deref().unwrap_or("");
@@ -1207,6 +1221,71 @@ impl State {
             if self.work.len() > WORK {
                 self.work.pop_front();
             }
+        }
+    }
+
+    fn track_test_flags(&mut self, ev: &Event) {
+        if ev.e != "PostToolUse" || ev.ok != Some(true) {
+            return;
+        }
+        let path = ev
+            .sig
+            .as_deref()
+            .and_then(|s| s.split_once(':'))
+            .map(|p| p.1);
+        let edited = path.filter(|_| FILE_EDITS.contains(&ev.tool.as_deref().unwrap_or("")));
+        let mut add = Vec::new();
+        if let Some(p) = edited.filter(|_| ev.skips.is_some()) {
+            add.push((p.to_string(), "skip added"));
+        }
+        for p in ev.rm.iter().flatten() {
+            add.push((p.clone(), "deleted"));
+        }
+        if let Some(p) = edited.filter(|p| crate::event::is_test_path(p) && self.tests_failing()) {
+            add.push((p.to_string(), "edited while failing"));
+        }
+        for (path, kind) in add {
+            match self
+                .test_flags
+                .iter_mut()
+                .find(|f| f.path == path && f.kind == kind)
+            {
+                Some(f) => f.t = ev.t,
+                None => self.test_flags.push_back(TestFlag {
+                    t: ev.t,
+                    path,
+                    kind: kind.into(),
+                }),
+            }
+            if self.test_flags.len() > TEST_FLAGS {
+                self.test_flags.pop_front();
+            }
+        }
+    }
+
+    /// Test flags raised in the current turn.
+    pub fn turn_flags(&self) -> Vec<&TestFlag> {
+        let from = self.turn_start();
+        self.test_flags.iter().filter(|f| f.t >= from).collect()
+    }
+
+    /// Files other than Markdown changed after the last test run.
+    pub fn unverified(&self) -> bool {
+        self.test_runs.back().is_some_and(|r| {
+            self.edits
+                .iter()
+                .any(|(p, t)| *t > r.t && !p.ends_with(".md"))
+        })
+    }
+
+    /// Suffix for a DONE or IDLE verdict: `tests failing` beats `unverified`.
+    pub fn verdict_note(&self, v: Verdict) -> Option<&'static str> {
+        if v == Verdict::Done && self.tests_failing() {
+            Some("tests failing")
+        } else if matches!(v, Verdict::Done | Verdict::Idle) && self.unverified() {
+            Some("unverified")
+        } else {
+            None
         }
     }
 
@@ -2695,5 +2774,105 @@ mod tests {
         let s = run(&[at_prompt(1_000, "x"), compact(1_050, "PostCompact")]);
         assert_eq!(s.redo.map(|r| r.since), Some(1_050));
         assert!(s.compactions.is_empty());
+    }
+
+    fn edit_at(t: u64, path: &str) -> Event {
+        Event {
+            t,
+            tool: Some("Edit".into()),
+            sig: Some(format!("Edit:{path}")),
+            ok: Some(true),
+            ..ev("PostToolUse")
+        }
+    }
+    fn tests_at(t: u64, pass: u32, fail: u32) -> Event {
+        Event {
+            t,
+            tests: Some((pass, fail)),
+            ..tool("PostToolUse", "Bash:cargo test", Some(true))
+        }
+    }
+    fn flags(s: &State) -> Vec<(&str, &str)> {
+        s.turn_flags()
+            .iter()
+            .map(|f| (f.kind.as_str(), f.path.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn skip_and_delete_are_flagged() {
+        let s = run(&[
+            at_prompt(1_000, "x"),
+            Event {
+                skips: Some(1),
+                ..edit_at(1_100, "/r/src/a.rs")
+            },
+            Event {
+                t: 1_200,
+                rm: Some(vec!["tests/b.py".into()]),
+                ..tool("PostToolUse", "Bash:rm tests/b.py", Some(true))
+            },
+        ]);
+        assert_eq!(
+            flags(&s),
+            [("skip added", "/r/src/a.rs"), ("deleted", "tests/b.py")]
+        );
+        assert_eq!(s.verdict(), Verdict::OnTrack);
+    }
+
+    #[test]
+    fn test_edit_flagged_only_while_failing() {
+        let mut s = run(&[at_prompt(1_000, "x"), edit_at(1_100, "/r/tests/a.py")]);
+        assert!(flags(&s).is_empty());
+        s.apply(&tests_at(1_200, 4, 1));
+        s.apply(&edit_at(1_300, "/r/tests/a.py"));
+        assert_eq!(flags(&s), [("edited while failing", "/r/tests/a.py")]);
+        s.apply(&tests_at(1_400, 5, 0));
+        s.apply(&edit_at(1_500, "/r/tests/b.py"));
+        assert_eq!(flags(&s).len(), 1);
+    }
+
+    #[test]
+    fn flags_dedupe_cap_and_turn() {
+        let skip = |t, p: &str| Event {
+            skips: Some(1),
+            ..edit_at(t, p)
+        };
+        let mut s = run(&[
+            at_prompt(1_000, "x"),
+            skip(1_100, "/r/a.rs"),
+            skip(1_200, "/r/a.rs"),
+        ]);
+        assert_eq!(s.test_flags.len(), 1);
+        assert_eq!(s.test_flags[0].t, 1_200);
+        for i in 0..25 {
+            s.apply(&skip(1_300 + i, &format!("/r/f{i}.rs")));
+        }
+        assert_eq!(s.test_flags.len(), TEST_FLAGS);
+        s.apply(&at_prompt(2_000, "y"));
+        assert!(s.turn_flags().is_empty());
+        assert_eq!(s.test_flags.len(), TEST_FLAGS);
+    }
+
+    #[test]
+    fn unverified_after_edit_past_last_run() {
+        assert!(!run(&[edit_at(1_100, "/r/src/a.rs")]).unverified());
+        let mut s = run(&[tests_at(1_000, 3, 0), edit_at(1_100, "/r/plan.md")]);
+        assert!(!s.unverified());
+        s.apply(&edit_at(1_200, "/r/src/a.rs"));
+        assert!(s.unverified());
+        s.apply(&tests_at(1_300, 3, 0));
+        assert!(!s.unverified());
+    }
+
+    #[test]
+    fn verdict_note_order() {
+        let red = run(&[tests_at(1_000, 3, 1), edit_at(1_100, "/r/src/a.rs")]);
+        assert_eq!(red.verdict_note(Verdict::Done), Some("tests failing"));
+        let green = run(&[tests_at(1_000, 3, 0), edit_at(1_100, "/r/src/a.rs")]);
+        assert_eq!(green.verdict_note(Verdict::Done), Some("unverified"));
+        assert_eq!(green.verdict_note(Verdict::Idle), Some("unverified"));
+        assert_eq!(green.verdict_note(Verdict::OnTrack), None);
+        assert_eq!(red.verdict_note(Verdict::Idle), Some("unverified"));
     }
 }
