@@ -78,6 +78,8 @@ pub struct Config {
     pub bell: bool,
     /// Hide finished subagents as soon as they finish (`ari watch`).
     pub auto_clear: bool,
+    /// Hide subagents quiet for 5 min without finishing (`ari watch`).
+    pub hide_stale: bool,
     pub ascii: bool,
     pub max_width: usize,
     pub retention_days: u64,
@@ -152,6 +154,7 @@ impl Default for Config {
             face: false,
             bell: false,
             auto_clear: false,
+            hide_stale: false,
             ascii: false,
             max_width: 0,
             retention_days: 7,

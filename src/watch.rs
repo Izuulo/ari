@@ -328,6 +328,14 @@ impl App {
         }
     }
 
+    /// Hide finished subagents per `clear_cut`, and stale ones with `hide_stale`.
+    fn prune(&self, st: &mut State, now: u64) {
+        st.clear_done(self.clear_cut());
+        if self.cfg.hide_stale {
+            st.clear_stale(now);
+        }
+    }
+
     /// The frame's lines, and the entry count while the `--all` list is what's drawn.
     fn frame_lines(&mut self, width: u16, height: u16) -> (Vec<Line<'static>>, Option<usize>) {
         if let Some(sel) = self.view.settings {
@@ -347,7 +355,7 @@ impl App {
             if let Some(dir) = self.pinned.clone() {
                 if dir.is_dir() {
                     let mut st = state::load_session(&dir);
-                    st.clear_done(self.clear_cut());
+                    self.prune(&mut st, now);
                     let usage = usage::load(&dir);
                     let x = bar::Extras {
                         tokens: Some(tokens::cached_fresh(&dir, &usage)),
@@ -373,7 +381,7 @@ impl App {
         };
         let dir = dir.clone();
         let mut st = self.st.clone();
-        st.clear_done(self.clear_cut());
+        self.prune(&mut st, now);
         self.view_lines(&dir, &st, &self.usage, self.x.clone(), width, height, now)
     }
 
@@ -419,7 +427,7 @@ impl App {
         let live: Vec<_> = parts.iter().filter_map(|p| p.u.dir.clone()).collect();
         self.gits.retain(|d, _| live.contains(d));
         let (mut st, usage, tokens) = hub::all::merge(parts, now);
-        st.clear_done(self.clear_cut());
+        self.prune(&mut st, now);
         let x = bar::Extras {
             tokens: Some(tokens),
             repos,
