@@ -34,16 +34,25 @@ fn team() -> (State, Extras, u64) {
 }
 
 fn show(st: &State, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
-    show_u(st, &Usage::default(), x, now, v, w, h)
+    show_u(&Config::default(), st, &Usage::default(), x, now, v, w, h)
 }
 
-fn show_u(st: &State, u: &Usage, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
-    let cfg = Config::default();
+#[allow(clippy::too_many_arguments)]
+fn show_u(
+    cfg: &Config,
+    st: &State,
+    u: &Usage,
+    x: &Extras,
+    now: u64,
+    v: HubView,
+    w: u16,
+    h: u16,
+) -> String {
     let i = Input {
         st,
         u,
         x,
-        cfg: &cfg,
+        cfg,
         now,
         clock: "13:04",
     };
@@ -67,7 +76,16 @@ fn hub_all_frame() {
         tokens: Some(tokens),
         ..Default::default()
     };
-    insta::assert_snapshot!(show_u(&st, &u, &x, now, HubView::default(), 168, 49));
+    insta::assert_snapshot!(show_u(
+        &Config::default(),
+        &st,
+        &u,
+        &x,
+        now,
+        HubView::default(),
+        168,
+        49
+    ));
 }
 
 #[test]

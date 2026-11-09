@@ -1,7 +1,7 @@
 //! The full panel, as styled lines. Pure: everything `ari watch` draws comes from here.
 
 use crate::bar::{Extras, cells, countdown, fmt_tokens, spinner};
-use crate::config::Config;
+use crate::config::{Config, Look};
 use crate::recap::Recap;
 use crate::state::{AgentStatus, ErrorRec, State, Verdict};
 use crate::usage::{Limit, Usage};
@@ -28,6 +28,8 @@ pub struct View {
     pub edit: Option<i8>,
     /// `v`: a queued view change, taken by the frame like `edit`.
     pub next_look: bool,
+    /// The view of the screen on show, set by the frame before keys are read.
+    pub look: Look,
 }
 
 type Row = Vec<Span<'static>>;
@@ -217,6 +219,26 @@ pub fn lines(
     height: u16,
     color: bool,
 ) -> Vec<Line<'static>> {
+    if !view.recap && cfg.view.watch != Look::Full {
+        let i = crate::hub::Input {
+            st,
+            u,
+            x,
+            cfg,
+            now,
+            clock,
+        };
+        let out = if cfg.view.watch == Look::Calm {
+            crate::simple::calm::panel(&i, width, height, color)
+        } else {
+            crate::simple::sky::panel(&i, width, height, color)
+        };
+        return if cfg.ascii {
+            crate::ascii::map_lines(out)
+        } else {
+            out
+        };
+    }
     let w = width as usize;
     let c = Ctx {
         color,
@@ -1641,6 +1663,33 @@ mod tests {
             );
         }
         to_plain(&out)
+    }
+
+    #[test]
+    fn simple_watch_dispatches_unless_recap() {
+        let mut cfg = Config::default();
+        cfg.view.watch = crate::config::Look::Constellation;
+        let draw = |view| {
+            let out = lines(
+                &State::default(),
+                &Usage::default(),
+                &Extras::default(),
+                &cfg,
+                view,
+                NOW,
+                "12:41",
+                80,
+                30,
+                false,
+            );
+            to_plain(&out)
+        };
+        assert!(draw(View::default()).starts_with("constellation (coming soon)"));
+        let recap = View {
+            recap: true,
+            ..Default::default()
+        };
+        assert!(!draw(recap).contains("coming soon"));
     }
 
     fn multi() -> (State, Usage) {

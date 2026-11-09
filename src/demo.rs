@@ -226,6 +226,8 @@ pub fn run(args: &[String]) -> ! {
     let events = events_for(app);
     let total = span(&events);
     if once || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        // Scripts and pipes always get the full view.
+        cfg.view = config::Views::default();
         let (st, u, x, now) = frame_for(app, &events, total);
         let width = std::env::var("COLUMNS")
             .ok()
@@ -252,6 +254,7 @@ pub fn run(args: &[String]) -> ! {
     let result = watch::run_tui(View::default(), |view, _tab, w, h| {
         // The demo replays with defaults; it has no settings screen.
         view.settings = None;
+        view.look = watch::surface(view, false).map_or(config::Look::Full, |s| cfg.view.get(s));
         let (st, u, x, now) = frame_for(app, &events, progress as u64);
         progress += last.elapsed().as_secs_f64()
             * 1000.0

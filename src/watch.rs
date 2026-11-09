@@ -221,8 +221,15 @@ impl App {
         self.x.git = self.git.git.clone();
     }
 
+    /// The remembered view of the screen on show; `Full` where there's no simple view.
+    fn look(&self) -> config::Look {
+        surface(&self.view, self.mode == Mode::All)
+            .map_or(config::Look::Full, |s| self.cfg.view.get(s))
+    }
+
     fn animating(&self, now: u64) -> bool {
         self.mode == Mode::All
+            || crate::simple::moving(self.look(), &self.st, now)
             || self.st.turn_active
             || self.st.running_agents(now) > 0
             // A message in flight on the hub's graph.
@@ -537,8 +544,10 @@ impl App {
         x.conflicts = crate::conflicts::cached(&self.root, dir, now);
         x.transcript_age_ms =
             tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
-        // Live, the keys are listed under the panel; `--once` has no keys.
-        let hint = self.interactive.then(|| {
+        // Live, the keys are listed under the panel; `--once` has no keys. The simple views
+        // draw their own footer, but a too-small-hub note still shows.
+        let simple = !self.view.recap && self.cfg.view.watch != config::Look::Full;
+        let hint = (self.interactive && (!simple || note.is_some())).then(|| {
             let back = if self.mode == Mode::All {
                 "esc list"
             } else {
@@ -929,6 +938,8 @@ pub fn run(args: &[String]) -> ! {
     app.refresh();
 
     if once || !std::io::stdout().is_terminal() {
+        // Scripts and pipes always get the full view.
+        app.cfg.view = config::Views::default();
         let env = |k: &str, d: u16| {
             std::env::var(k)
                 .ok()
@@ -959,6 +970,8 @@ pub fn run(args: &[String]) -> ! {
         }
         app.view = *view;
         app.refresh();
+        view.look = app.look();
+        app.view.look = view.look;
         let now = hook::now_ms();
         let v = app.st.verdict_with(app.cfg.thresholds.stuck_repeats);
         if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
@@ -1022,7 +1035,13 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
             }
             return false;
         };
+        // The simple hubs have no graph, finished list or git panes; the sky has no selection.
+        let simple = h.screen == Screen::Hub && view.look != config::Look::Full;
+        let sky = h.screen == Screen::Hub && view.look == config::Look::Constellation;
         match code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j' | 'a')
+                if sky => {}
+            KeyCode::Char('g' | 'z' | 'c' | 'b') if simple => {}
             KeyCode::Char('q') => return true,
             KeyCode::Char('x') => view.hub = None,
             KeyCode::Esc if h.screen == Screen::Hub => view.hub = None,
@@ -1364,6 +1383,39 @@ mod key_tests {
         let mut v = View::default();
         key(&mut v, KeyCode::Char('v'), Some(4), None);
         assert!(!v.next_look, "the --all list has no simple view");
+    }
+
+    #[test]
+    fn calm_hub_ignores_graph_keys() {
+        let mut v = View {
+            look: config::Look::Calm,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in ['g', 'z', 'b', 'c'] {
+            key(&mut v, KeyCode::Char(k), None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+        assert_eq!(v.cleared, 0);
+        key(&mut v, KeyCode::Enter, None, Some(3));
+        assert_eq!(v.hub.unwrap().screen, Screen::Zoom);
+        key(&mut v, KeyCode::Char('g'), None, Some(3));
+        assert_eq!(v.hub.unwrap().screen, Screen::Graph, "zoom keeps its keys");
+    }
+
+    #[test]
+    fn sky_hub_ignores_selection() {
+        let mut v = View {
+            look: config::Look::Constellation,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in [KeyCode::Down, KeyCode::Enter, KeyCode::Char('a')] {
+            key(&mut v, k, None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+        key(&mut v, KeyCode::Char('v'), None, Some(3));
+        assert!(v.next_look);
+        key(&mut v, KeyCode::Char('x'), None, Some(3));
+        assert_eq!(v.hub, None);
     }
 
     #[test]

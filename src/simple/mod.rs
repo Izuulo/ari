@@ -1,5 +1,10 @@
 //! The simple views (Calm, Constellation): plain-English verbs and the alert banner.
 
+pub mod calm;
+pub mod calm_hub;
+pub mod sky;
+
+use crate::config::Look;
 use crate::event::runs_tests;
 use crate::hub::{err, put};
 use crate::state::{Agent, AgentStatus, State};
@@ -84,6 +89,11 @@ pub fn banner(st: &State, now: u64) -> Option<Banner> {
         text,
         on: (now / 500).is_multiple_of(2),
     })
+}
+
+/// Whether `look` needs the fast frame rate: the sky always turns, Calm's banner blinks.
+pub fn moving(look: Look, st: &State, now: u64) -> bool {
+    look == Look::Constellation || (look != Look::Full && banner(st, now).is_some())
 }
 
 /// The full-width top row; blank while `!on`, so it blinks.
@@ -175,6 +185,18 @@ mod tests {
         st.turn_active = false;
         let m = st.agents[0].clone();
         assert_eq!(phrase(&st, &m, 2000), "waiting for you");
+    }
+
+    #[test]
+    fn moving_by_look() {
+        let calm = with_main(vec![]);
+        assert!(moving(Look::Constellation, &calm, 0));
+        assert!(!moving(Look::Calm, &calm, 0));
+        let mut a = kid("a", "main", 0);
+        a.waiting = Some((1, "x".into()));
+        let alert = with_main(vec![a]);
+        assert!(moving(Look::Calm, &alert, 0), "the banner blinks");
+        assert!(!moving(Look::Full, &alert, 0));
     }
 
     #[test]
