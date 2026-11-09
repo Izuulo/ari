@@ -3,7 +3,7 @@ source: tests/fixtures.rs
 expression: out
 ---
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
-│ ◌ IDLE · DeepSeek · Run the tests and fix the failu… │
+│ ◌ IDLE · unverified · DeepSeek · Run the tests and … │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
 │ └─✓ default done 1s · Listed the files.              │
