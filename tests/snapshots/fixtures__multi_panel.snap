@@ -10,18 +10,18 @@ expression: "out.join(\"\\n\")"
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠏ main   thinking…                                   │
-├─ commands ───────────────────────────────────────────┤
-│ ✗ 1s  $ python3 test_calc.py                         │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  editing test_calc.py                           │
-│ ✓ 0s  editing calc.py                                │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  ToolSearch                                     │
+├─ calls ──────────────────────────────────────────────┤
+│  1s Bash  python3 test_calc.py                ✗ 1.3s │
+│  2s TaskU plan                                 ✓ .0s │
+│  2s TaskU plan                                 ✓ .0s │
+│  3s Write test_calc.py                         ✓ .0s │
+│  4s Write calc.py                              ✓ .0s │
+│  5s TaskU plan                                 ✓ .0s │
+│  6s TaskC plan                                 ✓ .0s │
+│  6s TaskC plan                                 ✓ .0s │
+│  6s TaskC plan                                 ✓ .0s │
+│  7s TaskC plan                                 ✓ .0s │
+│  8s ToolS ToolSearch                           ✓ .0s │
 ├─ session ────────────────────────────────────────────┤
 │ time    10s · claude 87% · tools 13%                 │
 ├─ errors ─────────────────────────────────────────────┤
@@ -38,24 +38,24 @@ expression: "out.join(\"\\n\")"
 │ ⠦ main      agent Explore: Describe test_calc.py · … │
 │ ├─⠦ Explore thinking… · 1 call · 1s                  │
 │ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
-├─ commands ───────────────────────────────────────────┤
-│ … 0s  agent Explore: Describe test_calc.py           │
-│ … 1s  agent Explore: Describe calc.py                │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  $ python3 test_calc.py                         │
-│ ✓ 0s  editing calc.py                                │
-│ ✗ 1s  $ python3 test_calc.py                         │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  editing test_calc.py                           │
-│ ✓ 0s  editing calc.py                                │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  ToolSearch                                     │
+├─ calls ──────────────────────────────────────────────┤
+│  0s Agent Explore: Describe test_calc.py           … │
+│  1s Agent Explore: Describe calc.py                … │
+│  3s TaskU plan                                 ✓ .0s │
+│  3s TaskU plan                                 ✓ .0s │
+│  4s Bash  python3 test_calc.py                 ✓ .0s │
+│  5s Edit  calc.py                              ✓ .0s │
+│  7s Bash  python3 test_calc.py                ✗ 1.3s │
+│  9s TaskU plan                                 ✓ .0s │
+│  9s TaskU plan                                 ✓ .0s │
+│ 10s Write test_calc.py                         ✓ .0s │
+│ 10s Write calc.py                              ✓ .0s │
+│ 12s TaskU plan                                 ✓ .0s │
+│ 13s TaskC plan                                 ✓ .0s │
+│ 13s TaskC plan                                 ✓ .0s │
+│ 13s TaskC plan                                 ✓ .0s │
+│ 13s TaskC plan                                 ✓ .0s │
+│ 14s ToolS ToolSearch                           ✓ .0s │
 ├─ session ────────────────────────────────────────────┤
 │ time    16s · claude 92% · tools 8%                  │
 ├─ errors ─────────────────────────────────────────────┤
@@ -70,27 +70,27 @@ expression: "out.join(\"\\n\")"
 │ ◌ main      idle                                     │
 │ ├─✓ Explore done 2s · calc.py defines an add(a, b) … │
 │ └─✓ Explore done 1s · The file imports add from a c… │
-├─ commands ───────────────────────────────────────────┤
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 1s  agent Explore: Describe test_calc.py           │
-│ ✓ 2s  agent Explore: Describe calc.py                │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  $ python3 test_calc.py                         │
-│ ✓ 0s  editing calc.py                                │
-│ ✗ 1s  $ python3 test_calc.py                         │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  editing test_calc.py                           │
-│ ✓ 0s  editing calc.py                                │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  updating plan                                  │
-│ ✓ 0s  ToolSearch                                     │
+├─ calls ──────────────────────────────────────────────┤
+│  1s TaskU plan                                 ✓ .0s │
+│  2s TaskU plan                                 ✓ .0s │
+│  2s TaskU plan                                 ✓ .0s │
+│  4s Agent Explore: Describe test_calc.py      ✓ 1.8s │
+│  5s Agent Explore: Describe calc.py           ✓ 2.1s │
+│  7s TaskU plan                                 ✓ .0s │
+│  7s TaskU plan                                 ✓ .0s │
+│  8s Bash  python3 test_calc.py                 ✓ .0s │
+│  9s Edit  calc.py                              ✓ .0s │
+│ 12s Bash  python3 test_calc.py                ✗ 1.3s │
+│ 13s TaskU plan                                 ✓ .0s │
+│ 13s TaskU plan                                 ✓ .0s │
+│ 14s Write test_calc.py                         ✓ .0s │
+│ 14s Write calc.py                              ✓ .0s │
+│ 16s TaskU plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 18s ToolS ToolSearch                           ✓ .0s │
 ├─ session ────────────────────────────────────────────┤
 │ time    20s · claude 81% · tools 19%                 │
 ├─ errors ─────────────────────────────────────────────┤

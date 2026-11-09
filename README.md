@@ -171,7 +171,7 @@ Every key is optional:
 position = "top"            # ARI's row above or below your chained statusline
 theme = "default"           # default · soft · vivid · colorblind · mono · claude · codex · deepseek · auto
 hide = ["cost"]             # statusline segments to drop: conflicts now tasks agents errors tests ctx 5h 7d cost tokens
-hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session commands turns git
+hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) agents errors usage session calls turns git
 face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 auto_clear = false          # hide subagents in ari watch as soon as they finish

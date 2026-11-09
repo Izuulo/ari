@@ -7,11 +7,11 @@ expression: out
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
 │ └─✓ default done 1s · Listed the files.              │
-├─ commands ───────────────────────────────────────────┤
-│ ✓ 0s  agent general-purpose:                         │
-│ ✓ 0s  editing b.rs                                   │
-│ ✗ 0s  $ cargo test                                   │
-│ ✓ 0s  $ ls                                           │
+├─ calls ──────────────────────────────────────────────┤
+│  6s Agent general-purpose:                         ✓ │
+│  9s Edit  b.rs                                     ✓ │
+│ 12s Bash  cargo test                               ✗ │
+│ 15s Bash  ls                                       ✓ │
 ├─ session ────────────────────────────────────────────┤
 │ tests   ✗ 1/4                                        │
 │ time    18s · model 100%                             │

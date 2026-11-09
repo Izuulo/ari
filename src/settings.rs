@@ -66,7 +66,7 @@ const ITEMS: [(&str, &str, &str); 46] = [
     ("PANEL", "hide_panel.errors", "errors · failed calls"),
     ("PANEL", "hide_panel.usage", "usage · context, limits"),
     ("PANEL", "hide_panel.session", "session · cost, time"),
-    ("PANEL", "hide_panel.commands", "commands · recent calls"),
+    ("PANEL", "hide_panel.calls", "calls · recent tool calls"),
     ("PANEL", "hide_panel.turns", "turns · recent turns"),
     ("PANEL", "hide_panel.git", "git · commits, PRs"),
     ("PANEL", "auto_clear", "auto-clear done agents"),

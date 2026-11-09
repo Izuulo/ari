@@ -271,8 +271,8 @@ pub fn lines(
             rows: agents(st, x, &lc, view, now),
         },
         Section {
-            title: Some("commands"),
-            rows: commands(st, &lc, now),
+            title: Some("calls"),
+            rows: calls(st, &lc, now),
         },
         Section {
             title: Some("turns"),
@@ -314,7 +314,7 @@ pub fn lines(
         let (mut left, mut right): (Vec<_>, Vec<_>) = sections
             .split_off(1)
             .into_iter()
-            .partition(|s| matches!(s.title, Some("agents" | "commands" | "turns")));
+            .partition(|s| matches!(s.title, Some("agents" | "calls" | "turns")));
         // Each column gets the height left under the full-width header rows.
         let h = (height as usize).saturating_sub(sections[0].rows.len());
         collapse(&mut left, h);
@@ -657,8 +657,8 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
 fn collapse(secs: &mut Vec<Section>, height: usize) {
     let total = panel_height;
-    // Turns go before commands: the commands are what you're watching.
-    for title in ["turns", "commands"] {
+    // Turns go before calls: the calls are what you're watching.
+    for title in ["turns", "calls"] {
         while total(secs) > height {
             let Some(s) = secs.iter_mut().find(|s| s.title == Some(title)) else {
                 break;
@@ -705,8 +705,10 @@ fn cost_between(samples: &[crate::burn::Sample], a: u64, b: u64) -> Option<f64> 
     Some((at(b)? - at(a)?).max(0.0))
 }
 
-/// Main's recent tool calls, newest first: result, duration, command.
-fn commands(st: &State, c: &Ctx, now: u64) -> Vec<Row> {
+/// Main's recent tool calls, newest first, laid out like the hub's agent card:
+/// age, tool, target, then result and duration on the right.
+fn calls(st: &State, c: &Ctx, now: u64) -> Vec<Row> {
+    use crate::hub::agents::short_ms;
     let Some(main) = st.agents.iter().find(|a| a.id == "main") else {
         return Vec::new();
     };
@@ -714,15 +716,26 @@ fn commands(st: &State, c: &Ctx, now: u64) -> Vec<Row> {
         .iter()
         .rev()
         .map(|r| {
-            let (mark, style, ms) = match r.ok {
-                None => ("…", Style::new().fg(Color::Cyan), now.saturating_sub(r.t)),
-                Some(true) => ("✓", Style::new(), r.dur.unwrap_or(0)),
-                Some(false) => ("✗", Style::new().fg(Color::Red), r.dur.unwrap_or(0)),
+            let (res, rs) = match r.ok {
+                Some(true) => ("✓", Style::new().fg(Color::Green)),
+                Some(false) => ("✗", Style::new().fg(Color::Red)),
+                None => ("…", Style::new().add_modifier(Modifier::DIM)),
             };
-            let act = if r.act.is_empty() { &r.tool } else { &r.act };
+            let d = r
+                .dur
+                .map(|d| format!(" {}", short_ms(d)))
+                .unwrap_or_default();
+            let tool: String = r.tool.chars().take(5).collect();
+            let target = r.act.split_once(' ').map_or(r.act.as_str(), |t| t.1);
+            let room = c.inner.saturating_sub(12 + d.len());
+            let target = crate::event::truncate(target, room);
+            let pad = room.saturating_sub(target.width());
             vec![
-                c.span(format!("{mark} {}  ", dur(ms)), style),
-                c.span(act.clone(), style),
+                c.dim(format!("{:>3} ", age(now.saturating_sub(r.t)))),
+                c.span(format!("{tool:<5} "), crate::hub::tool_style(&r.tool)),
+                Span::raw(format!("{target}{}", " ".repeat(pad))),
+                c.span(format!(" {res}"), rs),
+                c.dim(d),
             ]
         })
         .collect()
@@ -2451,11 +2464,12 @@ mod tests {
     }
 
     #[test]
-    fn commands_section_lists_main_calls() {
+    fn calls_section_lists_main_calls() {
         use crate::state::CallRec;
         let (mut st, u) = multi();
         let call = |t, act: &str, ok, dur| CallRec {
             t,
+            tool: "Bash".into(),
             act: act.into(),
             ok,
             dur,
@@ -2469,11 +2483,20 @@ mod tests {
         .into();
         let out = render_cfg(&st, &u, &Extras::default(), &Config::default());
         let l = |s: &str| out.find(s).unwrap_or_else(|| panic!("{s}: {out}"));
-        assert!(out.contains("├─ commands"), "{out}");
-        assert!(l("… 8s  $ cargo test") < l("✗ 1s  $ cargo fmt"), "{out}");
-        assert!(l("✗ 1s  $ cargo fmt") < l("✓ 4s  $ cargo build"), "{out}");
-        let hid = render_cfg(&st, &u, &Extras::default(), &hiding(&["commands"]));
-        assert!(!hid.contains("├─ commands"), "{hid}");
+        assert!(out.contains("├─ calls"), "{out}");
+        let calls = &out[l("├─ calls")..l("├─ usage")];
+        assert!(!calls.contains('$'), "{out}");
+        assert!(
+            l(" 8s Bash  cargo test ") < l(" 20s Bash  cargo fmt "),
+            "{out}"
+        );
+        assert!(
+            out.contains("cargo fmt") && out.contains("✗ 1.0s │"),
+            "{out}"
+        );
+        assert!(l("cargo fmt") < l("cargo build"), "{out}");
+        let hid = render_cfg(&st, &u, &Extras::default(), &hiding(&["calls"]));
+        assert!(!hid.contains("├─ calls"), "{hid}");
     }
 
     fn hiding(ids: &[&str]) -> Config {

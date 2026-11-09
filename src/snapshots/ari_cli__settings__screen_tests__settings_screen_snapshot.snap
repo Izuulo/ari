@@ -36,7 +36,7 @@ expression: to_plain(&out)
    errors · failed calls     on                 │
    usage · context, limits   on                 │
    session · cost, time      on                 │
-   commands · recent calls   on                 │
+   calls · recent tool calls on                 │
    turns · recent turns      on                 │
    git · commits, PRs        on                 │
    auto-clear done agents    off                │
