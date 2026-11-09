@@ -155,7 +155,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 | `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
 | `ari hub [--session <id> \| --all] [--ascii]` | The hub: every agent, its messages and context |
 | `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
-| `ari demo [--codex \| --deepseek] [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed; `--codex` and `--deepseek` show it as that app reports it |
+| `ari demo [--team \| --codex \| --deepseek] [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed, starting in the Constellation view (`v` cycles views, nothing is saved); `--team` replays a session with helpers and messages; `--codex` and `--deepseek` show the stuck session as that app reports it |
 | `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |
 | `ari replay <dir>` | Print a recorded session as a timeline |
 

@@ -2,39 +2,66 @@
 
 use crate::app::App;
 use crate::bar::Extras;
+use crate::config::{Config, Look, Surface};
 use crate::event::Event;
 use crate::panel::{self, View};
 use crate::state::{State, Verdict};
 use crate::tokens::{self, Ledger, TokenCache};
 use crate::usage::{Limit, Usage};
-use crate::{config, hub, replay, theme, watch};
+use crate::{config, hub, replay, simple, theme, watch};
 use ratatui::layout::Alignment;
 use std::time::Instant;
 
-const RAW: &str = include_str!("../fixtures/stuck/raw.jsonl");
-const MAIN: &str = include_str!("../fixtures/stuck/transcript.jsonl");
-const AGENTS: [(&str, &str); 2] = [
-    (
-        "ab57dcf04590c7026",
-        include_str!("../fixtures/stuck/subagents/agent-ab57dcf04590c7026.jsonl"),
-    ),
-    (
-        "abb5727de68e884cc",
-        include_str!("../fixtures/stuck/subagents/agent-abb5727de68e884cc.jsonl"),
-    ),
-];
-/// Shown instead of the fixture's long scripted prompt.
-const LABEL: &str = "calculator fix";
+/// One bundled session: its hook events, transcripts and the label shown for its prompt.
+pub struct Rec {
+    raw: &'static str,
+    main: &'static str,
+    agents: &'static [(&'static str, &'static str)],
+    label: &'static str,
+}
 
-pub fn events() -> Vec<Event> {
-    replay::parse(RAW)
+pub const STUCK: Rec = Rec {
+    raw: include_str!("../fixtures/stuck/raw.jsonl"),
+    main: include_str!("../fixtures/stuck/transcript.jsonl"),
+    agents: &[
+        (
+            "ab57dcf04590c7026",
+            include_str!("../fixtures/stuck/subagents/agent-ab57dcf04590c7026.jsonl"),
+        ),
+        (
+            "abb5727de68e884cc",
+            include_str!("../fixtures/stuck/subagents/agent-abb5727de68e884cc.jsonl"),
+        ),
+    ],
+    // Shown instead of the fixture's long scripted prompt.
+    label: "calculator fix",
+};
+
+const TEAM: Rec = Rec {
+    raw: include_str!("../fixtures/team/raw.jsonl"),
+    main: include_str!("../fixtures/team/transcript.jsonl"),
+    agents: &[
+        (
+            "a824e787b00414e69",
+            include_str!("../fixtures/team/subagents/agent-a824e787b00414e69.jsonl"),
+        ),
+        (
+            "aef0690b3f85a62dc",
+            include_str!("../fixtures/team/subagents/agent-aef0690b3f85a62dc.jsonl"),
+        ),
+    ],
+    label: "team",
+};
+
+pub fn events(rec: &Rec) -> Vec<Event> {
+    replay::parse(rec.raw)
 }
 
 /// The bundled session as `app` would report it: only the hook events it sends, and no
 /// Claude-only tools (task list, tool search).
-pub fn events_for(app: App) -> Vec<Event> {
+pub fn events_for(rec: &Rec, app: App) -> Vec<Event> {
     let sent: &[&str] = match app {
-        App::Claude => return events(),
+        App::Claude => return events(rec),
         App::Codex => &[
             "SessionStart",
             "SessionEnd",
@@ -60,7 +87,7 @@ pub fn events_for(app: App) -> Vec<Event> {
         ],
     };
     let claude_only = ["TaskCreate", "TaskUpdate", "ToolSearch"];
-    events()
+    events(rec)
         .into_iter()
         .filter(|e| sent.contains(&e.e.as_str()))
         .filter(|e| !e.tool.as_deref().is_some_and(|t| claude_only.contains(&t)))
@@ -84,14 +111,19 @@ fn scaled(l: &Ledger, f: f64) -> Ledger {
 /// Usage, tokens and rate limits are synthetic here: the fixture was recorded with `claude -p`,
 /// which runs no statusline. The 5h window barely moves for a 40-second Haiku session, so there
 /// is no pace warning to show.
-pub fn frame_at(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
-    frame_for(App::Claude, events, progress_ms)
+pub fn frame_at(rec: &Rec, events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
+    frame_for(rec, App::Claude, events, progress_ms)
 }
 
 /// `frame_at` with only the numbers `app` gives ARI: Codex has context, tokens and limits but
 /// no cost (and no per-subagent tokens); dsh has none.
-pub fn frame_for(app: App, events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
-    let (st, u, mut x, now) = claude_frame(events, progress_ms);
+pub fn frame_for(
+    rec: &Rec,
+    app: App,
+    events: &[Event],
+    progress_ms: u64,
+) -> (State, Usage, Extras, u64) {
+    let (st, u, mut x, now) = claude_frame(rec, events, progress_ms);
     x.app = app;
     match app {
         App::Claude => (st, u, x, now),
@@ -132,7 +164,7 @@ pub fn frame_for(app: App, events: &[Event], progress_ms: u64) -> (State, Usage,
     }
 }
 
-fn claude_frame(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
+fn claude_frame(rec: &Rec, events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u64) {
     let t0 = events.first().map_or(0, |e| e.t);
     let span = events.last().map_or(1, |e| e.t - t0).max(1);
     let progress = progress_ms.min(span);
@@ -143,7 +175,7 @@ fn claude_frame(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
     for ev in events.iter().take_while(|e| e.t <= now) {
         st.apply(ev);
     }
-    st.label = Some(LABEL.into());
+    st.label = Some(rec.label.into());
 
     let u = Usage {
         ctx_pct: Some(8.0 + 26.0 * f),
@@ -163,15 +195,15 @@ fn claude_frame(events: &[Event], progress_ms: u64) -> (State, Usage, Extras, u6
         ..Default::default()
     };
     let mut cache = TokenCache {
-        main: scaled(&tokens::ledger_from(MAIN), f),
+        main: scaled(&tokens::ledger_from(rec.main), f),
         ..Default::default()
     };
-    for (id, text) in AGENTS {
-        if let Some(a) = st.agents.iter().find(|a| a.id == id) {
+    for (id, text) in rec.agents {
+        if let Some(a) = st.agents.iter().find(|a| a.id == *id) {
             let share = if a.done { 1.0 } else { 0.5 };
             cache
                 .agents
-                .insert(id.into(), scaled(&tokens::ledger_from(text), share));
+                .insert((*id).into(), scaled(&tokens::ledger_from(text), share));
         }
     }
     let x = Extras {
@@ -193,12 +225,14 @@ pub fn run(args: &[String]) -> ! {
     let mut speed = 1.5_f64;
     let mut once = false;
     let mut app = App::Claude;
+    let mut team = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--ascii" => cfg.ascii = true,
             "--codex" => app = App::Codex,
             "--deepseek" => app = App::Dsh,
+            "--team" => team = true,
             "--once" => once = true,
             "--speed" => match it
                 .next()
@@ -209,10 +243,14 @@ pub fn run(args: &[String]) -> ! {
                 None => fail("--speed needs a positive number"),
             },
             other => fail(&format!(
-                "unknown option {other} (try --codex, --deepseek, --speed <x>, --ascii, --once)"
+                "unknown option {other} (try --team, --codex, --deepseek, --speed <x>, --ascii, --once)"
             )),
         }
     }
+    if team && app != App::Claude {
+        fail("--team replays a Claude Code session; drop --codex/--deepseek");
+    }
+    let rec = if team { &TEAM } else { &STUCK };
     cfg.bell = false;
     // Another app's demo shows that app's colours unless a theme was picked.
     if app != App::Claude && cfg.theme == "default" {
@@ -223,12 +261,12 @@ pub fn run(args: &[String]) -> ! {
         Some(p) => theme::lines(lines, p),
         None => lines,
     };
-    let events = events_for(app);
+    let events = events_for(rec, app);
     let total = span(&events);
     if once || !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         // Scripts and pipes always get the full view.
         cfg.view = config::Views::default();
-        let (st, u, x, now) = frame_for(app, &events, total);
+        let (st, u, x, now) = frame_for(rec, app, &events, total);
         let width = std::env::var("COLUMNS")
             .ok()
             .and_then(|c| c.parse().ok())
@@ -248,21 +286,23 @@ pub fn run(args: &[String]) -> ! {
         println!("{}", panel::to_plain(&lines));
         std::process::exit(0)
     }
+    start_look(&mut cfg);
     let mut progress = 0.0_f64;
     let mut last = Instant::now();
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     let result = watch::run_tui(View::default(), |view, _tab, w, h| {
         // The demo replays with defaults; it has no settings screen.
         view.settings = None;
-        view.look = watch::surface(view, false).map_or(config::Look::Full, |s| cfg.view.get(s));
-        let (st, u, x, now) = frame_for(app, &events, progress as u64);
+        take_look(view, &mut cfg);
+        view.look = look_of(view, &cfg);
+        let (st, u, x, now) = frame_for(rec, app, &events, progress as u64);
         progress += last.elapsed().as_secs_f64()
             * 1000.0
             * pace(st.verdict_with(cfg.thresholds.stuck_repeats), speed);
         last = Instant::now();
         let progress = progress as u64;
         let clock = panel::local_hhmm(now);
-        let animating = progress < total || st.turn_active;
+        let animating = progress < total || st.turn_active || simple::moving(view.look, &st, now);
         if let Some(hv) = view.hub.filter(|_| hub::fit(w, h) != hub::Fit::TooSmall) {
             let i = hub::Input {
                 st: &st,
@@ -295,6 +335,39 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
+/// The demo has no `hub --all`, so that screen shares the hub's view (and `a` does nothing).
+fn surface(view: &View) -> Option<Surface> {
+    watch::surface(view, false).map(|s| {
+        if s == Surface::HubAll {
+            Surface::Hub
+        } else {
+            s
+        }
+    })
+}
+
+fn look_of(view: &View, cfg: &Config) -> Look {
+    surface(view).map_or(Look::Full, |s| cfg.view.get(s))
+}
+
+/// The demo opens on the sky; in memory only, never saved.
+fn start_look(cfg: &mut Config) {
+    cfg.view = config::Views {
+        watch: Look::Constellation,
+        hub: Look::Constellation,
+        hub_all: Look::Constellation,
+    };
+}
+
+/// `v`: advance the screen's view in memory. The demo never touches `config.toml`.
+fn take_look(view: &mut View, cfg: &mut Config) {
+    if std::mem::take(&mut view.next_look)
+        && let Some(s) = surface(view)
+    {
+        cfg.view.bump(s);
+    }
+}
+
 /// Replay speed for a frame showing `v`: trouble plays at most at real time, STUCK slower
 /// still, so a viewer can read what went wrong before the replay moves on.
 fn pace(v: Verdict, speed: f64) -> f64 {
@@ -324,14 +397,14 @@ mod tests {
 
     #[test]
     fn replays_the_story() {
-        let evs = events();
-        let (st, ..) = frame_at(&evs, 0);
+        let evs = events(&STUCK);
+        let (st, ..) = frame_at(&STUCK, &evs, 0);
         assert_eq!(st.verdict(), Verdict::Idle);
         let at = |p: fn(&Event) -> bool| evs.iter().filter(move |e| p(e)).map(|e| e.t - evs[0].t);
         let fails: Vec<u64> = at(|e| e.ok == Some(false)).collect();
         assert_eq!(fails.len(), 3, "the same test fails three times");
         let verdict = |ms| {
-            let (st, ..) = frame_at(&evs, ms);
+            let (st, ..) = frame_at(&STUCK, &evs, ms);
             st.verdict()
         };
         assert_eq!(verdict(fails[0]), Verdict::Retrying);
@@ -340,7 +413,7 @@ mod tests {
         assert_eq!(verdict(asked + 1000), Verdict::NeedsYou);
         let mut passed = at(|e| e.ok == Some(true) && e.tool.as_deref() == Some("Bash"));
         assert_eq!(verdict(passed.next_back().unwrap()), Verdict::OnTrack);
-        let (st, u, x, _) = frame_at(&evs, u64::MAX);
+        let (st, u, x, _) = frame_at(&STUCK, &evs, u64::MAX);
         assert_eq!(st.verdict(), Verdict::Done);
         assert_eq!(st.tasks_done(), (4, 4));
         assert_eq!(st.agents.iter().filter(|a| a.done).count(), 2);
@@ -354,17 +427,17 @@ mod tests {
         evs.iter()
             .filter(|e| e.ok == Some(false))
             .nth(2)
-            .is_some_and(|e| frame_for(app, evs, e.t - t0).0.verdict() == Verdict::Stuck)
+            .is_some_and(|e| frame_for(&STUCK, app, evs, e.t - t0).0.verdict() == Verdict::Stuck)
     }
 
     #[test]
     fn codex_demo_shows_what_codex_gives() {
-        let evs = events_for(App::Codex);
+        let evs = events_for(&STUCK, App::Codex);
         assert!(
             evs.iter()
                 .all(|e| e.e != "TaskCreated" && e.tool.as_deref() != Some("TaskCreate"))
         );
-        let (st, u, x, now) = frame_for(App::Codex, &evs, u64::MAX);
+        let (st, u, x, now) = frame_for(&STUCK, App::Codex, &evs, u64::MAX);
         assert_eq!(
             st.verdict(),
             Verdict::Idle,
@@ -398,13 +471,13 @@ mod tests {
 
     #[test]
     fn deepseek_demo_has_no_numbers_or_permission_prompts() {
-        let evs = events_for(App::Dsh);
+        let evs = events_for(&STUCK, App::Dsh);
         assert!(evs.iter().all(|e| e.e != "PermissionRequest"));
         assert!(
             evs.iter().any(|e| e.ok == Some(false)),
             "failures still show"
         );
-        let (st, u, x, now) = frame_for(App::Dsh, &evs, u64::MAX);
+        let (st, u, x, now) = frame_for(&STUCK, App::Dsh, &evs, u64::MAX);
         assert_eq!(st.verdict(), Verdict::Idle);
         assert!(reaches_stuck(&evs, App::Dsh));
         assert_eq!(u, Usage::default());
@@ -430,9 +503,35 @@ mod tests {
     }
 
     #[test]
+    fn team_replay_has_messages_and_helpers() {
+        let evs = replay::parse(TEAM.raw);
+        let (st, ..) = frame_at(&TEAM, &evs, u64::MAX);
+        assert!(
+            st.messages.len() >= 2,
+            "the fixture holds two SendMessage calls with a recipient"
+        );
+        assert!(st.agents.iter().filter(|a| a.id != "main").count() >= 2);
+        assert_eq!(st.verdict(), Verdict::Done, "the replay reaches its end");
+    }
+
+    #[test]
+    fn demo_look_starts_in_the_sky_and_cycles_in_memory() {
+        let mut cfg = Config::default();
+        start_look(&mut cfg);
+        assert_eq!(cfg.view.watch, Look::Constellation);
+        let mut v = View {
+            next_look: true,
+            ..Default::default()
+        };
+        take_look(&mut v, &mut cfg);
+        assert_eq!(cfg.view.watch, Look::Full);
+        assert!(!v.next_look);
+    }
+
+    #[test]
     fn tiny_terminal() {
-        let evs = events();
-        let (st, u, x, now) = frame_at(&evs, 20_000);
+        let evs = events(&STUCK);
+        let (st, u, x, now) = frame_at(&STUCK, &evs, 20_000);
         for (w, h) in [(30, 10), (12, 4), (5, 2)] {
             let lines = panel::lines(
                 &st,
