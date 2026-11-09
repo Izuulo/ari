@@ -94,13 +94,13 @@ Phrases have no paths, commands or numbers. While working, the phrase ends in an
 │  z Plan     taking a break                 │
 │                                            │
 │  memory ██████████░░░░ 71% full            │
-│  v details                                 │
+│  v constellation                           │
 ╰────────────────────────────────────────────╯
 ```
 - Verdict, label, task progress with a shimmer (a bright cell sweeps along the filled part every few seconds), one line per agent, and context as "memory … % full".
 - No cost, time, 5h/7d limits, errors list or files. Errors show up as the alert banner instead (below).
 - Finished and stale agents follow the existing `auto_clear` / `hide_stale` settings.
-- The footer hint is `v details`.
+- The footer hint is `v constellation`.
 
 **Hub:** the graph alone, full width and full height. The agents table, zoom pane, context, files, messages log, activity lanes and tasks board are all hidden.
 ```
@@ -113,7 +113,7 @@ Phrases have no paths, commands or numbers. While working, the phrase ends in an
 ╰──────┬──────╯   ╰────────────╯   ╰──────┬──────╯
        ╰┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄●┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╯
               Explore → Plan  “found it in auth.rs”
- 3 helpers · 1 message flying                v details
+ 3 helpers · 1 message flying          v constellation
 ```
 - Nodes show the verb in place of the command line. Reuse the existing graph layout; only node contents and the message animation change.
 - **Messages glide.** For a few seconds after (the existing in-flight window is 2 s; the builder may stretch it to 3–4 s for the simple views only) a `SendMessage`, a `●` travels along that edge from sender to receiver. Under the graph, a caption shows `from → to  “first ~40 chars of the message”`. Several in-flight messages each get their own dot, and the caption shows the newest.
