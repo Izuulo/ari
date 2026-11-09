@@ -36,7 +36,7 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 44] = [
+const ITEMS: [(&str, &str, &str); 45] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
@@ -69,6 +69,7 @@ const ITEMS: [(&str, &str, &str); 44] = [
     ("PANEL", "hide_panel.turns", "turns · recent turns"),
     ("PANEL", "hide_panel.git", "git · commits, PRs"),
     ("PANEL", "auto_clear", "auto-clear done agents"),
+    ("PANEL", "hide_stale", "hide stale agents"),
     ("ALERTS", "bell", "bell"),
     ("ALERTS", "notify.desktop", "desktop notifications"),
     ("ALERTS", "notify_on.needs_you", "notify · needs you"),
@@ -134,6 +135,7 @@ pub fn value(cfg: &Config, key: &str) -> String {
         "ascii" => on(cfg.ascii),
         "bell" => on(cfg.bell),
         "auto_clear" => on(cfg.auto_clear),
+        "hide_stale" => on(cfg.hide_stale),
         "position" => match cfg.position {
             Position::Top => "top".into(),
             Position::Bottom => "bottom".into(),
@@ -212,6 +214,7 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         "bell" => cfg.bell ^= true,
         "notify.desktop" => cfg.notify.desktop ^= true,
         "auto_clear" => cfg.auto_clear ^= true,
+        "hide_stale" => cfg.hide_stale ^= true,
         "position" => {
             cfg.position = match cfg.position {
                 Position::Top => Position::Bottom,
@@ -376,6 +379,7 @@ pub fn reset(cfg: &mut Config, key: &str) {
         "ascii" => cfg.ascii = def.ascii,
         "bell" => cfg.bell = def.bell,
         "auto_clear" => cfg.auto_clear = def.auto_clear,
+        "hide_stale" => cfg.hide_stale = def.hide_stale,
         "position" => cfg.position = def.position,
         "max_width" => cfg.max_width = def.max_width,
         "ctx_warn" => t.ctx_warn = dt.ctx_warn,
@@ -395,7 +399,7 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 44);
+        assert_eq!(it.len(), 45);
         for n in crate::config::NOTIFY_ON {
             let i = it
                 .iter()
@@ -611,6 +615,7 @@ mod tests {
             "hide.agents",
             "bell",
             "auto_clear",
+            "hide_stale",
             "face",
             "ctx_warn",
         ] {
@@ -623,6 +628,7 @@ mod tests {
             "hide.agents",
             "bell",
             "auto_clear",
+            "hide_stale",
             "face",
             "ctx_warn",
         ] {

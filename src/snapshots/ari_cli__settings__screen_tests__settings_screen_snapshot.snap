@@ -39,6 +39,6 @@ expression: to_plain(&out)
    turns · recent turns      on                 │
    git · commits, PRs        on                 │
    auto-clear done agents    off                │
+   hide stale agents         off                │
  ALERTS                                         │
-   bell                      off                │
  ↑↓ move · ←→ change · d default · esc back · chain, prices, ntfy: edit the file

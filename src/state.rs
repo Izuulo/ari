@@ -1368,6 +1368,13 @@ impl State {
             .retain(|a| a.id == "main" || !a.done || a.ended_t.unwrap_or(a.last_t) > cut);
     }
 
+    /// Drop subagents that went quiet without finishing (`AgentStatus::Stale`).
+    pub fn clear_stale(&mut self, now: u64) {
+        let mut agents = std::mem::take(&mut self.agents);
+        agents.retain(|a| self.agent_status(a, now) != AgentStatus::Stale);
+        self.agents = agents;
+    }
+
     pub fn agent_status(&self, a: &Agent, now: u64) -> AgentStatus {
         if a.done {
             AgentStatus::Done
@@ -2589,6 +2596,12 @@ mod tests {
             AgentStatus::Stale
         );
         assert_eq!(s.running_agents(1_000 + 6 * 60_000), 0);
+        let mut kept = s.clone();
+        kept.clear_stale(1_000);
+        assert_eq!(kept.agents.len(), 2);
+        let mut hidden = s.clone();
+        hidden.clear_stale(1_000 + 6 * 60_000);
+        assert_eq!(hidden.agents.len(), 1, "main stays");
         let stop_only = Event {
             a: Some("zz".into()),
             at: Some("Plan".into()),

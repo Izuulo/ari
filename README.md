@@ -175,6 +175,7 @@ hide_panel = ["turns"]      # panel sections to drop: tasks (the checklist bar) 
 face = false                # the little (•_•) in the panel header
 bell = false                # ring the terminal bell when Claude needs you (ari watch)
 auto_clear = false          # hide subagents in ari watch as soon as they finish
+hide_stale = false          # hide subagents in ari watch that went quiet for 5 min without finishing
 ascii = false               # ASCII-only glyphs everywhere
 max_width = 0               # compact row width; 0 = terminal width
 retention_days = 7          # session logs older than this are deleted (at least 1)

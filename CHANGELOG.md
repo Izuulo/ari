@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Hide stale agents** (`hide_stale`, off by default; settings → PANEL): `ari watch` and the hub drop subagents that went quiet for 5 min without finishing.
 - ARI flags a turn that deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing ("⚠ N test changes", listed in the panel and in ari recap). DONE and IDLE read "unverified" when files changed after the last test run.
 - The hub's `z` shows finished subagents even with `auto_clear` on.
 - After a compaction, ARI warns "⟲ redo ×N" when Claude repeats edits or commands it had already done. The hub's zoom view and activity lanes mark each compaction.
