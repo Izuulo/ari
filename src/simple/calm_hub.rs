@@ -74,11 +74,10 @@ pub fn cards(buf: &mut Buffer, area: Rect, i: &Input) {
         .iter()
         .filter(|a| a.session.is_none() && st.agent_status(a, i.now) == AgentStatus::Running)
         .count();
-    let n = |k: usize, word: &str| format!("{k} {word}{}", if k == 1 { "" } else { "s" });
     let head = format!(
         "{} · {} working",
-        n(sessions.len(), "session"),
-        n(working, "agent")
+        graph::plural(sessions.len(), "session"),
+        graph::plural(working, "agent")
     );
     put(
         buf,

@@ -3,7 +3,7 @@
 use crate::bar::cells;
 use crate::hub::{Input, bold, clip, ctx_of, dim, faint, frame, ok, put, to_lines};
 use crate::panel::{shown_agents, verdict_style};
-use crate::simple::{banner, dots, draw_banner, glyph, phrase};
+use crate::simple::{banner, draw_banner, glyph, say};
 use crate::state::{Agent, AgentStatus};
 use ratatui::{
     buffer::Buffer,
@@ -55,11 +55,6 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
             let status = st.agent_status(a, now);
             let stale = status == AgentStatus::Stale;
             let (g, gs) = glyph(i, a);
-            let mut say = phrase(st, a, now);
-            let working = status == AgentStatus::Running && a.waiting.is_none();
-            if working && (a.id != "main" || st.turn_active) {
-                say += dots(now);
-            }
             let name = clip(&a.label(), name_w);
             rows.push(vec![
                 (format!("{g} "), gs),
@@ -68,7 +63,7 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
                     if stale { faint() } else { bold() },
                 ),
                 (
-                    say,
+                    say(st, a, now),
                     if stale {
                         faint()
                     } else if a.done {

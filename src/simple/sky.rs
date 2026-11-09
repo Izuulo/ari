@@ -4,7 +4,7 @@ use crate::hub::{
     HubView, Input, areas, bold, chrome, clip, dim, err, faint, fit, frame, lead, msg, needs_you,
     node_style, put, rput, to_lines, top_of,
 };
-use crate::simple::{banner, draw_banner, glyph, phrase};
+use crate::simple::{banner, draw_banner, glyph, phrase, say};
 use crate::state::{Agent, State};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line, text::Span};
 use std::cmp::Reverse;
@@ -116,7 +116,7 @@ pub fn system(buf: &mut Buffer, area: Rect, i: &Input, big: bool) {
                 buf,
                 vx,
                 y + 1,
-                &phrase(st, a, i.now),
+                &say(st, a, i.now),
                 area.right() - vx,
                 faint(),
             );
@@ -304,7 +304,7 @@ fn comets(buf: &mut Buffer, area: Rect, i: &Input, at: &[(usize, (u16, u16))]) -
             dot(buf, area, x.round() as u16, y.round() as u16, g, s);
         }
         let (from, to) = (st.agents[fk].label(), st.agents[tk].label());
-        caption = Some(format!("{from} → {to}  “{}”", clip(&m.text, 40)));
+        caption = Some(crate::simple::caption(&from, &to, &m.text));
     }
     caption
 }

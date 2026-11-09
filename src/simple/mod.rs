@@ -6,7 +6,7 @@ pub mod sky;
 
 use crate::config::Look;
 use crate::event::runs_tests;
-use crate::hub::{Input, err, faint, put};
+use crate::hub::{Input, clip, err, faint, put};
 use crate::state::{Agent, AgentStatus, State};
 use ratatui::{
     buffer::Buffer,
@@ -64,6 +64,20 @@ pub fn glyph(i: &Input, a: &Agent) -> (String, Style) {
         (g, _) if g == "?" => ("z".into(), faint()),
         g => g,
     }
+}
+
+/// The phrase, with animated dots while the agent works.
+pub fn say(st: &State, a: &Agent, now: u64) -> String {
+    let working = a.waiting.is_none()
+        && st.agent_status(a, now) == AgentStatus::Running
+        && (a.id != "main" || st.turn_active);
+    let dots = if working { dots(now) } else { "" };
+    phrase(st, a, now) + dots
+}
+
+/// A message in flight: `from → to  “text”`, the text cut to 40 columns.
+pub fn caption(from: &str, to: &str, text: &str) -> String {
+    format!("{from} → {to}  “{}”", clip(text, 40))
 }
 
 /// Animated trailing dots, one step per 300 ms.
@@ -148,7 +162,7 @@ mod tests {
         a.recent.push_back(rec(tool, act, None));
         (with_main(vec![]), a)
     }
-    fn say(tool: &str, act: &str) -> String {
+    fn verb(tool: &str, act: &str) -> String {
         let (st, a) = running(tool, act);
         phrase(&st, &a, 2000)
     }
@@ -165,7 +179,7 @@ mod tests {
             ("Mystery", "x", "working"),
             ("SendMessage", "message scout", "messaging scout"),
         ] {
-            let p = say(tool, act);
+            let p = verb(tool, act);
             assert_eq!(p, want);
             assert!(!p.contains(['/', '$']) && !p.chars().any(|c| c.is_ascii_digit()));
         }
@@ -252,6 +266,27 @@ mod tests {
                 assert!(out.contains("z scout") && !out.contains("? scout"), "{out}");
             }
         }
+    }
+
+    #[test]
+    fn say_adds_dots_while_working() {
+        let (st, mut a) = running("Read", "x");
+        assert_eq!(say(&st, &a, 2700), "reading..");
+        a.waiting = Some((1, "Bash".into()));
+        assert_eq!(say(&st, &a, 2700), "needs you");
+        let mut st = with_main(vec![]);
+        st.turn_active = true;
+        let m = st.agents[0].clone();
+        assert!(say(&st, &m, 2700).ends_with(".."));
+        st.turn_active = false;
+        assert_eq!(say(&st, &m, 2700), "waiting for you");
+    }
+
+    #[test]
+    fn caption_clips_the_text() {
+        assert_eq!(caption("a", "b", "hi"), "a → b  “hi”");
+        let long = caption("a", "b", &"x".repeat(50));
+        assert!(long.ends_with(&format!("{}…”", "x".repeat(39))), "{long}");
     }
 
     #[test]

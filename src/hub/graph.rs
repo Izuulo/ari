@@ -2,7 +2,7 @@
 
 use super::{Input, bold, clip, dim, faint, frame, glyph, ledger, msg, node_style, put, rput};
 use crate::bar::{cells, fmt_tokens};
-use crate::state::{Agent, AgentStatus, State};
+use crate::state::{Agent, State};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 const MIN_W: u16 = 16;
 
-fn plural(n: usize, word: &str) -> String {
+pub(crate) fn plural(n: usize, word: &str) -> String {
     if n == 1 {
         format!("1 {word}")
     } else {
@@ -327,15 +327,6 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool, c
     );
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
     if calm {
-        let working = a.waiting.is_none()
-            && i.st.agent_status(a, i.now) == AgentStatus::Running
-            && (a.id != "main" || i.st.turn_active);
-        let dots = if working {
-            crate::simple::dots(i.now)
-        } else {
-            ""
-        };
-        let p = crate::simple::phrase(i.st, a, i.now);
         let st = if a.waiting.is_some() {
             msg()
         } else if a.done {
@@ -343,7 +334,7 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool, c
         } else {
             Style::default()
         };
-        put(buf, x, inner.y, &format!("{p}{dots}"), w, st);
+        put(buf, x, inner.y, &crate::simple::say(i.st, a, i.now), w, st);
         return;
     }
     let l = ledger(i, a);
@@ -443,10 +434,7 @@ fn caption(i: &Input, ms: u64) -> String {
         .filter(|m| i.now.saturating_sub(m.t) < ms)
         .max_by_key(|m| m.t);
     match newest {
-        Some(m) => {
-            let text: String = m.text.chars().take(40).collect();
-            format!("{} → {}  “{text}”", name(&m.from), name(&m.to))
-        }
+        Some(m) => crate::simple::caption(&name(&m.from), &name(&m.to), &m.text),
         None => plural(
             st.agents.iter().filter(|a| a.id != "main").count(),
             "helper",
