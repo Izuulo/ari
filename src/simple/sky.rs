@@ -1,10 +1,10 @@
 //! Constellation: each session as an animated star system.
 
 use crate::hub::{
-    HubView, Input, areas, bold, chrome, clip, dim, err, faint, fit, frame, glyph, lead, msg,
-    needs_you, node_style, put, rput, to_lines, top_of,
+    HubView, Input, areas, bold, chrome, clip, dim, err, faint, fit, frame, lead, msg, needs_you,
+    node_style, put, rput, to_lines, top_of,
 };
-use crate::simple::{banner, draw_banner, phrase};
+use crate::simple::{banner, draw_banner, glyph, phrase};
 use crate::state::{Agent, State};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line, text::Span};
 use std::cmp::Reverse;

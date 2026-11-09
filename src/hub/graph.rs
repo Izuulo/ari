@@ -294,7 +294,11 @@ fn join(parts: Vec<Vec<(u16, u16)>>) -> Vec<(u16, u16)> {
 
 fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool, calm: bool) {
     let st = node_style(i, a);
-    let (g, gs) = glyph(i, a);
+    let (g, gs) = if calm {
+        crate::simple::glyph(i, a)
+    } else {
+        glyph(i, a)
+    };
     let subs =
         i.st.agents
             .iter()

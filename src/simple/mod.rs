@@ -6,9 +6,13 @@ pub mod sky;
 
 use crate::config::Look;
 use crate::event::runs_tests;
-use crate::hub::{err, put};
+use crate::hub::{Input, err, faint, put};
 use crate::state::{Agent, AgentStatus, State};
-use ratatui::{buffer::Buffer, layout::Rect, style::Modifier};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Modifier, Style},
+};
 
 /// What the agent is doing, in words with no paths, commands or numbers.
 pub fn phrase(st: &State, a: &Agent, now: u64) -> String {
@@ -51,6 +55,14 @@ fn tool_verb(tool: &str, act: &str) -> String {
         "TodoWrite" | "TaskCreate" | "TaskUpdate" => "planning".into(),
         "Skill" => "using a skill".into(),
         _ => "working".into(),
+    }
+}
+
+/// The hub's glyph, with stale (`?`) shown as a faint `z`: taking a break.
+pub fn glyph(i: &Input, a: &Agent) -> (String, Style) {
+    match crate::hub::glyph(i, a) {
+        (g, _) if g == "?" => ("z".into(), faint()),
+        g => g,
     }
 }
 
@@ -202,6 +214,44 @@ mod tests {
         let alert = with_main(vec![a]);
         assert!(moving(Look::Calm, &alert, 0), "the banner blinks");
         assert!(!moving(Look::Full, &alert, 0));
+    }
+
+    #[test]
+    fn stale_is_z_everywhere() {
+        use crate::config::{Config, Look};
+        use crate::hub::{HubView, Input, lines};
+        let st = with_main(vec![kid("scout", "main", 0)]);
+        let (u, x) = Default::default();
+        let now = STALE_MS + 1;
+        let draw = |look| {
+            let mut cfg = Config::default();
+            (cfg.view.watch, cfg.view.hub) = (look, look);
+            let i = Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now,
+                clock: "",
+            };
+            assert_eq!(glyph(&i, &st.agents[1]), ("z".into(), faint()));
+            assert_eq!(
+                glyph(&i, &st.agents[0]),
+                crate::hub::glyph(&i, &st.agents[0])
+            );
+            let hub = lines(&i, &HubView::default(), 168, 49, false);
+            let watch = if look == Look::Calm {
+                calm::panel(&i, 60, 20, false)
+            } else {
+                sky::panel(&i, 60, 20, false)
+            };
+            [hub, watch].map(|l| crate::panel::to_plain(&l))
+        };
+        for look in [Look::Calm, Look::Constellation] {
+            for out in draw(look) {
+                assert!(out.contains("z scout") && !out.contains("? scout"), "{out}");
+            }
+        }
     }
 
     #[test]

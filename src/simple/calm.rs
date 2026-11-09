@@ -1,9 +1,9 @@
 //! Calm watch: today's panel layout in plain English, without the numbers.
 
 use crate::bar::cells;
-use crate::hub::{Input, bold, clip, ctx_of, dim, faint, frame, glyph, ok, put, to_lines};
+use crate::hub::{Input, bold, clip, ctx_of, dim, faint, frame, ok, put, to_lines};
 use crate::panel::{shown_agents, verdict_style};
-use crate::simple::{banner, dots, draw_banner, phrase};
+use crate::simple::{banner, dots, draw_banner, glyph, phrase};
 use crate::state::{Agent, AgentStatus};
 use ratatui::{
     buffer::Buffer,
@@ -54,11 +54,7 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
         for a in list {
             let status = st.agent_status(a, now);
             let stale = status == AgentStatus::Stale;
-            let (g, gs) = if stale {
-                ("z".into(), faint())
-            } else {
-                glyph(i, a)
-            };
+            let (g, gs) = glyph(i, a);
             let mut say = phrase(st, a, now);
             let working = status == AgentStatus::Running && a.waiting.is_none();
             if working && (a.id != "main" || st.turn_active) {

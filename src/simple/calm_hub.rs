@@ -1,10 +1,10 @@
 //! Calm hub: the hub's layout in plain English, without the numbers.
 
 use crate::hub::{
-    HubView, Input, areas, chrome, dim, err, faint, fit, glyph, graph, merged, needs_you, order,
-    put, subtree,
+    HubView, Input, areas, chrome, dim, err, faint, fit, graph, merged, needs_you, order, put,
+    subtree,
 };
-use crate::simple::{banner, draw_banner, phrase};
+use crate::simple::{banner, draw_banner, glyph, phrase};
 use crate::state::AgentStatus;
 use ratatui::{
     buffer::Buffer,
