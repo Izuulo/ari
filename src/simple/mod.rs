@@ -81,9 +81,14 @@ pub fn banner(st: &State, now: u64) -> Option<Banner> {
         let e = st
             .errors
             .iter()
-            .filter(|e| now.saturating_sub(e.last_t) <= 5000)
+            .filter(|e| e.resolved_t.is_none() && now.saturating_sub(e.last_t) <= 5000)
             .max_by_key(|e| e.last_t)?;
-        format!("✗ {} hit a snag", e.agent)
+        let who = st
+            .agents
+            .iter()
+            .find(|a| a.id == e.agent)
+            .map_or_else(|| "main".into(), |a| a.label());
+        format!("✗ {who} hit a snag")
     };
     Some(Banner {
         text,
@@ -224,6 +229,29 @@ mod tests {
         assert!(banner(&st, 16_000).is_none());
         assert!(banner(&st, 0).unwrap().on);
         assert!(!banner(&st, 10_500).unwrap().on);
+    }
+
+    #[test]
+    fn banner_names_not_ids_and_skips_resolved() {
+        let mut k = kid("ab57dcf04590c7026", "main", 0);
+        k.name = None;
+        k.kind = "Explore".into();
+        let mut st = with_main(vec![k]);
+        st.errors.push(ErrorRec {
+            agent: "ab57dcf04590c7026".into(),
+            last_t: 10_000,
+            ..Default::default()
+        });
+        assert_eq!(banner(&st, 11_000).unwrap().text, "✗ Explore hit a snag");
+        st.errors[0].resolved_t = Some(10_500);
+        assert!(banner(&st, 11_000).is_none());
+    }
+
+    #[test]
+    fn banner_needs_you_ask() {
+        let mut st = with_main(vec![]);
+        st.needs_you = Some("approve rm?".into());
+        assert_eq!(banner(&st, 0).unwrap().text, "! needs you: approve rm?");
     }
 
     #[test]
