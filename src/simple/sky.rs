@@ -73,14 +73,15 @@ pub fn system(buf: &mut Buffer, area: Rect, i: &Input, big: bool) {
     let mut at = vec![];
     if let Some(m) = st.agents.iter().position(|a| a.id == "main") {
         let a = &st.agents[m];
-        let (g, gs) = body(i, a);
-        let ms = if needs_you(a) { err() } else { lead() };
+        let (g, gs) = body(i, a, alarm(st, m));
+        let ms = if alarm(st, m) { err() } else { lead() };
         put(buf, cx.saturating_sub(4), cy, "( main )", 8, ms);
         put(buf, cx, cy.saturating_sub(1), &g, 1, gs);
         at.push((m, (cx, cy)));
     }
-    let mut helpers: Vec<usize> = (0..st.agents.len()).filter(|&k| suns(st, k)).collect();
-    let total = helpers.len();
+    let all: Vec<usize> = (0..st.agents.len()).filter(|&k| suns(st, k)).collect();
+    let total = all.len();
+    let mut helpers = all.clone();
     helpers.sort_by_key(|&k| Reverse(st.agents[k].last_t));
     helpers.truncate(MAX);
     // Slots by start, so a helper keeps its place as others get busy.
@@ -90,7 +91,7 @@ pub fn system(buf: &mut Buffer, area: Rect, i: &Input, big: bool) {
     for (k, &h) in helpers.iter().enumerate() {
         let (x, y) = orbit(cx, cy, rx, ry, turn + k as f64 * TAU / n);
         let a = &st.agents[h];
-        let (g, gs) = body(i, a);
+        let (g, gs) = body(i, a, alarm(st, h));
         let text = format!("{g} {}", clip(&a.label(), NAME));
         // Keep the label inside the pane at the right edge.
         let lx = x
@@ -113,7 +114,20 @@ pub fn system(buf: &mut Buffer, area: Rect, i: &Input, big: bool) {
     let caption = comets(buf, area, i, &at);
 
     let y = area.bottom() - 1;
-    let mut right = format!("{total} helper{} out", if total == 1 { "" } else { "s" });
+    blank(
+        buf,
+        Rect {
+            y,
+            height: 1,
+            ..area
+        },
+    );
+    let out = all.iter().filter(|&&k| !st.agents[k].done).count();
+    let mut right = match out {
+        0 if total > 0 => "all helpers back".to_string(),
+        1 => "1 helper out".into(),
+        n => format!("{n} helpers out"),
+    };
     if total > MAX {
         right += &format!(" · +{} more", total - MAX);
     }
@@ -160,13 +174,13 @@ pub fn galaxy(buf: &mut Buffer, area: Rect, i: &Input) {
             let a0 = turn * speed + j as f64 * TAU / kids.len() as f64;
             let (x, y) = orbit(cx, cy, 6, 2, a0);
             let (g, gs) = match needs_you(a) {
-                true => body(i, a),
+                true => body(i, a, true),
                 false => ("●".into(), node_style(i, a)),
             };
             dot(buf, area, x, y, &g, gs);
         }
         let lead_a = &st.agents[l];
-        let alarm = needs_you(lead_a) || kids.iter().any(|&k| needs_you(&st.agents[k]));
+        let alarm = alarm(st, l);
         let (sun, ss) = match alarm {
             true => (if blink { "!" } else { " " }, err()),
             false => ("✺", node_style(i, lead_a)),
@@ -204,9 +218,14 @@ fn empty(buf: &mut Buffer, area: Rect, i: &Input) {
     alert(buf, area, i);
 }
 
-/// The glyph a body shows: red `◉`/`○` pulsing while it needs you.
-fn body(i: &Input, a: &Agent) -> (String, Style) {
-    if needs_you(a) {
+/// Whether agent `k`, or any agent under it, needs you. Uncapped, so a hidden one still counts.
+fn alarm(st: &State, k: usize) -> bool {
+    (0..st.agents.len()).any(|j| top_of(st, j) == k && needs_you(&st.agents[j]))
+}
+
+/// The glyph a body shows: red `◉`/`○` pulsing while it (`alarm`) needs you.
+fn body(i: &Input, a: &Agent, alarm: bool) -> (String, Style) {
+    if alarm {
         let g = if (i.now / 500).is_multiple_of(2) {
             "◉"
         } else {
@@ -221,14 +240,19 @@ fn body(i: &Input, a: &Agent) -> (String, Style) {
 fn alert(buf: &mut Buffer, area: Rect, i: &Input) {
     if let Some(b) = banner(i.st, i.now) {
         let row = Rect { height: 1, ..area };
-        buf.set_string(
-            row.x,
-            row.y,
-            " ".repeat(row.width as usize),
-            Style::default(),
-        );
+        blank(buf, row);
         draw_banner(buf, row, &b);
     }
+}
+
+/// Clear a row of stars and dots so its words stand alone.
+fn blank(buf: &mut Buffer, row: Rect) {
+    buf.set_string(
+        row.x,
+        row.y,
+        " ".repeat(row.width as usize),
+        Style::default(),
+    );
 }
 
 /// Messages under `COMET` ms old as a `✦` with a `·` trail from sender to receiver, each at
@@ -251,6 +275,10 @@ fn comets(buf: &mut Buffer, area: Rect, i: &Input, at: &[(usize, (u16, u16))]) -
         let (Some((fk, a)), Some((tk, b))) = (find(&m.from), find(&m.to)) else {
             continue;
         };
+        // Within one body (a sun's own session): nothing to fly, and it'd hide the body.
+        if a == b {
+            continue;
+        }
         let f = (i.now - m.t) as f64 / COMET as f64;
         for k in (0..=3).rev() {
             let ff = (f - k as f64 * 0.04).max(0.0);
@@ -307,17 +335,17 @@ fn stars(buf: &mut Buffer, area: Rect, now: u64) {
     }
 }
 
-/// About one cell in 12 holds a star, showing `*` 1/9 and `·` 4/9 of the time.
+/// About one cell in 30 holds a star, showing `*` 1/9 and `·` 4/9 of the time.
 fn star(x: u16, y: u16, now: u64) -> Option<char> {
     // A murmur3 finaliser: a plain multiply spreads neighbours too evenly and draws a lattice.
     let mut h = x as u64 * 37 + y as u64 * 17;
     h = (h ^ (h >> 33)).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     h = (h ^ (h >> 33)).wrapping_mul(0xC4CE_B9FE_1A85_EC53);
     h ^= h >> 33;
-    if !h.is_multiple_of(12) {
+    if !h.is_multiple_of(30) {
         return None;
     }
-    match (now / 400 + h / 12) % 9 {
+    match (now / 400 + h / 30) % 9 {
         0 => Some('*'),
         1..=4 => Some('·'),
         _ => None,
@@ -455,7 +483,95 @@ mod tests {
             .flat_map(|x| (0..40u16).map(move |y| (x, y)))
             .filter(|&(x, y)| star(x, y, 0).is_some())
             .count();
-        assert!((100..=700).contains(&lit), "{lit}");
+        // About one cell in 30, lit 5/9 of the time: ~89 of 4800.
+        assert!((50..=140).contains(&lit), "{lit}");
         assert_eq!(star(3, 4, 800), star(3, 4, 800));
+    }
+
+    /// `galaxy` alone over a 40×12 area.
+    fn sky_all(st: &State, now: u64) -> Vec<String> {
+        let (u, x, cfg) = Default::default();
+        let i = Input {
+            st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now,
+            clock: "",
+        };
+        let area = Rect::new(0, 0, 40, 12);
+        let mut buf = Buffer::empty(area);
+        galaxy(&mut buf, area, &i);
+        crate::panel::to_plain(&to_lines(&buf, false))
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+    fn session(kids: usize) -> State {
+        let mut st = with_main(vec![kid("api", "main", 0)]);
+        st.agents
+            .extend((0..kids).map(|n| kid(&format!("api/{n}"), "api", n as u64 + 1)));
+        st
+    }
+
+    #[test]
+    fn sky_comet_within_one_body_is_not_drawn() {
+        let mut st = session(1);
+        st.messages.push_back(Msg {
+            t: 10_000,
+            from: "api/0".into(),
+            to: "api".into(),
+            text: "hi".into(),
+        });
+        let out = sky_all(&st, 11_500).join("\n");
+        assert!(out.contains('✺') && !out.contains('✦'), "{out}");
+        let mut st = with_main(vec![kid("scout", "main", 1), kid("deep", "scout", 2)]);
+        st.messages.push_back(Msg {
+            t: 10_000,
+            from: "deep".into(),
+            to: "scout".into(),
+            text: "hi".into(),
+        });
+        assert!(!draw(&st, 11_500, 60, 20).join("\n").contains('✦'));
+    }
+
+    #[test]
+    fn sky_sun_blinks_for_any_descendant() {
+        let mut st = session(9);
+        st.agents[10].waiting = Some((1, "Bash".into()));
+        let out = sky_all(&st, 0);
+        // Row 0 is the banner; the sun's `!` is below it.
+        assert!(
+            out[1..].iter().any(|l| l.contains('!')),
+            "{}",
+            out.join("\n")
+        );
+    }
+
+    #[test]
+    fn sky_helper_pulses_for_its_own_helpers() {
+        let mut deep = kid("deep", "scout", 2);
+        deep.waiting = Some((1, "Bash".into()));
+        let st = with_main(vec![kid("scout", "main", 1), deep]);
+        let out = draw(&st, 0, 60, 20).join("\n");
+        assert!(out.contains("◉ scout"), "{out}");
+    }
+
+    #[test]
+    fn sky_counts_helpers_out() {
+        let mut st = two();
+        st.agents[1].done = true;
+        let last = |st: &State| draw(st, 0, 60, 20)[18].clone();
+        assert!(last(&st).contains("1 helper out"), "{}", last(&st));
+        st.agents[2].done = true;
+        assert!(last(&st).contains("all helpers back"), "{}", last(&st));
+        // Nothing but the words on the bottom row.
+        let row = last(&st);
+        let words = row
+            .trim_matches('│')
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(words, "main is waiting for you all helpers back");
     }
 }
