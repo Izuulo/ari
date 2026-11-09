@@ -922,7 +922,7 @@ pub(crate) mod tests {
             ..Default::default()
         };
         assert!(draw(&one, HubView::default()).contains("v constellation"));
-        assert!(draw(&all, HubView::default()).starts_with("constellation (coming soon)"));
+        assert!(draw(&all, HubView::default()).contains(" v details"));
         let graph = HubView {
             screen: Screen::Graph,
             ..Default::default()

@@ -310,3 +310,45 @@ fn calm_hub_empty() {
     );
     assert!(out.contains("no agents yet"), "{out}");
 }
+
+// Constellation.
+
+fn sky_cfg() -> Config {
+    let mut cfg = Config::default();
+    cfg.view.hub = ari_cli::config::Look::Constellation;
+    cfg.view.hub_all = ari_cli::config::Look::Constellation;
+    cfg
+}
+
+#[test]
+fn sky_hub_team() {
+    let (s, x, now) = team();
+    let u = Usage::default();
+    insta::assert_snapshot!(show_u(
+        &sky_cfg(),
+        &s,
+        &u,
+        &x,
+        now,
+        HubView::default(),
+        168,
+        49
+    ));
+}
+
+#[test]
+fn sky_galaxy() {
+    let (s, x, now) = team();
+    let part = |key: &str, name: &str| Part {
+        key: key.into(),
+        name: name.into(),
+        st: s.clone(),
+        app: Default::default(),
+        u: Usage::default(),
+        tokens: x.tokens.clone().unwrap(),
+    };
+    let (st, u, _) = merge(vec![part("aaaaaaaa", "api"), part("bbbbbbbb", "web")], now);
+    let out = show_u(&sky_cfg(), &st, &u, &x, now, HubView::default(), 168, 49);
+    assert!(out.contains("api") && out.contains("web"), "{out}");
+    insta::assert_snapshot!(out);
+}

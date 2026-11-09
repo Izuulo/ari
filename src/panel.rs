@@ -1688,12 +1688,12 @@ pub(crate) mod tests {
             );
             to_plain(&out)
         };
-        assert!(draw(View::default()).starts_with("constellation (coming soon)"));
+        assert!(draw(View::default()).contains("no agents yet"));
         let recap = View {
             recap: true,
             ..Default::default()
         };
-        assert!(!draw(recap).contains("coming soon"));
+        assert!(!draw(recap).contains("no agents yet"));
     }
 
     pub(crate) fn multi() -> (State, Usage) {
