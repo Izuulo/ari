@@ -255,7 +255,7 @@ mod tests {
             );
             let hub = lines(&i, &HubView::default(), 168, 49, false);
             let watch = if look == Look::Calm {
-                calm::panel(&i, 60, 20, false)
+                calm::panel(&i, 60, 20, false, "constellation")
             } else {
                 sky::panel(&i, 60, 20, false)
             };

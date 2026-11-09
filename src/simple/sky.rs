@@ -28,7 +28,7 @@ pub fn fits(w: u16, h: u16) -> bool {
 /// `ari watch` in Constellation: the session's sky in the panel's frame; Calm when too small.
 pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
     if !fits(w, h) {
-        return crate::simple::calm::panel(i, w, h, color);
+        return crate::simple::calm::panel(i, w, h, color, "details");
     }
     let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
     let title = vec![Span::styled("ARI", bold())];
@@ -137,6 +137,7 @@ pub fn system(buf: &mut Buffer, area: Rect, i: &Input, big: bool) {
     let out = all.iter().filter(|&&k| !st.agents[k].done).count();
     let mut right = match out {
         0 if total > 0 => "all helpers back".to_string(),
+        0 => "no helpers yet".into(),
         1 => "1 helper out".into(),
         n => format!("{n} helpers out"),
     };
@@ -412,12 +413,21 @@ mod tests {
         };
         // Under 30×8 the panel is Calm's, and its width is Calm's to keep.
         for (w, h) in [(30, 10), (29, 10), (12, 4), (5, 2)] {
-            let calm = crate::simple::calm::panel(&i, w, h, false);
+            let calm = crate::simple::calm::panel(&i, w, h, false, "details");
             assert_eq!(panel(&i, w, h, false) == calm, !fits(w, h), "{w}×{h}");
         }
         for l in draw(&st, 0, 30, 10) {
             assert!(l.width() <= 30, "{l}");
         }
+    }
+
+    #[test]
+    fn sky_too_small_footer_says_details() {
+        let out = draw(&two(), 0, 29, 20).join("\n");
+        assert!(
+            out.contains("v details") && !out.contains("constellation"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -609,6 +619,8 @@ mod tests {
         let mut st = two();
         st.agents[1].done = true;
         let last = |st: &State| draw(st, 0, 60, 20)[18].clone();
+        let alone = with_main(vec![]);
+        assert!(last(&alone).contains("no helpers yet"), "{}", last(&alone));
         assert!(last(&st).contains("1 helper out"), "{}", last(&st));
         st.agents[2].done = true;
         assert!(last(&st).contains("all helpers back"), "{}", last(&st));

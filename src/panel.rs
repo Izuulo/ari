@@ -231,7 +231,7 @@ pub fn lines(
             clock,
         };
         let out = if cfg.view.watch == Look::Calm {
-            crate::simple::calm::panel(&i, width, height, color)
+            crate::simple::calm::panel(&i, width, height, color, "constellation")
         } else {
             crate::simple::sky::panel(&i, width, height, color)
         };

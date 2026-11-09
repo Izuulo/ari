@@ -15,7 +15,8 @@ use unicode_width::UnicodeWidthStr;
 
 type Row = Vec<(String, Style)>;
 
-pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
+/// `next`: the view `v` goes to, named in the footer.
+pub fn panel(i: &Input, w: u16, h: u16, color: bool, next: &str) -> Vec<Line<'static>> {
     let (st, now) = (i.st, i.now);
     let v = st.verdict_with(i.cfg.thresholds.stuck_repeats);
     let verdict = format!("{} {}", v.glyph(), v.label().to_lowercase());
@@ -89,7 +90,7 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
         ]);
     }
     rows.push(Vec::new());
-    rows.push(vec![("v constellation".into(), faint())]);
+    rows.push(vec![(format!("v {next}"), faint())]);
 
     let top = u16::from(alert.is_some());
     let hh = h.min(rows.len() as u16 + top + 2);
@@ -152,7 +153,7 @@ mod tests {
             now,
             clock: "12:41",
         };
-        panel(&i, w, h, false)
+        panel(&i, w, h, false, "constellation")
     }
 
     #[test]

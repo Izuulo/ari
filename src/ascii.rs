@@ -47,6 +47,7 @@ fn glyph(c: char) -> Option<char> {
         '·' => '-',
         '⎇' => 'Y',
         '−' => '-',
+        '“' | '”' => '"',
         _ => return None,
     })
 }
@@ -91,6 +92,6 @@ mod tests {
 
     #[test]
     fn maps_sky_glyphs() {
-        assert_eq!(map("✦ ✺ ○ ☼"), "* @ o @");
+        assert_eq!(map("✦ ✺ ○ ☼ “hi”"), "* @ o @ \"hi\"");
     }
 }
