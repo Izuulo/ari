@@ -611,6 +611,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ),
         ("b", git_key(v)),
         ("x", "back to panel".into()),
+        ("v", "calm".into()),
         ("s", "settings".into()),
         ("q", "quit".into()),
     ];

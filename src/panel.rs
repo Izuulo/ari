@@ -26,6 +26,8 @@ pub struct View {
     pub settings: Option<usize>,
     /// A settings change the key handler queued: 1 forward, -1 back, 0 reset.
     pub edit: Option<i8>,
+    /// `v`: a queued view change, taken by the frame like `edit`.
+    pub next_look: bool,
 }
 
 type Row = Vec<Span<'static>>;

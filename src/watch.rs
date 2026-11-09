@@ -119,6 +119,28 @@ impl App {
             settings::step(&mut self.file, item.key, dir);
         }
         self.settings_note = None;
+        self.save();
+    }
+
+    /// Advance the view of the screen on show (`v`), then save it.
+    fn apply_look(&mut self, view: &mut View) {
+        if !std::mem::take(&mut view.next_look) {
+            return;
+        }
+        let Some(s) = surface(view, self.mode == Mode::All) else {
+            return;
+        };
+        self.reload_config();
+        if self.cfg_error.is_some() {
+            // Never overwrite a broken file: this window alone changes.
+            self.cfg.view.bump(s);
+            return;
+        }
+        self.file.view.bump(s);
+        self.save();
+    }
+
+    fn save(&mut self) {
         if let Some(p) = &self.cfg_path {
             match config::save_to(p, &self.file) {
                 // Our own save isn't a hand edit to reload.
@@ -524,7 +546,7 @@ impl App {
             };
             let text = note.unwrap_or_else(|| {
                 format!(
-                    "e errors · a agents · c clear done · r recap · x hub · s settings · {back} · q quit"
+                    "e errors · a agents · c clear done · r recap · x hub · v calm · s settings · {back} · q quit"
                 )
             });
             let text = crate::event::truncate(&text, width as usize);
@@ -931,6 +953,7 @@ pub fn run(args: &[String]) -> ! {
             app.cycle();
         }
         app.apply_edit(view);
+        app.apply_look(view);
         if view.settings.is_none() {
             app.settings_note = None;
         }
@@ -1030,6 +1053,11 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
             KeyCode::Char('z') => h.show_done ^= true,
             KeyCode::Char('b') => h.git ^= true,
             KeyCode::Char('c') => view.cleared = hook::now_ms(),
+            KeyCode::Char('v') => {
+                h.screen = Screen::Hub;
+                h.scroll = 0;
+                view.next_look = true;
+            }
             KeyCode::PageUp => h.scroll += 10,
             KeyCode::PageDown => h.scroll = h.scroll.saturating_sub(10),
             _ => {}
@@ -1054,9 +1082,25 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         (KeyCode::Char('a'), _) => view.expand_agents ^= true,
         (KeyCode::Char('c'), _) => view.cleared = hook::now_ms(),
         (KeyCode::Char('r'), _) => view.recap ^= true,
+        (KeyCode::Char('v'), None) => view.next_look = true,
         _ => {}
     }
     false
+}
+
+/// Which remembered view the screen on show uses; `None` for settings and the `--all` list.
+pub fn surface(view: &View, all_mode: bool) -> Option<config::Surface> {
+    use config::Surface;
+    if view.settings.is_some() {
+        return None;
+    }
+    match view.hub {
+        // An opened session's own hub (`--all`, then enter, then x) is a single-session hub.
+        Some(h) if h.all || (all_mode && !view.open) => Some(Surface::HubAll),
+        Some(_) => Some(Surface::Hub),
+        None if all_mode && !view.open => None,
+        None => Some(Surface::Watch),
+    }
 }
 
 /// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment,
@@ -1302,6 +1346,100 @@ mod key_tests {
         key(&mut v, KeyCode::Char('z'), None, Some(3));
         assert!(v.hub.unwrap().show_done);
         assert!(key(&mut v, KeyCode::Char('q'), None, Some(3)));
+    }
+
+    #[test]
+    fn v_queues_a_view_change() {
+        let mut v = View::default();
+        key(&mut v, KeyCode::Char('v'), None, None);
+        assert!(v.next_look, "panel");
+        let mut v = hub_view(Screen::Zoom, 2);
+        key(&mut v, KeyCode::Char('v'), None, Some(3));
+        assert!(v.next_look);
+        assert_eq!(
+            v.hub.unwrap().screen,
+            Screen::Hub,
+            "v leaves graph/zoom for the hub"
+        );
+        let mut v = View::default();
+        key(&mut v, KeyCode::Char('v'), Some(4), None);
+        assert!(!v.next_look, "the --all list has no simple view");
+    }
+
+    #[test]
+    fn surface_picks_the_screen() {
+        use config::Surface;
+        assert_eq!(surface(&View::default(), false), Some(Surface::Watch));
+        assert_eq!(surface(&View::default(), true), None, "--all list");
+        let open = View {
+            open: true,
+            ..Default::default()
+        };
+        assert_eq!(surface(&open, true), Some(Surface::Watch), "opened session");
+        let h = |all| View {
+            hub: Some(HubView {
+                all,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(surface(&h(false), false), Some(Surface::Hub));
+        assert_eq!(surface(&h(true), false), Some(Surface::HubAll));
+        assert_eq!(
+            surface(&h(false), true),
+            Some(Surface::HubAll),
+            "x from the --all list"
+        );
+        let opened_hub = View {
+            open: true,
+            ..h(false)
+        };
+        assert_eq!(
+            surface(&opened_hub, true),
+            Some(Surface::Hub),
+            "an opened session's own hub"
+        );
+        let settings = View {
+            settings: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(surface(&settings, false), None);
+    }
+
+    #[test]
+    fn v_saves_the_look_per_screen() {
+        use config::Look;
+        let (mut app, root, p) = app_with_cfg("look", None);
+        let mut v = View {
+            next_look: true,
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        assert!(!v.next_look, "taken");
+        assert_eq!(app.cfg.view.watch, Look::Calm);
+        assert_eq!(config::load_from(&p).unwrap().view.watch, Look::Calm);
+        v = View {
+            next_look: true,
+            hub: Some(HubView::default()),
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        let saved = config::load_from(&p).unwrap().view;
+        assert_eq!((saved.watch, saved.hub), (Look::Calm, Look::Calm));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v_on_a_broken_file_changes_only_this_window() {
+        let (mut app, root, p) = app_with_cfg("lookbroken", Some("face = [[["));
+        let mut v = View {
+            next_look: true,
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        assert_eq!(app.cfg.view.watch, config::Look::Calm);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
