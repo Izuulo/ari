@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- ARI flags a turn that deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing ("⚠ N test changes", listed in the panel and in ari recap). DONE and IDLE read "unverified" when files changed after the last test run.
+- The hub's `z` shows finished subagents even with `auto_clear` on.
 - After a compaction, ARI warns "⟲ redo ×N" when Claude repeats edits or commands it had already done. The hub's zoom view and activity lanes mark each compaction.
 
 ## 0.3.12 - 2026-11-08

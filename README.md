@@ -80,6 +80,7 @@ done      4 tasks
             ✓ scaffold
             ✓ build
 errors    1 hit · 1 fixed · 0 open
+check     ⚠ skip added · test_calc.py
 tests     58 passed → 71 passed
 files     2 edited
             calc.py ×2
@@ -106,6 +107,8 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 | `◌ IDLE` | Turn finished; tasks incomplete or none |
 
 `⟲ redo ×N` next to the verdict: after a compaction, main repeated N edits or commands it had already done before it (re-running tests and looking around don't count).
+
+`DONE · unverified` or `IDLE · unverified`: files changed after the last test run. `⚠ N test changes`: this turn deleted a test file, added a skip/xfail/`.only`/`#[ignore]`, or edited a test while tests were failing. The panel lists each one.
 
 ## Other agents: Codex and DeepSeek Harness
 
