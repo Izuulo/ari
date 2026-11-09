@@ -41,8 +41,8 @@ pub const SEGMENTS: [&str; 11] = [
     "tokens",
 ];
 /// Panel sections `hide_panel` understands (`tasks` is the checklist bar in the header).
-pub const SECTIONS: [&str; 7] = [
-    "tasks", "agents", "errors", "usage", "session", "turns", "git",
+pub const SECTIONS: [&str; 8] = [
+    "tasks", "agents", "errors", "usage", "session", "calls", "turns", "git",
 ];
 /// The colours the settings screen steps through for a role, after `theme`.
 pub const COLOR_CYCLE: [&str; 15] = [

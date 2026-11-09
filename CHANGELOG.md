@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Calls section** in `ari watch`: main's recent tool calls, newest first, laid out like the hub's agent card (age, tool, target, ✓/✗ and duration). Turns sit below it and shrink first when space is short. Toggle either in settings → PANEL (`hide_panel = ["calls"]` / `["turns"]`).
 - **Hide stale agents** (`hide_stale`, off by default; settings → PANEL): `ari watch` and the hub drop subagents that went quiet for 5 min without finishing.
 - ARI flags a turn that deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing ("⚠ N test changes", listed in the panel and in ari recap). DONE and IDLE read "unverified" when files changed after the last test run.
 - The hub's `z` shows finished subagents even with `auto_clear` on.

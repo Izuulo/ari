@@ -10,6 +10,27 @@ expression: out
 │ ◌ main      haiku-5-5 · idle · 417k tok              │
 │ ├─✓ Explore haiku-5-5 · done 2s · 32k tok · calc.py… │
 │ └─✓ Explore haiku-5-5 · done 1s · 32k tok · The fil… │
+├─ calls ──────────────────────────────────────────────┤
+│  1s TaskU plan                                 ✓ .0s │
+│  2s TaskU plan                                 ✓ .0s │
+│  2s TaskU plan                                 ✓ .0s │
+│  4s Agent Explore: Describe test_calc.py      ✓ 1.8s │
+│  5s Agent Explore: Describe calc.py           ✓ 2.1s │
+│  7s TaskU plan                                 ✓ .0s │
+│  7s TaskU plan                                 ✓ .0s │
+│  8s Bash  python3 test_calc.py                 ✓ .0s │
+│  9s Edit  calc.py                              ✓ .0s │
+│ 12s Bash  python3 test_calc.py                ✗ 1.3s │
+│ 13s TaskU plan                                 ✓ .0s │
+│ 13s TaskU plan                                 ✓ .0s │
+│ 14s Write test_calc.py                         ✓ .0s │
+│ 14s Write calc.py                              ✓ .0s │
+│ 16s TaskU plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 17s TaskC plan                                 ✓ .0s │
+│ 18s ToolS ToolSearch                           ✓ .0s │
 ├─ usage ──────────────────────────────────────────────┤
 │ ▲ at this pace: 5h limit in ~55m                     │
 ├─ session ────────────────────────────────────────────┤

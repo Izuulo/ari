@@ -36,9 +36,9 @@ expression: to_plain(&out)
    errors · failed calls     on                 │
    usage · context, limits   on                 │
    session · cost, time      on                 │
+   calls · recent tool calls on                 │
    turns · recent turns      on                 │
    git · commits, PRs        on                 │
    auto-clear done agents    off                │
    hide stale agents         off                │
- ALERTS                                         │
  ↑↓ move · ←→ change · d default · esc back · chain, prices, ntfy: edit the file

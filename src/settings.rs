@@ -36,7 +36,7 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 45] = [
+const ITEMS: [(&str, &str, &str); 46] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
@@ -66,6 +66,7 @@ const ITEMS: [(&str, &str, &str); 45] = [
     ("PANEL", "hide_panel.errors", "errors · failed calls"),
     ("PANEL", "hide_panel.usage", "usage · context, limits"),
     ("PANEL", "hide_panel.session", "session · cost, time"),
+    ("PANEL", "hide_panel.calls", "calls · recent tool calls"),
     ("PANEL", "hide_panel.turns", "turns · recent turns"),
     ("PANEL", "hide_panel.git", "git · commits, PRs"),
     ("PANEL", "auto_clear", "auto-clear done agents"),
@@ -399,7 +400,7 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 45);
+        assert_eq!(it.len(), 46);
         for n in crate::config::NOTIFY_ON {
             let i = it
                 .iter()

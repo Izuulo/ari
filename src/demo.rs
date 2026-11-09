@@ -418,7 +418,12 @@ mod tests {
             60,
             false,
         ));
-        assert!(out.contains("DeepSeek") && !out.contains('$'), "{out}");
+        // `$ ` is a shell command in the commands section; a price is `$` then a digit.
+        let priced = out
+            .split('$')
+            .skip(1)
+            .any(|s| s.starts_with(|c: char| c.is_ascii_digit()));
+        assert!(out.contains("DeepSeek") && !priced, "{out}");
     }
 
     #[test]
