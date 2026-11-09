@@ -836,7 +836,7 @@ mod screen_tests {
         let out = lines(
             &Screen {
                 cfg: &cfg,
-                sel: 13,
+                sel: 16,
                 path: "~/.config/ari/config.toml",
                 error: None,
                 note: None,
@@ -847,7 +847,7 @@ mod screen_tests {
                 color: false,
             },
             120,
-            40,
+            43,
         );
         insta::assert_snapshot!(to_plain(&out));
     }
