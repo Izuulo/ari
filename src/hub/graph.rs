@@ -2,7 +2,6 @@
 
 use super::{Input, bold, clip, dim, faint, frame, glyph, ledger, msg, node_style, put, rput};
 use crate::bar::{cells, fmt_tokens};
-use crate::config::Look;
 use crate::state::{Agent, AgentStatus, State};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -22,13 +21,18 @@ fn plural(n: usize, word: &str) -> String {
 }
 const GAP: u16 = 4;
 
-fn calm(i: &Input) -> bool {
-    super::look(i) == Look::Calm
+/// How `draw` lays the graph out. `calm`: plain-English nodes and a caption, from Calm's hub only.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Opts {
+    pub big: bool,
+    pub labels: bool,
+    pub show_done: bool,
+    pub calm: bool,
 }
 
 /// How long a message's `●` takes to travel its edge; Calm lets it glide.
-fn packet_ms(i: &Input) -> u64 {
-    if calm(i) { 3000 } else { 1600 }
+fn packet_ms(calm: bool) -> u64 {
+    if calm { 3000 } else { 1600 }
 }
 
 /// Messages between two agents, either way. `a < b` by id.
@@ -288,7 +292,7 @@ fn join(parts: Vec<Vec<(u16, u16)>>) -> Vec<(u16, u16)> {
     out
 }
 
-fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
+fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool, calm: bool) {
     let st = node_style(i, a);
     let (g, gs) = glyph(i, a);
     let subs =
@@ -318,7 +322,7 @@ fn node(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent, sel: bool, big: bool) {
         sel,
     );
     let (x, w) = (inner.x + 1, inner.width.saturating_sub(2));
-    if calm(i) {
+    if calm {
         let working = a.waiting.is_none()
             && i.st.agent_status(a, i.now) == AgentStatus::Running
             && (a.id != "main" || i.st.turn_active);
@@ -505,15 +509,13 @@ fn subs_tree(
 
 /// Draw the graph pane into `area` (its frame included). Kids finished over 5 minutes ago
 /// drop out unless `show_done`.
-pub(crate) fn draw(
-    buf: &mut Buffer,
-    area: Rect,
-    i: &Input,
-    sel: Option<&str>,
-    big: bool,
-    labels: bool,
-    show_done: bool,
-) {
+pub(crate) fn draw(buf: &mut Buffer, area: Rect, i: &Input, sel: Option<&str>, o: Opts) {
+    let Opts {
+        big,
+        labels,
+        show_done,
+        calm,
+    } = o;
     let st = i.st;
     let all = edges(st);
     let lifted = lift(st, &all);
@@ -554,7 +556,7 @@ pub(crate) fn draw(
     let legend_y = inner.bottom().saturating_sub(1);
     if lay.nodes.is_empty() {
         match main {
-            Some(m) => node(buf, lay.lead, i, m, sel == Some("main"), big),
+            Some(m) => node(buf, lay.lead, i, m, sel == Some("main"), big, calm),
             None if super::merged(i) => {
                 let t = "no live sessions";
                 put(
@@ -680,7 +682,7 @@ pub(crate) fn draw(
     lines.draw(buf, inner);
     for (k, r) in &lay.nodes {
         let a = &st.agents[*k];
-        node(buf, *r, i, a, sel == Some(a.id.as_str()), big);
+        node(buf, *r, i, a, sel == Some(a.id.as_str()), big, calm);
     }
     if let Some(r) = lay.more_rect {
         let inner = frame(
@@ -692,7 +694,7 @@ pub(crate) fn draw(
             false,
         );
         // Calm has no agents table to point at.
-        let see = if calm(i) { "" } else { "see the agents table" };
+        let see = if calm { "" } else { "see the agents table" };
         put(
             buf,
             inner.x + 1,
@@ -703,7 +705,7 @@ pub(crate) fn draw(
         );
     }
     if let Some(m) = main {
-        node(buf, lay.lead, i, m, sel == Some("main"), big);
+        node(buf, lay.lead, i, m, sel == Some("main"), big, calm);
     }
     // Junctions on borders, drawn after the nodes.
     let lead_heavy = paths.iter().any(|(e, _)| e.a == "main" || e.b == "main");
@@ -785,7 +787,7 @@ pub(crate) fn draw(
         }
     }
     // A message under `packet_ms` old travels its edge.
-    let ms = packet_ms(i);
+    let ms = packet_ms(calm);
     for (e, p) in &paths {
         let age = i.now.saturating_sub(e.t);
         if age < ms && !p.is_empty() {
@@ -797,7 +799,7 @@ pub(crate) fn draw(
             }
         }
     }
-    if calm(i) {
+    if calm {
         let w = inner.width.saturating_sub(2);
         put(buf, inner.x + 1, legend_y, &caption(i, ms), w, msg());
         return;
@@ -840,7 +842,11 @@ mod tests {
         };
         let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
         let area = buf.area;
-        draw(&mut buf, area, &i, Some("a1"), false, true, false);
+        let o = Opts {
+            labels: true,
+            ..Default::default()
+        };
+        draw(&mut buf, area, &i, Some("a1"), o);
         crate::panel::to_plain(&crate::hub::to_lines(&buf, false))
     }
     fn four() -> State {
@@ -948,7 +954,11 @@ mod tests {
             };
             let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
             let area = buf.area;
-            draw(&mut buf, area, &i, None, big, false, false);
+            let o = Opts {
+                big,
+                ..Default::default()
+            };
+            draw(&mut buf, area, &i, None, o);
             let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
             let last = out.lines().last().unwrap();
             assert!(
@@ -998,7 +1008,7 @@ mod tests {
         };
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 20));
         let area = buf.area;
-        draw(&mut buf, area, &i, Some("rev"), false, false, false);
+        draw(&mut buf, area, &i, Some("rev"), Opts::default());
         let out = crate::panel::to_plain(&crate::hub::to_lines(&buf, false));
         let rev = out.lines().find(|l| l.contains(" rev")).expect(&out);
         assert!(rev.contains('┏'), "rev is a selected box: {rev}");

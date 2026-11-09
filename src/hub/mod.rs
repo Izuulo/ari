@@ -592,15 +592,13 @@ fn graph_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     let gh = (h - 3) * 31 / 46;
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(
-        buf,
-        Rect::new(0, 2, w, gh),
-        i,
-        sel,
-        true,
-        f == Fit::Full,
-        v.show_done,
-    );
+    let o = graph::Opts {
+        big: true,
+        labels: f == Fit::Full,
+        show_done: v.show_done,
+        calm: false,
+    };
+    graph::draw(buf, Rect::new(0, 2, w, gh), i, sel, o);
     feed::tasks(buf, Rect::new(0, 2 + gh, w, h - 3 - gh), i);
 }
 
@@ -638,7 +636,13 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
     chrome(buf, i, &a, &keys, false);
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(buf, a.graph, i, sel, false, f == Fit::Full, v.show_done);
+    let o = graph::Opts {
+        big: false,
+        labels: f == Fit::Full,
+        show_done: v.show_done,
+        calm: false,
+    };
+    graph::draw(buf, a.graph, i, sel, o);
     agents::table(buf, a.table, i, v.sel);
     let across = if merged(i) {
         (w / 76).max(1) // session cards are two panes wide
@@ -928,6 +932,33 @@ pub(crate) mod tests {
             ..Default::default()
         };
         assert!(draw(&one, graph).contains("ARI hub"), "graph stays full");
+    }
+
+    #[test]
+    fn graph_screen_is_full_under_calm() {
+        use crate::config::Look;
+        let mut a = kid("a", "main", 0);
+        a.running_since = Some(0);
+        let st = with_main(vec![a]);
+        let (u, x) = (Usage::default(), Extras::default());
+        let v = HubView {
+            screen: Screen::Graph,
+            ..Default::default()
+        };
+        let draw = |hub| {
+            let mut cfg = Config::default();
+            cfg.view.hub = hub;
+            let i = Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now: 1,
+                clock: "",
+            };
+            crate::panel::to_plain(&lines(&i, &v, 168, 49, false))
+        };
+        assert_eq!(draw(Look::Calm), draw(Look::Full));
     }
 
     #[test]

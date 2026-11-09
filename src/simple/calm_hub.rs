@@ -45,7 +45,13 @@ pub fn hub(buf: &mut Buffer, i: &Input, v: &HubView) {
     } else {
         let ord = order(i.st);
         let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-        graph::draw(buf, body, i, sel, true, false, v.show_done);
+        let o = graph::Opts {
+            big: true,
+            show_done: v.show_done,
+            calm: true,
+            ..Default::default()
+        };
+        graph::draw(buf, body, i, sel, o);
     }
     if let Some(b) = banner(i.st, i.now) {
         let row = Rect::new(0, 2, w, 1);
