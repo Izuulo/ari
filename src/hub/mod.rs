@@ -664,7 +664,7 @@ fn git_key(v: &HubView) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::state::{Agent, State};
     use unicode_width::UnicodeWidthStr;

@@ -20,6 +20,7 @@ pub mod replay;
 pub mod sessions;
 pub mod settings;
 pub mod setup;
+pub mod simple;
 pub mod state;
 pub mod statusline;
 pub mod theme;
