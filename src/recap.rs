@@ -59,6 +59,8 @@ pub struct Recap {
     pub failed_calls: u32,
     pub failed_ms: u64,
     pub reread: u32,
+    /// Test changes in the window: `{kind} · {file}`.
+    pub test_flags: Vec<String>,
 }
 
 fn fold(events: &[Event]) -> State {
@@ -108,8 +110,18 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         events: window.len(),
         verdict: {
             let v = after.verdict();
-            format!("{} {}", v.glyph(), v.label())
+            let note = after.verdict_note(v).map(|n| format!(" · {n}"));
+            format!("{} {}{}", v.glyph(), v.label(), note.unwrap_or_default())
         },
+        test_flags: after
+            .test_flags
+            .iter()
+            .filter(|f| f.t >= from)
+            .map(|f| {
+                let file = Path::new(&f.path).file_name().and_then(|n| n.to_str());
+                format!("{} · {}", f.kind, file.unwrap_or(&f.path))
+            })
+            .collect(),
         done: after
             .tasks
             .iter()
@@ -423,6 +435,9 @@ pub fn markdown(r: &Recap) -> String {
     if !r.still_open.is_empty() {
         item("Failing", r.still_open.join(", "));
     }
+    if !r.test_flags.is_empty() {
+        item("Check", r.test_flags.join(", "));
+    }
     if let Some(t) = tests_line(r) {
         item("Tests", t);
     }
@@ -652,5 +667,46 @@ mod tests {
         assert_eq!(c.len(), 1);
         assert!(c[0].ends_with(" first change"), "{c:?}");
         assert!(commits("/nonexistent-ari-dir", 0).is_empty());
+    }
+
+    #[test]
+    fn recap_lists_test_flags() {
+        let ev = |t: u64, e: &str| Event {
+            t,
+            e: e.into(),
+            msg: Some("go".into()),
+            ..Default::default()
+        };
+        let edit = |t: u64, skips: Option<u32>| Event {
+            tool: Some("Edit".into()),
+            sig: Some("Edit:/x/a.rs".into()),
+            ok: Some(true),
+            skips,
+            ..ev(t, "PostToolUse")
+        };
+        let run = Event {
+            tool: Some("Bash".into()),
+            sig: Some("Bash:cargo test".into()),
+            ok: Some(true),
+            tests: Some((3, 0)),
+            ..ev(1_500, "PostToolUse")
+        };
+        let d = session_from(
+            "flags",
+            &[
+                ev(1_000, "UserPromptSubmit"),
+                edit(1_100, Some(1)),
+                run,
+                edit(1_600, None),
+                ev(1_700, "Stop"),
+            ],
+        );
+        let r = build(&d, Since::Start, 2_000);
+        assert_eq!(r.test_flags, ["skip added · a.rs"]);
+        assert!(r.verdict.ends_with("· unverified"), "{}", r.verdict);
+        assert!(markdown(&r).contains("- **Check:** skip added · a.rs"));
+        let lines = crate::panel::to_plain(&crate::panel::recap_lines(&r, 80, false, false));
+        assert!(lines.contains("check"), "{lines}");
+        assert!(build(&d, Since::Ago(300), 2_000).test_flags.is_empty());
     }
 }

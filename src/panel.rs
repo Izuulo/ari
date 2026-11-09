@@ -566,6 +566,17 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
             rows,
         });
     }
+    if !r.test_flags.is_empty() {
+        let warn = Style::new().fg(Color::Yellow);
+        out.push(Section {
+            title: Some("check"),
+            rows: r
+                .test_flags
+                .iter()
+                .map(|f| vec![c.span("⚠ ", warn), Span::raw(f.clone())])
+                .collect(),
+        });
+    }
     if !r.files.is_empty() {
         let mut rows: Vec<Row> = r
             .files
@@ -769,9 +780,9 @@ fn header(
         ]);
         return rows;
     }
-    let left = if v == Verdict::Done && st.tests_failing() {
+    let left = if let Some(note) = st.verdict_note(v) {
         c.span(
-            format!("{} {} · tests failing", v.glyph(), v.label()),
+            format!("{} {} · {note}", v.glyph(), v.label()),
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         )
     } else {
@@ -804,6 +815,19 @@ fn header(
             format!("⟲ redoing work since compaction · {}× · {}", r.n, r.last),
             Style::new().fg(Color::Yellow),
         )]);
+    }
+    let flags = st.turn_flags();
+    for f in flags.iter().take(3) {
+        let file = std::path::Path::new(&f.path)
+            .file_name()
+            .map_or(f.path.as_str(), |n| n.to_str().unwrap_or(&f.path));
+        rows.push(vec![c.span(
+            format!("⚠ {} · {file}", f.kind),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]);
+    }
+    if flags.len() > 3 {
+        rows.push(vec![c.dim(format!("  +{} more", flags.len() - 3))]);
     }
     if let Some(msg) = &st.needs_you {
         rows.push(vec![
@@ -2244,6 +2268,27 @@ mod tests {
         assert_eq!(st.verdict(), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn test_flags_in_header() {
+        let (mut st, u) = multi();
+        let t = st.turn_start();
+        for (i, kind) in ["skip added", "deleted", "edited while failing", "deleted"]
+            .iter()
+            .enumerate()
+        {
+            st.test_flags.push_back(crate::state::TestFlag {
+                t,
+                path: format!("/r/tests/t{i}.py"),
+                kind: (*kind).into(),
+            });
+        }
+        let out = render(&st, &u, View::default(), 80, 60);
+        assert!(out.contains("⚠ skip added · t0.py"), "{out}");
+        assert!(out.contains("⚠ edited while failing · t2.py"), "{out}");
+        assert!(!out.contains("t3.py"), "{out}");
+        assert!(out.contains("+1 more"), "{out}");
     }
 
     #[test]

@@ -317,8 +317,11 @@ impl App {
     }
 
     /// Finished subagents ending at or before this are hidden: all with `auto_clear`, else up to `c`.
+    /// The hub's `z` shows every finished one, so it keeps them all.
     fn clear_cut(&self) -> u64 {
-        if self.cfg.auto_clear {
+        if self.view.hub.is_some_and(|h| h.show_done) {
+            0
+        } else if self.cfg.auto_clear {
             u64::MAX
         } else {
             self.view.cleared
@@ -1291,6 +1294,20 @@ mod key_tests {
         key(&mut v, KeyCode::Char('z'), None, Some(3));
         assert!(v.hub.unwrap().show_done);
         assert!(key(&mut v, KeyCode::Char('q'), None, Some(3)));
+    }
+
+    #[test]
+    fn show_finished_overrides_auto_clear() {
+        let root = std::env::temp_dir().join(format!("ari-cut-{}", std::process::id()));
+        let mut app = app_on(&root, "s1", &[]);
+        app.cfg.auto_clear = true;
+        assert_eq!(app.clear_cut(), u64::MAX);
+        app.view.hub = Some(HubView {
+            show_done: true,
+            ..Default::default()
+        });
+        assert_eq!(app.clear_cut(), 0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn app_on(root: &Path, id: &str, events: &[String]) -> App {

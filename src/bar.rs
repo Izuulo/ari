@@ -243,11 +243,12 @@ pub fn render(
     // No hook events at all (plugin missing, or installed after this session began):
     // ARI can't judge the session, so it says so instead of claiming IDLE.
     let hooked = st.first_t > 0;
-    let mut segs: Vec<String> = vec![if hooked && v == Verdict::Done && st.tests_failing() {
+    let note = st.verdict_note(v).filter(|_| hooked);
+    let mut segs: Vec<String> = vec![if let Some(note) = note {
         paint(
             color,
             "1;33",
-            &format!("{} {} · tests failing", v.glyph(), v.label()),
+            &format!("{} {} · {note}", v.glyph(), v.label()),
         )
     } else if hooked {
         let burned = Some(v)
@@ -270,6 +271,11 @@ pub fn render(
     }];
     if let Some(r) = st.redoing() {
         segs.push(paint(color, "33", &format!("⟲ redo ×{}", r.n)));
+    }
+    let flags = st.turn_flags().len();
+    if hooked && flags > 0 {
+        let s = if flags == 1 { "" } else { "s" };
+        segs.push(paint(color, "1;33", &format!("⚠ {flags} test change{s}")));
     }
     let shown = |id: &str| !cfg.hide.iter().any(|h| h == id);
     let from_hooks = |id: &str| hooked && shown(id);
@@ -405,6 +411,47 @@ mod tests {
     use crate::state::{Agent, ErrorRec, Task, TestRun};
 
     const NOW: u64 = 1_738_419_600_000; // 1h40m before the 5h reset below
+
+    #[test]
+    fn unverified_and_test_changes() {
+        let flag = |p: &str| crate::state::TestFlag {
+            t: 30,
+            path: p.into(),
+            kind: "skip added".into(),
+        };
+        let mut st = State {
+            first_t: 1,
+            test_runs: [TestRun {
+                t: 10,
+                pass: 3,
+                ..Default::default()
+            }]
+            .into(),
+            edits: [("/r/a.rs".to_string(), 20)].into(),
+            ..Default::default()
+        };
+        let row = |st: &State| {
+            render(
+                st,
+                &Usage::default(),
+                &Extras::default(),
+                &Config::default(),
+                NOW,
+                200,
+                false,
+            )
+        };
+        assert_eq!(st.verdict(), Verdict::Idle);
+        assert!(row(&st).starts_with("◌ IDLE · unverified"), "{}", row(&st));
+        st.test_flags.push_back(flag("/r/a.rs"));
+        assert!(
+            row(&st).starts_with("◌ IDLE · unverified │ ⚠ 1 test change"),
+            "{}",
+            row(&st)
+        );
+        st.test_flags.push_back(flag("/r/b.rs"));
+        assert!(row(&st).contains("│ ⚠ 2 test changes"), "{}", row(&st));
+    }
 
     fn sample() -> (State, Usage) {
         let mut st = State {

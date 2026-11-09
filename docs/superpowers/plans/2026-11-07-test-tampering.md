@@ -43,14 +43,14 @@
   - `fn removed_tests(cmd: &str) -> Vec<String>`: the command split on `&&`, `;`, `|`, `\n`. For each part starting with `rm`, `git rm`, `unlink` or `Remove-Item`, the arguments that don't start with `-` and pass `is_test_path`. At most 5.
   - `Event.skips: Option<u32>` and `Event.rm: Option<Vec<String>>`, both `skip_serializing_if = "Option::is_none"`, set on `PostToolUse` only (`rm` only for `Bash`/`PowerShell`, `None` when empty).
 
-- [ ] **Step 1: Write the failing tests** in `event.rs` tests:
+- [x] **Step 1: Write the failing tests** in `event.rs` tests:
   - `test_paths`: true for `tests/a.rs`, `/r/tests/x.py`, `src/foo.test.ts`, `app/foo.spec.js`, `test_calc.py`, `calc_test.go`, `spec/models/user_spec.rb`, `web/__tests__/a.js`, `src/FooTest.java`; false for `src/state.rs`, `src/contest.rs`, `latest.py`, `attestation/x.rs`, `README.md`.
   - `skips_added_counts_new_markers_only`: `Edit` old `fn a() {}` → new `#[ignore]\nfn a() {}` gives `Some(1)`; the reverse gives `None`; new `xs.iter().skip(1)` gives `None`; new `it.only("x", ..)` gives `Some(1)`; new `@pytest.mark.xfail` gives `Some(1)`; a `MultiEdit` adding one `#[ignore]` in each of two edits gives `Some(2)`; a `Write` with `describe.skip(` gives `Some(1)`.
   - `rm_collects_deleted_test_paths`: `rm tests/test_calc.py src/a.py` gives `["tests/test_calc.py"]`; `cd x && git rm -f calc_test.go` gives `["calc_test.go"]`; `rm -rf tests/` gives `["tests/"]`; `grep rm tests/x` and `echo rm tests` give `[]`. Through `normalize`: a `PostToolUse` `Bash` with the first command has `rm == Some(vec!["tests/test_calc.py"])`; as `PostToolUseFailure` it has `rm == None`.
-- [ ] **Step 2: Run** `cargo test event::` — FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review the `tests/snapshots/fixtures__*_events.snap` diffs (new fields only where a fixture adds markers or deletes tests), then `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(event): count added skip markers and deleted test files`.
+- [x] **Step 2: Run** `cargo test event::` — FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review the `tests/snapshots/fixtures__*_events.snap` diffs (new fields only where a fixture adds markers or deletes tests), then `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(event): count added skip markers and deleted test files`.
 
 ---
 
@@ -69,16 +69,16 @@
   - `pub fn unverified(&self) -> bool`: there is a last test run and some path in `edits` not ending `.md` was edited after it.
   - `pub fn verdict_note(&self, v: Verdict) -> Option<&'static str>`: `Some("tests failing")` when `v == Done && tests_failing()`; else `Some("unverified")` when `v` is `Done` or `Idle` and `unverified()`; else `None`.
 
-- [ ] **Step 1: Write the failing tests** in `state.rs` tests (reuse the `tool`, `prompt`, `stop` and `task` helpers; a test run is a `Bash` result with `tests: Some((pass, fail))`; a file edit is a successful `PostToolUse` of `Edit` with `sig = "Edit:{path}"`; give every event its own increasing `t`, because the `ev` helper defaults to 1 000 and both `turn_flags` and `unverified` compare times):
+- [x] **Step 1: Write the failing tests** in `state.rs` tests (reuse the `tool`, `prompt`, `stop` and `task` helpers; a test run is a `Bash` result with `tests: Some((pass, fail))`; a file edit is a successful `PostToolUse` of `Edit` with `sig = "Edit:{path}"`; give every event its own increasing `t`, because the `ev` helper defaults to 1 000 and both `turn_flags` and `unverified` compare times):
   - `skip_and_delete_are_flagged`: an edit with `skips: Some(1)` of `/r/src/a.rs` and a `Bash` with `rm: Some(vec!["tests/b.py".into()])` → `turn_flags()` kinds/paths `[("skip added", "/r/src/a.rs"), ("deleted", "tests/b.py")]`; verdict unchanged.
   - `test_edit_flagged_only_while_failing`: editing `/r/tests/a.py` before any run → no flag; after a red run (`Some((4, 1))`) → `edited while failing`; after a green run → no new flag.
   - `flags_dedupe_cap_and_turn`: the same skip twice is one flag; 25 distinct flags keep 20; after a new `prompt`, `turn_flags()` is empty but `test_flags` keeps them.
   - `unverified_after_edit_past_last_run`: no run + edit → `false`; run then edit `/r/src/a.rs` → `true`; run then edit `/r/plan.md` only → `false`; run, edit, run → `false`.
   - `verdict_note_order`: DONE with a red last run and a later edit → `Some("tests failing")`; DONE green with a later edit → `Some("unverified")`; IDLE with a later edit → `Some("unverified")`; ON TRACK with a later edit → `None`.
-- [ ] **Step 2: Run** `cargo test state::` — FAIL.
-- [ ] **Step 3: Implement** and bump `CACHE_VERSION`.
-- [ ] **Step 4: Run** `cargo test` — PASS.
-- [ ] **Step 5: Commit** `feat(state): flag test tampering and unverified changes`.
+- [x] **Step 2: Run** `cargo test state::` — FAIL.
+- [x] **Step 3: Implement** and bump `CACHE_VERSION`.
+- [x] **Step 4: Run** `cargo test` — PASS.
+- [x] **Step 5: Commit** `feat(state): flag test tampering and unverified changes`.
 
 ---
 
@@ -91,14 +91,14 @@
 - Consumes: `verdict_note`, `turn_flags`, `test_flags` (Task 2).
 - Produces: `Recap.test_flags: Vec<String>`: `"{kind} · {file}"` for flags with `t >= from`. The verdict segment, panel verdict row and `Recap.verdict` all read `{glyph} {LABEL} · {note}` when `verdict_note` is `Some`. The style is the existing "tests failing" one (SGR `1;33`, yellow bold), replacing the inline `v == Verdict::Done && st.tests_failing()` checks at `bar.rs` (`render`) and `panel.rs` (`header`). The hub's top row and the `watch --all` list are built from `bar::render`, so they follow.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `bar.rs` `unverified_and_test_changes`: IDLE with a run then a later edit → row starts `◌ IDLE · unverified │`; existing DONE · tests failing assertions still pass; with two `turn_flags` → contains `│ ⚠ 2 test changes │` right after the verdict segment; one → `⚠ 1 test change`.
   - `panel.rs` `test_flags_in_header`: four turn flags → three `⚠ {kind} · {file}` rows and `+1 more`; `test_history_row_and_done_failing` still passes.
   - `recap.rs` (or `tests/recap.rs`, wherever `build` is tested on a temp dir) `recap_lists_test_flags`: a session with a skip added after the window start → `test_flags == ["skip added · a.rs"]`; `markdown` contains `- **Check:** skip added · a.rs`; `recap_lines` contains a `check` row. A session ending unverified → `verdict` ends `· unverified`.
-- [ ] **Step 2: Run** `cargo test bar:: panel:: recap` — FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review snapshots: only sessions that end with edits after their last test run change (to `· unverified`); then `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
-- [ ] **Step 5: Commit** `feat(panel): show test changes and unverified work`.
+- [x] **Step 2: Run** `cargo test bar:: panel:: recap` — FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `INSTA_UPDATE=always cargo test`, review snapshots: only sessions that end with edits after their last test run change (to `· unverified`); then `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
+- [x] **Step 5: Commit** `feat(panel): show test changes and unverified work`.
 
 ---
 
@@ -107,12 +107,12 @@
 **Files:**
 - Modify: `README.md`, `CHANGELOG.md` (`## Unreleased`), `docs/DECISIONS.md`, `Cargo.toml`, `.claude-plugin/plugin.json`, `Cargo.lock`
 
-- [ ] **Step 1: README.** Under "The verdict" table: `DONE or IDLE · unverified: files changed after the last test run. ⚠ N test changes: this turn deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing.` Add the `check` row to the `ari recap` example.
-- [ ] **Step 2: DECISIONS.** A new entry with the next free `D` number, "test tampering": which edits count (markers added, deletions, test edits only while red), the test-path and marker lists, `Write` counting markers already in the file (shortcut), Codex `apply_patch` deletes not seen (it's canonicalised to an `Edit`), "unverified" needs at least one test run and ignores Markdown, and none of it changes the verdict.
-- [ ] **Step 3: CHANGELOG** under `## Unreleased`: `- ARI flags a turn that deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing ("⚠ N test changes", listed in the panel and in ari recap). DONE and IDLE read "unverified" when files changed after the last test run.`
-- [ ] **Step 4: Patch bump** (one patch above `main`) in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo build` updates `Cargo.lock`.
-- [ ] **Step 5: Run** the three CI commands — PASS.
-- [ ] **Step 6: Commit** `docs: test tampering and unverified` and `chore: bump to 0.3.x`. Open a PR with a bullet body.
+- [x] **Step 1: README.** Under "The verdict" table: `DONE or IDLE · unverified: files changed after the last test run. ⚠ N test changes: this turn deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing.` Add the `check` row to the `ari recap` example.
+- [x] **Step 2: DECISIONS.** A new entry with the next free `D` number, "test tampering": which edits count (markers added, deletions, test edits only while red), the test-path and marker lists, `Write` counting markers already in the file (shortcut), Codex `apply_patch` deletes not seen (it's canonicalised to an `Edit`), "unverified" needs at least one test run and ignores Markdown, and none of it changes the verdict.
+- [x] **Step 3: CHANGELOG** under `## Unreleased`: `- ARI flags a turn that deleted a test file, added a skip/xfail/.only/#[ignore], or edited a test while tests were failing ("⚠ N test changes", listed in the panel and in ari recap). DONE and IDLE read "unverified" when files changed after the last test run.`
+- [x] **Step 4: Patch bump** (one patch above `main`) in `Cargo.toml` and `.claude-plugin/plugin.json`; `cargo build` updates `Cargo.lock`.
+- [x] **Step 5: Run** the three CI commands — PASS.
+- [x] **Step 6: Commit** `docs: test tampering and unverified` and `chore: bump to 0.3.x`. Open a PR with a bullet body.
 
 ---
 
