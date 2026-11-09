@@ -9,8 +9,8 @@ homepage = "https://github.com/Izuulo/ari"
 readme = "README.md"
 keywords = ["claude-code", "statusline", "tui", "ai", "monitoring"]
 categories = ["command-line-utilities", "development-tools"]
-# Only what builds the binary; `ari demo` compiles in fixtures/multi.
-include = ["src/**/*.rs", "fixtures/multi/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "CHANGELOG.md"]
+# Only what builds the binary; `ari demo` compiles in fixtures/stuck and fixtures/team.
+include = ["src/**/*.rs", "fixtures/stuck/**", "fixtures/team/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [[bin]]
 name = "ari"

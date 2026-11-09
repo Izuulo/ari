@@ -39,14 +39,26 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool) -> Vec<Line<'static>> {
 }
 
 /// The hub in Constellation: bare chrome over one system, or the galaxy for `--all`.
-pub fn hub(buf: &mut Buffer, i: &Input, _v: &HubView) {
+pub fn hub(buf: &mut Buffer, i: &Input, v: &HubView) {
     let (w, h) = (buf.area.width, buf.area.height);
-    let keys = [
-        ("x", "back to panel".to_string()),
-        ("v", "details".into()),
-        ("s", "settings".into()),
-        ("q", "quit".into()),
-    ];
+    let all = if v.all {
+        "this session"
+    } else {
+        "all sessions"
+    };
+    let mut keys = vec![];
+    // `ari hub --all` is merged already: nothing for `a` to switch to.
+    if v.all || !crate::hub::merged(i) {
+        keys.push(("a", all.to_string()));
+    }
+    for (k, l) in [
+        ("x", "back to panel"),
+        ("v", "details"),
+        ("s", "settings"),
+        ("q", "quit"),
+    ] {
+        keys.push((k, l.into()));
+    }
     chrome(buf, i, &areas(w, h, fit(w, h)), &keys, true);
     let body = Rect::new(0, 2, w, h.saturating_sub(3));
     if crate::hub::merged(i) {
@@ -475,6 +487,41 @@ mod tests {
         let out = crate::panel::to_plain(&crate::hub::lines(&i, &v, 168, 49, false));
         assert!(out.contains("日本語") && out.contains('…'), "{out}");
         assert!(out.lines().all(|l| l.width() <= 168));
+    }
+
+    #[test]
+    fn sky_hub_a_hint() {
+        let st = two();
+        let (x, mut cfg) = (Default::default(), crate::config::Config::default());
+        cfg.view.hub = crate::config::Look::Constellation;
+        cfg.view.hub_all = crate::config::Look::Constellation;
+        let all = crate::usage::Usage {
+            project: Some("all sessions".into()),
+            ..Default::default()
+        };
+        let keys = |u: &crate::usage::Usage, all: bool| {
+            let i = Input {
+                st: &st,
+                u,
+                x: &x,
+                cfg: &cfg,
+                now: 0,
+                clock: "",
+            };
+            let v = HubView {
+                all,
+                ..Default::default()
+            };
+            let out = crate::panel::to_plain(&crate::hub::lines(&i, &v, 168, 49, false));
+            out.lines().last().unwrap().to_string()
+        };
+        assert!(keys(&Default::default(), false).contains(" a all sessions"));
+        assert!(keys(&all, true).contains(" a this session"));
+        let fixed = keys(&all, false);
+        assert!(
+            !fixed.contains(" a ") && fixed.contains(" v details"),
+            "{fixed}"
+        );
     }
 
     #[test]

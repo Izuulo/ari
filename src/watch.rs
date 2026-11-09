@@ -232,8 +232,8 @@ impl App {
             || crate::simple::moving(self.look(), &self.st, now)
             || self.st.turn_active
             || self.st.running_agents(now) > 0
-            // A message in flight on the hub's graph.
-            || self.st.messages.back().is_some_and(|m| now.saturating_sub(m.t) < 2000)
+            // A message in flight on the hub's graph: Calm's glide is 3 s.
+            || self.st.messages.back().is_some_and(|m| now.saturating_sub(m.t) < 3000)
     }
 
     fn cycle(&mut self) {
@@ -1044,8 +1044,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         let cards = simple && view.cards;
         match code {
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j') if cards => {}
-            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j' | 'a')
-                if sky => {}
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j') if sky => {}
             KeyCode::Char('g' | 'z' | 'c' | 'b') if simple => {}
             KeyCode::Char('q') => return true,
             KeyCode::Char('x') => view.hub = None,
@@ -1106,7 +1105,7 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         (KeyCode::Char('a'), _) => view.expand_agents ^= true,
         (KeyCode::Char('c'), _) => view.cleared = hook::now_ms(),
         (KeyCode::Char('r'), _) => view.recap ^= true,
-        (KeyCode::Char('v'), None) => view.next_look = true,
+        (KeyCode::Char('v'), None) if !view.recap => view.next_look = true,
         _ => {}
     }
     false
@@ -1391,6 +1390,16 @@ mod key_tests {
     }
 
     #[test]
+    fn v_does_nothing_during_recap() {
+        let mut v = View {
+            recap: true,
+            ..Default::default()
+        };
+        key(&mut v, KeyCode::Char('v'), None, None);
+        assert!(!v.next_look, "the recap has no simple view");
+    }
+
+    #[test]
     fn calm_hub_ignores_graph_keys() {
         let mut v = View {
             look: config::Look::Calm,
@@ -1426,10 +1435,12 @@ mod key_tests {
             look: config::Look::Constellation,
             ..hub_view(Screen::Hub, 0)
         };
-        for k in [KeyCode::Down, KeyCode::Enter, KeyCode::Char('a')] {
+        for k in [KeyCode::Down, KeyCode::Enter] {
             key(&mut v, k, None, Some(3));
         }
         assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        assert!(v.hub.unwrap().all, "a stays live, as the spec says");
         key(&mut v, KeyCode::Char('v'), None, Some(3));
         assert!(v.next_look);
         key(&mut v, KeyCode::Char('x'), None, Some(3));
@@ -1523,6 +1534,20 @@ mod key_tests {
             ..Default::default()
         });
         assert_eq!(app.clear_cut(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn message_animates_for_calms_glide() {
+        let root = std::env::temp_dir().join(format!("ari-glide-{}", std::process::id()));
+        let mut app = app_on(&root, "s1", &[]);
+        app.st.turn_active = false;
+        app.st.messages.push_back(crate::state::Msg {
+            t: 10_000,
+            ..Default::default()
+        });
+        assert!(app.animating(12_500), "Calm's packet glides for 3 s");
+        assert!(!app.animating(13_000));
         let _ = std::fs::remove_dir_all(&root);
     }
 
