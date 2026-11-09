@@ -10,6 +10,18 @@ expression: "out.join(\"\\n\")"
 │ ▸ now: build                                         │
 ├─ agents ─────────────────────────────────────────────┤
 │ ⠏ main   thinking…                                   │
+├─ commands ───────────────────────────────────────────┤
+│ ✗ 1s  $ python3 test_calc.py                         │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  editing test_calc.py                           │
+│ ✓ 0s  editing calc.py                                │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  ToolSearch                                     │
 ├─ session ────────────────────────────────────────────┤
 │ time    10s · claude 87% · tools 13%                 │
 ├─ errors ─────────────────────────────────────────────┤
@@ -26,6 +38,24 @@ expression: "out.join(\"\\n\")"
 │ ⠦ main      agent Explore: Describe test_calc.py · … │
 │ ├─⠦ Explore thinking… · 1 call · 1s                  │
 │ └─⠦ Explore reading test_calc.py 0s · 1 call · 0s    │
+├─ commands ───────────────────────────────────────────┤
+│ … 0s  agent Explore: Describe test_calc.py           │
+│ … 1s  agent Explore: Describe calc.py                │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  $ python3 test_calc.py                         │
+│ ✓ 0s  editing calc.py                                │
+│ ✗ 1s  $ python3 test_calc.py                         │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  editing test_calc.py                           │
+│ ✓ 0s  editing calc.py                                │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  ToolSearch                                     │
 ├─ session ────────────────────────────────────────────┤
 │ time    16s · claude 92% · tools 8%                  │
 ├─ errors ─────────────────────────────────────────────┤
@@ -40,6 +70,27 @@ expression: "out.join(\"\\n\")"
 │ ◌ main      idle                                     │
 │ ├─✓ Explore done 2s · calc.py defines an add(a, b) … │
 │ └─✓ Explore done 1s · The file imports add from a c… │
+├─ commands ───────────────────────────────────────────┤
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 1s  agent Explore: Describe test_calc.py           │
+│ ✓ 2s  agent Explore: Describe calc.py                │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  $ python3 test_calc.py                         │
+│ ✓ 0s  editing calc.py                                │
+│ ✗ 1s  $ python3 test_calc.py                         │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  editing test_calc.py                           │
+│ ✓ 0s  editing calc.py                                │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  updating plan                                  │
+│ ✓ 0s  ToolSearch                                     │
 ├─ session ────────────────────────────────────────────┤
 │ time    20s · claude 81% · tools 19%                 │
 ├─ errors ─────────────────────────────────────────────┤

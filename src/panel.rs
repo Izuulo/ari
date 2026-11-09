@@ -271,6 +271,10 @@ pub fn lines(
             rows: agents(st, x, &lc, view, now),
         },
         Section {
+            title: Some("commands"),
+            rows: commands(st, &lc, now),
+        },
+        Section {
             title: Some("turns"),
             rows: turns(st, x, &lc, now),
         },
@@ -310,7 +314,7 @@ pub fn lines(
         let (mut left, mut right): (Vec<_>, Vec<_>) = sections
             .split_off(1)
             .into_iter()
-            .partition(|s| matches!(s.title, Some("agents" | "turns")));
+            .partition(|s| matches!(s.title, Some("agents" | "commands" | "turns")));
         // Each column gets the height left under the full-width header rows.
         let h = (height as usize).saturating_sub(sections[0].rows.len());
         collapse(&mut left, h);
@@ -653,13 +657,16 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
 /// Drop or trim sections, lowest priority first, until the panel fits `height` rows.
 fn collapse(secs: &mut Vec<Section>, height: usize) {
     let total = panel_height;
-    while total(secs) > height {
-        let Some(s) = secs.iter_mut().find(|s| s.title == Some("turns")) else {
-            break;
-        };
-        s.rows.pop();
-        if s.rows.is_empty() {
-            secs.retain(|s| s.title != Some("turns"));
+    // Turns go before commands: the commands are what you're watching.
+    for title in ["turns", "commands"] {
+        while total(secs) > height {
+            let Some(s) = secs.iter_mut().find(|s| s.title == Some(title)) else {
+                break;
+            };
+            s.rows.pop();
+            if s.rows.is_empty() {
+                secs.retain(|s| s.title != Some(title));
+            }
         }
     }
     for title in ["git", "session", "usage"] {
@@ -696,6 +703,29 @@ fn panel_height(s: &[Section]) -> usize {
 fn cost_between(samples: &[crate::burn::Sample], a: u64, b: u64) -> Option<f64> {
     let at = |t: u64| samples.iter().rev().find(|s| s.t <= t)?.cost;
     Some((at(b)? - at(a)?).max(0.0))
+}
+
+/// Main's recent tool calls, newest first: result, duration, command.
+fn commands(st: &State, c: &Ctx, now: u64) -> Vec<Row> {
+    let Some(main) = st.agents.iter().find(|a| a.id == "main") else {
+        return Vec::new();
+    };
+    main.recent
+        .iter()
+        .rev()
+        .map(|r| {
+            let (mark, style, ms) = match r.ok {
+                None => ("…", Style::new().fg(Color::Cyan), now.saturating_sub(r.t)),
+                Some(true) => ("✓", Style::new(), r.dur.unwrap_or(0)),
+                Some(false) => ("✗", Style::new().fg(Color::Red), r.dur.unwrap_or(0)),
+            };
+            let act = if r.act.is_empty() { &r.tool } else { &r.act };
+            vec![
+                c.span(format!("{mark} {}  ", dur(ms)), style),
+                c.span(act.clone(), style),
+            ]
+        })
+        .collect()
 }
 
 /// Turns and compactions, newest first.
@@ -2418,6 +2448,32 @@ mod tests {
             60,
             false,
         ))
+    }
+
+    #[test]
+    fn commands_section_lists_main_calls() {
+        use crate::state::CallRec;
+        let (mut st, u) = multi();
+        let call = |t, act: &str, ok, dur| CallRec {
+            t,
+            act: act.into(),
+            ok,
+            dur,
+            ..Default::default()
+        };
+        st.agents[0].recent = [
+            call(NOW - 30_000, "$ cargo build", Some(true), Some(4_000)),
+            call(NOW - 20_000, "$ cargo fmt", Some(false), Some(1_000)),
+            call(NOW - 8_000, "$ cargo test", None, None),
+        ]
+        .into();
+        let out = render_cfg(&st, &u, &Extras::default(), &Config::default());
+        let l = |s: &str| out.find(s).unwrap_or_else(|| panic!("{s}: {out}"));
+        assert!(out.contains("├─ commands"), "{out}");
+        assert!(l("… 8s  $ cargo test") < l("✗ 1s  $ cargo fmt"), "{out}");
+        assert!(l("✗ 1s  $ cargo fmt") < l("✓ 4s  $ cargo build"), "{out}");
+        let hid = render_cfg(&st, &u, &Extras::default(), &hiding(&["commands"]));
+        assert!(!hid.contains("├─ commands"), "{hid}");
     }
 
     fn hiding(ids: &[&str]) -> Config {

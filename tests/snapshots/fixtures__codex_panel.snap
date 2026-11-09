@@ -8,6 +8,11 @@ expression: out
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │
 │ └─✓ default done 1s · Listed the files.              │
+├─ commands ───────────────────────────────────────────┤
+│ ✓ 0s  agent general-purpose:                         │
+│ ✓ 0s  editing src/a.rs                               │
+│ ✗ 0s  $ cargo test                                   │
+│ ✓ 0s  $ ls                                           │
 ├─ usage ──────────────────────────────────────────────┤
 │ ctx ▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 18%  50k/272k               │
 │ 5h  ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 12%  ↺ 5h33m                │
