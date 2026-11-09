@@ -30,6 +30,8 @@ pub struct View {
     pub next_look: bool,
     /// The view of the screen on show, set by the frame before keys are read.
     pub look: Look,
+    /// Calm hub `--all`'s session cards are on show: no selection to move or open.
+    pub cards: bool,
 }
 
 type Row = Vec<Span<'static>>;

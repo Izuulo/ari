@@ -971,7 +971,10 @@ pub fn run(args: &[String]) -> ! {
         app.view = *view;
         app.refresh();
         view.look = app.look();
+        view.cards = view.look == config::Look::Calm
+            && surface(view, app.mode == Mode::All) == Some(config::Surface::HubAll);
         app.view.look = view.look;
+        app.view.cards = view.cards;
         let now = hook::now_ms();
         let v = app.st.verdict_with(app.cfg.thresholds.stuck_repeats);
         if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
@@ -1038,7 +1041,9 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         // The simple hubs have no graph, finished list or git panes; the sky has no selection.
         let simple = h.screen == Screen::Hub && view.look != config::Look::Full;
         let sky = h.screen == Screen::Hub && view.look == config::Look::Constellation;
+        let cards = simple && view.cards;
         match code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j') if cards => {}
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j' | 'a')
                 if sky => {}
             KeyCode::Char('g' | 'z' | 'c' | 'b') if simple => {}
@@ -1400,6 +1405,19 @@ mod key_tests {
         assert_eq!(v.hub.unwrap().screen, Screen::Zoom);
         key(&mut v, KeyCode::Char('g'), None, Some(3));
         assert_eq!(v.hub.unwrap().screen, Screen::Graph, "zoom keeps its keys");
+    }
+
+    #[test]
+    fn calm_cards_ignore_selection() {
+        let mut v = View {
+            look: config::Look::Calm,
+            cards: true,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in [KeyCode::Down, KeyCode::Char('j'), KeyCode::Enter] {
+            key(&mut v, k, None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
     }
 
     #[test]

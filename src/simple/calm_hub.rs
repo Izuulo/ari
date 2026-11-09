@@ -20,7 +20,12 @@ pub fn hub(buf: &mut Buffer, i: &Input, v: &HubView) {
     } else {
         "all sessions"
     };
-    let mut keys = vec![("↑↓", "select".to_string()), ("⏎", "zoom".into())];
+    // The cards have no selection to move or open.
+    let mut keys = if merged(i) {
+        vec![]
+    } else {
+        vec![("↑↓", "select".to_string()), ("⏎", "zoom".into())]
+    };
     // `ari hub --all` is merged already: nothing for `a` to switch to.
     if v.all || !merged(i) {
         keys.push(("a", all.into()));

@@ -429,24 +429,20 @@ fn caption(i: &Input, ms: u64) -> String {
             .find(|a| a.id == id)
             .map_or(id.to_string(), Agent::label)
     };
-    let flying: Vec<_> = st
+    let newest = st
         .messages
         .iter()
         .filter(|m| i.now.saturating_sub(m.t) < ms)
-        .collect();
-    match flying.iter().max_by_key(|m| m.t) {
+        .max_by_key(|m| m.t);
+    match newest {
         Some(m) => {
             let text: String = m.text.chars().take(40).collect();
             format!("{} → {}  “{text}”", name(&m.from), name(&m.to))
         }
-        None => {
-            let helpers = st.agents.iter().filter(|a| a.id != "main").count();
-            format!(
-                "{} · {} flying",
-                plural(helpers, "helper"),
-                plural(flying.len(), "message")
-            )
-        }
+        None => plural(
+            st.agents.iter().filter(|a| a.id != "main").count(),
+            "helper",
+        ),
     }
 }
 
