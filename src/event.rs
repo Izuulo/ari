@@ -80,6 +80,9 @@ pub struct Event {
     /// Shell command that succeeded: test files it deleted (at most 5).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rm: Option<Vec<String>>,
+    /// Bash that ran: (rule, the risky command), see risky.rs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<(String, String)>,
 }
 
 /// Markers that skip or narrow a test run.
@@ -343,6 +346,15 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
             });
         }
         _ => {}
+    }
+    // Post events only: a command denied at the prompt never ran.
+    if matches!(ev.e.as_str(), "PostToolUse" | "PostToolUseFailure")
+        && ev.tool.as_deref() == Some("Bash")
+        && let Some(cmd) = input.get("command").and_then(Value::as_str)
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        ev.risk = crate::risky::check(cmd, s("cwd").unwrap_or(""), &home)
+            .map(|(rule, cmd)| (rule.to_string(), cmd));
     }
     Some(ev)
 }
@@ -738,6 +750,64 @@ mod tests {
 
     fn pre(tool: &str, input: Value) -> Event {
         n(json!({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input}))
+    }
+
+    #[test]
+    fn bash_that_ran_records_risk() {
+        let want = Some((
+            "rewrites remote history".to_string(),
+            "git push --force".to_string(),
+        ));
+        let ok = n(
+            json!({"hook_event_name": "PostToolUse", "cwd": "/p", "tool_name": "Bash",
+            "tool_input": {"command": "git push --force"}, "tool_response": {"stdout": ""}}),
+        );
+        assert_eq!(ok.risk, want);
+        let failed = n(json!({"hook_event_name": "PostToolUseFailure", "cwd": "/p",
+            "tool_name": "Bash", "tool_input": {"command": "git push --force"},
+            "error": "Exit code 1\nrejected"}));
+        assert_eq!(failed.risk, want);
+    }
+
+    #[test]
+    fn only_bash_that_ran() {
+        let push = json!({"command": "git push --force"});
+        assert_eq!(pre("Bash", push.clone()).risk, None);
+        let asked = n(
+            json!({"hook_event_name": "PermissionRequest", "tool_name": "Bash",
+            "tool_input": push}),
+        );
+        assert_eq!(asked.risk, None);
+        let write = post(
+            "Write",
+            json!({"file_path": "/p/a.sh", "content": "rm -rf /"}),
+        );
+        assert_eq!(write.risk, None);
+        assert_eq!(post("Bash", json!({"command": "cargo test"})).risk, None);
+    }
+
+    #[test]
+    fn long_command_risk_fits_the_line() {
+        let cmd = "echo x\n".repeat(300) + "psql <<'SQL'\nDROP TABLE users;\nSQL";
+        let ev = n(
+            json!({"hook_event_name": "PostToolUse", "cwd": "/p", "tool_name": "Bash",
+            "tool_input": {"command": cmd}, "tool_response": {"stdout": ""}}),
+        );
+        assert_eq!(ev.risk.as_ref().unwrap().0, "drops data");
+        assert!(to_line(&ev).len() < MAX_LINE);
+    }
+
+    #[test]
+    fn old_line_without_risk_parses() {
+        let old: Event =
+            serde_json::from_str(r#"{"t":1,"e":"PostToolUse","tool":"Bash"}"#).unwrap();
+        assert_eq!(old.risk, None);
+        let ev = Event {
+            risk: Some(("recursive delete".into(), "rm -r d".into())),
+            ..old
+        };
+        let back: Event = serde_json::from_str(to_line(&ev).trim_end()).unwrap();
+        assert_eq!(back.risk, ev.risk);
     }
 
     fn post(tool: &str, input: Value) -> Event {
