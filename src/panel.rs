@@ -599,6 +599,23 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
             rows,
         });
     }
+    if !r.risky.is_empty() {
+        let warn = Style::new().fg(Color::Yellow);
+        let row = |k: &crate::state::Risky| {
+            let mut t = format!("{} · {}", k.cmd, k.rule);
+            if k.agent != "main" {
+                t += &format!(" · {}", k.agent);
+            }
+            if !k.ok {
+                t += " · failed";
+            }
+            vec![c.span("⚠ ", warn), Span::raw(t)]
+        };
+        out.push(Section {
+            title: Some("risky"),
+            rows: r.risky.iter().map(row).collect(),
+        });
+    }
     if !r.test_flags.is_empty() {
         let warn = Style::new().fg(Color::Yellow);
         out.push(Section {
