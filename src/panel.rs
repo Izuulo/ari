@@ -1,7 +1,7 @@
 //! The full panel, as styled lines. Pure: everything `ari watch` draws comes from here.
 
 use crate::bar::{Extras, cells, countdown, fmt_tokens, spinner};
-use crate::config::Config;
+use crate::config::{Config, Look};
 use crate::recap::Recap;
 use crate::state::{AgentStatus, ErrorRec, State, Verdict};
 use crate::usage::{Limit, Usage};
@@ -26,6 +26,12 @@ pub struct View {
     pub settings: Option<usize>,
     /// A settings change the key handler queued: 1 forward, -1 back, 0 reset.
     pub edit: Option<i8>,
+    /// `v`: a queued view change, taken by the frame like `edit`.
+    pub next_look: bool,
+    /// The view of the screen on show, set by the frame before keys are read.
+    pub look: Look,
+    /// Calm hub `--all`'s session cards are on show: no selection to move or open.
+    pub cards: bool,
 }
 
 type Row = Vec<Span<'static>>;
@@ -215,6 +221,26 @@ pub fn lines(
     height: u16,
     color: bool,
 ) -> Vec<Line<'static>> {
+    if !view.recap && cfg.view.watch != Look::Full {
+        let i = crate::hub::Input {
+            st,
+            u,
+            x,
+            cfg,
+            now,
+            clock,
+        };
+        let out = if cfg.view.watch == Look::Calm {
+            crate::simple::calm::panel(&i, width, height, color, "constellation")
+        } else {
+            crate::simple::sky::panel(&i, width, height, color)
+        };
+        return if cfg.ascii {
+            crate::ascii::map_lines(out)
+        } else {
+            out
+        };
+    }
     let w = width as usize;
     let c = Ctx {
         color,
@@ -929,6 +955,22 @@ fn header(
     rows
 }
 
+/// The subagents the panel lists: running and stale ones, plus the 3 most recent that finished
+/// in the last 5 minutes after doing some work (all of them are folded away with `expand`).
+pub(crate) fn shown_agents(st: &State, expand: bool, now: u64) -> Vec<&crate::state::Agent> {
+    let subs = || st.agents.iter().skip(1);
+    let mut done: Vec<_> = subs()
+        .filter(|a| a.done)
+        .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
+        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
+        .collect();
+    done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
+    let recent: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
+    subs()
+        .filter(|a| !a.done || (!expand && recent.contains(&a.id.as_str())))
+        .collect()
+}
+
 fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
     let tok = |id: &str| {
         let t = x.tokens.as_ref()?;
@@ -953,19 +995,7 @@ fn agents(st: &State, x: &Extras, c: &Ctx, view: View, now: u64) -> Vec<Row> {
         return vec![vec![c.dim("no activity yet")]];
     };
     let subs: Vec<_> = st.agents.iter().skip(1).collect();
-    // Finished agents worth showing: did some work, and finished in the last 5 minutes.
-    let mut done: Vec<_> = subs
-        .iter()
-        .filter(|a| a.done)
-        .filter(|a| a.calls > 0 || a.ended_t.unwrap_or(a.last_t) >= a.started + 1_000)
-        .filter(|a| now.saturating_sub(a.ended_t.unwrap_or(a.last_t)) < 5 * 60_000)
-        .collect();
-    done.sort_by_key(|a| std::cmp::Reverse(a.ended_t));
-    let recent_done: Vec<&str> = done.iter().take(3).map(|a| a.id.as_str()).collect();
-    let shown: Vec<_> = subs
-        .iter()
-        .filter(|a| !a.done || (!view.expand_agents && recent_done.contains(&a.id.as_str())))
-        .collect();
+    let shown = shown_agents(st, view.expand_agents, now);
     let name_w = std::iter::once(4)
         .chain(shown.iter().map(|a| a.kind.width()))
         .max()
@@ -1612,11 +1642,11 @@ pub fn to_plain(lines: &[Line]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::state::{Agent, Task};
 
-    const NOW: u64 = 1_738_419_600_000;
+    pub(crate) const NOW: u64 = 1_738_419_600_000;
 
     fn render(st: &State, u: &Usage, view: View, w: u16, h: u16) -> String {
         let out = lines(
@@ -1641,7 +1671,34 @@ mod tests {
         to_plain(&out)
     }
 
-    fn multi() -> (State, Usage) {
+    #[test]
+    fn simple_watch_dispatches_unless_recap() {
+        let mut cfg = Config::default();
+        cfg.view.watch = crate::config::Look::Constellation;
+        let draw = |view| {
+            let out = lines(
+                &State::default(),
+                &Usage::default(),
+                &Extras::default(),
+                &cfg,
+                view,
+                NOW,
+                "12:41",
+                80,
+                30,
+                false,
+            );
+            to_plain(&out)
+        };
+        assert!(draw(View::default()).contains("no agents yet"));
+        let recap = View {
+            recap: true,
+            ..Default::default()
+        };
+        assert!(!draw(recap).contains("no agents yet"));
+    }
+
+    pub(crate) fn multi() -> (State, Usage) {
         let mut st = State {
             turn_active: true,
             turns: 2,

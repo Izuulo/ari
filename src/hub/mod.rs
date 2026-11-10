@@ -4,11 +4,11 @@
 pub(crate) mod agents;
 pub mod all;
 mod feed;
-mod graph;
+pub(crate) mod graph;
 mod zoom;
 
 use crate::bar::{self, Extras};
-use crate::config::Config;
+use crate::config::{Config, Look};
 use crate::state::{Agent, State};
 use crate::tokens::Ledger;
 use crate::usage::Usage;
@@ -107,7 +107,11 @@ pub fn lines(i: &Input, v: &HubView, w: u16, h: u16, color: bool) -> Vec<Line<'s
     match v.screen {
         Screen::Graph => graph_screen(&mut buf, i, v, f),
         Screen::Zoom if !i.st.agents.is_empty() => zoom_screen(&mut buf, i, v, f),
-        _ => hub_screen(&mut buf, i, v, f),
+        _ => match look(i) {
+            Look::Calm => crate::simple::calm_hub::hub(&mut buf, i, v),
+            Look::Constellation => crate::simple::sky::hub(&mut buf, i, v),
+            Look::Full => hub_screen(&mut buf, i, v, f),
+        },
     }
     to_lines(&buf, color)
 }
@@ -284,6 +288,15 @@ pub(crate) fn tool_style(tool: &str) -> Style {
 /// `--all`: every live session merged into one state, the root `main` being you.
 pub(crate) fn merged(i: &Input) -> bool {
     i.u.project.as_deref() == Some("all sessions")
+}
+
+/// The remembered view of the hub on show: `hub --all`'s when merged.
+pub(crate) fn look(i: &Input) -> Look {
+    if merged(i) {
+        i.cfg.view.hub_all
+    } else {
+        i.cfg.view.hub
+    }
 }
 
 /// The repo agent `a` works in, and the folder its file keys are anchored to: in `--all`
@@ -468,7 +481,8 @@ pub(crate) fn areas(w: u16, h: u16, fit: Fit) -> Areas {
     }
 }
 
-fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
+/// The top bar, status row and key row. `bare` (the simple views) keeps only the verdict.
+pub(crate) fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)], bare: bool) {
     let w = a.top.width;
     let bar_bg = Style::new().bg(Color::Indexed(236));
     buf.set_style(a.top, bar_bg);
@@ -520,7 +534,7 @@ fn chrome(buf: &mut Buffer, i: &Input, a: &Areas, keys: &[(&str, String)]) {
         None => head.to_string(),
     };
     let mut x = put(buf, 1, 1, &head, w - 1, crate::panel::verdict_style(v));
-    if !rest.is_empty() {
+    if !rest.is_empty() && !bare {
         x = put(buf, x, 1, "│", w - x, faint());
         put(buf, x, 1, rest, w - x, Style::default());
     }
@@ -555,7 +569,7 @@ fn zoom_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("s", "settings".into()),
         ("q", "quit".into()),
     ];
-    chrome(buf, i, &a, &keys);
+    chrome(buf, i, &a, &keys, false);
     let ord = order(i.st);
     let k = ord[v.sel.min(ord.len() - 1)];
     zoom::draw(buf, Rect::new(0, 2, w, h - 3), i, &i.st.agents[k], v);
@@ -574,19 +588,17 @@ fn graph_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ("s", "settings".into()),
         ("q", "quit".into()),
     ];
-    chrome(buf, i, &a, &keys);
+    chrome(buf, i, &a, &keys, false);
     let gh = (h - 3) * 31 / 46;
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(
-        buf,
-        Rect::new(0, 2, w, gh),
-        i,
-        sel,
-        true,
-        f == Fit::Full,
-        v.show_done,
-    );
+    let o = graph::Opts {
+        big: true,
+        labels: f == Fit::Full,
+        show_done: v.show_done,
+        calm: false,
+    };
+    graph::draw(buf, Rect::new(0, 2, w, gh), i, sel, o);
     feed::tasks(buf, Rect::new(0, 2 + gh, w, h - 3 - gh), i);
 }
 
@@ -611,6 +623,7 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         ),
         ("b", git_key(v)),
         ("x", "back to panel".into()),
+        ("v", "calm".into()),
         ("s", "settings".into()),
         ("q", "quit".into()),
     ];
@@ -620,10 +633,16 @@ fn hub_screen(buf: &mut Buffer, i: &Input, v: &HubView, f: Fit) {
         .into_iter()
         .filter(|k| !(fixed && k.0 == "a"))
         .collect();
-    chrome(buf, i, &a, &keys);
+    chrome(buf, i, &a, &keys, false);
     let ord = order(i.st);
     let sel = ord.get(v.sel).map(|&k| i.st.agents[k].id.as_str());
-    graph::draw(buf, a.graph, i, sel, false, f == Fit::Full, v.show_done);
+    let o = graph::Opts {
+        big: false,
+        labels: f == Fit::Full,
+        show_done: v.show_done,
+        calm: false,
+    };
+    graph::draw(buf, a.graph, i, sel, o);
     agents::table(buf, a.table, i, v.sel);
     let across = if merged(i) {
         (w / 76).max(1) // session cards are two panes wide
@@ -664,7 +683,7 @@ fn git_key(v: &HubView) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::state::{Agent, State};
     use unicode_width::UnicodeWidthStr;
@@ -857,6 +876,89 @@ mod tests {
             Some((1, 2, "tasks".into(), Some("task 2".into())))
         );
         assert_eq!(plan(&st, &x, 2), None, "rev owns no tasks");
+    }
+
+    #[test]
+    fn bare_chrome_shows_only_the_verdict() {
+        let st = with_main(vec![]);
+        let (u, x, cfg) = Default::default();
+        let i = Input {
+            st: &st,
+            u: &u,
+            x: &x,
+            cfg: &cfg,
+            now: 1,
+            clock: "",
+        };
+        let row = |bare| {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 168, 49));
+            chrome(&mut buf, &i, &areas(168, 49, Fit::Full), &[], bare);
+            to_lines(&buf, false)[1].to_string()
+        };
+        assert!(row(false).contains("ctx"), "{}", row(false));
+        let bare = row(true);
+        assert!(!bare.contains("ctx") && !bare.contains("tok"), "{bare}");
+        assert!(!bare.trim().is_empty(), "the verdict stays");
+    }
+
+    #[test]
+    fn hub_screen_follows_the_look() {
+        use crate::config::Look;
+        let st = with_main(vec![]);
+        let x = Extras::default();
+        let mut cfg = Config::default();
+        cfg.view.hub = Look::Calm;
+        cfg.view.hub_all = Look::Constellation;
+        let draw = |u: &Usage, v: HubView| {
+            let i = Input {
+                st: &st,
+                u,
+                x: &x,
+                cfg: &cfg,
+                now: 1,
+                clock: "",
+            };
+            crate::panel::to_plain(&lines(&i, &v, 168, 49, false))
+        };
+        let one = Usage::default();
+        let all = Usage {
+            project: Some("all sessions".into()),
+            ..Default::default()
+        };
+        assert!(draw(&one, HubView::default()).contains("v constellation"));
+        assert!(draw(&all, HubView::default()).contains(" v details"));
+        let graph = HubView {
+            screen: Screen::Graph,
+            ..Default::default()
+        };
+        assert!(draw(&one, graph).contains("ARI hub"), "graph stays full");
+    }
+
+    #[test]
+    fn graph_screen_is_full_under_calm() {
+        use crate::config::Look;
+        let mut a = kid("a", "main", 0);
+        a.running_since = Some(0);
+        let st = with_main(vec![a]);
+        let (u, x) = (Usage::default(), Extras::default());
+        let v = HubView {
+            screen: Screen::Graph,
+            ..Default::default()
+        };
+        let draw = |hub| {
+            let mut cfg = Config::default();
+            cfg.view.hub = hub;
+            let i = Input {
+                st: &st,
+                u: &u,
+                x: &x,
+                cfg: &cfg,
+                now: 1,
+                clock: "",
+            };
+            crate::panel::to_plain(&lines(&i, &v, 168, 49, false))
+        };
+        assert_eq!(draw(Look::Calm), draw(Look::Full));
     }
 
     #[test]

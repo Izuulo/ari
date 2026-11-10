@@ -22,7 +22,8 @@ fn glyph(c: char) -> Option<char> {
         '┃' => '|',
         '┄' => '.',
         '↩' | '◂' | '←' => '<',
-        '◆' => '*',
+        '◆' | '✦' => '*',
+        '✺' | '☼' => '@',
         '✉' => 'm',
         '⊘' => 'x',
         '○' => 'o',
@@ -46,6 +47,7 @@ fn glyph(c: char) -> Option<char> {
         '·' => '-',
         '⎇' => 'Y',
         '−' => '-',
+        '“' | '”' => '"',
         _ => return None,
     })
 }
@@ -86,5 +88,10 @@ mod tests {
         assert_eq!(map("日本語 café"), "日本語 café");
         let frames: String = SPINNER.iter().map(|c| map(&c.to_string())).collect();
         assert_eq!(frames, "|/-\\|/-\\|/");
+    }
+
+    #[test]
+    fn maps_sky_glyphs() {
+        assert_eq!(map("✦ ✺ ○ ☼ “hi”"), "* @ o @ \"hi\"");
     }
 }

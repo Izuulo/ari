@@ -119,6 +119,28 @@ impl App {
             settings::step(&mut self.file, item.key, dir);
         }
         self.settings_note = None;
+        self.save();
+    }
+
+    /// Advance the view of the screen on show (`v`), then save it.
+    fn apply_look(&mut self, view: &mut View) {
+        if !std::mem::take(&mut view.next_look) {
+            return;
+        }
+        let Some(s) = surface(view, self.mode == Mode::All) else {
+            return;
+        };
+        self.reload_config();
+        if self.cfg_error.is_some() {
+            // Never overwrite a broken file: this window alone changes.
+            self.cfg.view.bump(s);
+            return;
+        }
+        self.file.view.bump(s);
+        self.save();
+    }
+
+    fn save(&mut self) {
         if let Some(p) = &self.cfg_path {
             match config::save_to(p, &self.file) {
                 // Our own save isn't a hand edit to reload.
@@ -199,12 +221,19 @@ impl App {
         self.x.git = self.git.git.clone();
     }
 
+    /// The remembered view of the screen on show; `Full` where there's no simple view.
+    fn look(&self) -> config::Look {
+        surface(&self.view, self.mode == Mode::All)
+            .map_or(config::Look::Full, |s| self.cfg.view.get(s))
+    }
+
     fn animating(&self, now: u64) -> bool {
         self.mode == Mode::All
+            || crate::simple::moving(self.look(), &self.st, now)
             || self.st.turn_active
             || self.st.running_agents(now) > 0
-            // A message in flight on the hub's graph.
-            || self.st.messages.back().is_some_and(|m| now.saturating_sub(m.t) < 2000)
+            // A message in flight on the hub's graph: Calm's glide is 3 s.
+            || self.st.messages.back().is_some_and(|m| now.saturating_sub(m.t) < 3000)
     }
 
     fn cycle(&mut self) {
@@ -515,8 +544,10 @@ impl App {
         x.conflicts = crate::conflicts::cached(&self.root, dir, now);
         x.transcript_age_ms =
             tokens::transcript_for(dir, usage).and_then(|t| tokens::transcript_age(&t, now));
-        // Live, the keys are listed under the panel; `--once` has no keys.
-        let hint = self.interactive.then(|| {
+        // Live, the keys are listed under the panel; `--once` has no keys. The simple views
+        // draw their own footer, but a too-small-hub note still shows.
+        let simple = !self.view.recap && self.cfg.view.watch != config::Look::Full;
+        let hint = (self.interactive && (!simple || note.is_some())).then(|| {
             let back = if self.mode == Mode::All {
                 "esc list"
             } else {
@@ -524,7 +555,7 @@ impl App {
             };
             let text = note.unwrap_or_else(|| {
                 format!(
-                    "e errors · a agents · c clear done · r recap · x hub · s settings · {back} · q quit"
+                    "e errors · a agents · c clear done · r recap · x hub · v calm · s settings · {back} · q quit"
                 )
             });
             let text = crate::event::truncate(&text, width as usize);
@@ -907,6 +938,8 @@ pub fn run(args: &[String]) -> ! {
     app.refresh();
 
     if once || !std::io::stdout().is_terminal() {
+        // Scripts and pipes always get the full view.
+        app.cfg.view = config::Views::default();
         let env = |k: &str, d: u16| {
             std::env::var(k)
                 .ok()
@@ -931,11 +964,17 @@ pub fn run(args: &[String]) -> ! {
             app.cycle();
         }
         app.apply_edit(view);
+        app.apply_look(view);
         if view.settings.is_none() {
             app.settings_note = None;
         }
         app.view = *view;
         app.refresh();
+        view.look = app.look();
+        view.cards = view.look == config::Look::Calm
+            && surface(view, app.mode == Mode::All) == Some(config::Surface::HubAll);
+        app.view.look = view.look;
+        app.view.cards = view.cards;
         let now = hook::now_ms();
         let v = app.st.verdict_with(app.cfg.thresholds.stuck_repeats);
         if app.cfg.bell && v == Verdict::NeedsYou && app.last_verdict.is_some_and(|l| l != v) {
@@ -999,7 +1038,14 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
             }
             return false;
         };
+        // The simple hubs have no graph, finished list or git panes; the sky has no selection.
+        let simple = h.screen == Screen::Hub && view.look != config::Look::Full;
+        let sky = h.screen == Screen::Hub && view.look == config::Look::Constellation;
+        let cards = simple && view.cards;
         match code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j') if cards => {}
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char('k' | 'j') if sky => {}
+            KeyCode::Char('g' | 'z' | 'c' | 'b') if simple => {}
             KeyCode::Char('q') => return true,
             KeyCode::Char('x') => view.hub = None,
             KeyCode::Esc if h.screen == Screen::Hub => view.hub = None,
@@ -1030,6 +1076,11 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
             KeyCode::Char('z') => h.show_done ^= true,
             KeyCode::Char('b') => h.git ^= true,
             KeyCode::Char('c') => view.cleared = hook::now_ms(),
+            KeyCode::Char('v') => {
+                h.screen = Screen::Hub;
+                h.scroll = 0;
+                view.next_look = true;
+            }
             KeyCode::PageUp => h.scroll += 10,
             KeyCode::PageDown => h.scroll = h.scroll.saturating_sub(10),
             _ => {}
@@ -1054,9 +1105,25 @@ fn key(view: &mut View, code: KeyCode, list_len: Option<usize>, agents: Option<u
         (KeyCode::Char('a'), _) => view.expand_agents ^= true,
         (KeyCode::Char('c'), _) => view.cleared = hook::now_ms(),
         (KeyCode::Char('r'), _) => view.recap ^= true,
+        (KeyCode::Char('v'), None) if !view.recap => view.next_look = true,
         _ => {}
     }
     false
+}
+
+/// Which remembered view the screen on show uses; `None` for settings and the `--all` list.
+pub fn surface(view: &View, all_mode: bool) -> Option<config::Surface> {
+    use config::Surface;
+    if view.settings.is_some() {
+        return None;
+    }
+    match view.hub {
+        // An opened session's own hub (`--all`, then enter, then x) is a single-session hub.
+        Some(h) if h.all || (all_mode && !view.open) => Some(Surface::HubAll),
+        Some(_) => Some(Surface::Hub),
+        None if all_mode && !view.open => None,
+        None => Some(Surface::Watch),
+    }
 }
 
 /// A frame: lines to draw, whether something animates (10 fps vs 1 fps), alignment,
@@ -1305,6 +1372,158 @@ mod key_tests {
     }
 
     #[test]
+    fn v_queues_a_view_change() {
+        let mut v = View::default();
+        key(&mut v, KeyCode::Char('v'), None, None);
+        assert!(v.next_look, "panel");
+        let mut v = hub_view(Screen::Zoom, 2);
+        key(&mut v, KeyCode::Char('v'), None, Some(3));
+        assert!(v.next_look);
+        assert_eq!(
+            v.hub.unwrap().screen,
+            Screen::Hub,
+            "v leaves graph/zoom for the hub"
+        );
+        let mut v = View::default();
+        key(&mut v, KeyCode::Char('v'), Some(4), None);
+        assert!(!v.next_look, "the --all list has no simple view");
+    }
+
+    #[test]
+    fn v_does_nothing_during_recap() {
+        let mut v = View {
+            recap: true,
+            ..Default::default()
+        };
+        key(&mut v, KeyCode::Char('v'), None, None);
+        assert!(!v.next_look, "the recap has no simple view");
+    }
+
+    #[test]
+    fn calm_hub_ignores_graph_keys() {
+        let mut v = View {
+            look: config::Look::Calm,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in ['g', 'z', 'b', 'c'] {
+            key(&mut v, KeyCode::Char(k), None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+        assert_eq!(v.cleared, 0);
+        key(&mut v, KeyCode::Enter, None, Some(3));
+        assert_eq!(v.hub.unwrap().screen, Screen::Zoom);
+        key(&mut v, KeyCode::Char('g'), None, Some(3));
+        assert_eq!(v.hub.unwrap().screen, Screen::Graph, "zoom keeps its keys");
+    }
+
+    #[test]
+    fn calm_cards_ignore_selection() {
+        let mut v = View {
+            look: config::Look::Calm,
+            cards: true,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in [KeyCode::Down, KeyCode::Char('j'), KeyCode::Enter] {
+            key(&mut v, k, None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+    }
+
+    #[test]
+    fn sky_hub_ignores_selection() {
+        let mut v = View {
+            look: config::Look::Constellation,
+            ..hub_view(Screen::Hub, 0)
+        };
+        for k in [KeyCode::Down, KeyCode::Enter] {
+            key(&mut v, k, None, Some(3));
+        }
+        assert_eq!(v.hub, hub_view(Screen::Hub, 0).hub);
+        key(&mut v, KeyCode::Char('a'), None, Some(3));
+        assert!(v.hub.unwrap().all, "a stays live, as the spec says");
+        key(&mut v, KeyCode::Char('v'), None, Some(3));
+        assert!(v.next_look);
+        key(&mut v, KeyCode::Char('x'), None, Some(3));
+        assert_eq!(v.hub, None);
+    }
+
+    #[test]
+    fn surface_picks_the_screen() {
+        use config::Surface;
+        assert_eq!(surface(&View::default(), false), Some(Surface::Watch));
+        assert_eq!(surface(&View::default(), true), None, "--all list");
+        let open = View {
+            open: true,
+            ..Default::default()
+        };
+        assert_eq!(surface(&open, true), Some(Surface::Watch), "opened session");
+        let h = |all| View {
+            hub: Some(HubView {
+                all,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(surface(&h(false), false), Some(Surface::Hub));
+        assert_eq!(surface(&h(true), false), Some(Surface::HubAll));
+        assert_eq!(
+            surface(&h(false), true),
+            Some(Surface::HubAll),
+            "x from the --all list"
+        );
+        let opened_hub = View {
+            open: true,
+            ..h(false)
+        };
+        assert_eq!(
+            surface(&opened_hub, true),
+            Some(Surface::Hub),
+            "an opened session's own hub"
+        );
+        let settings = View {
+            settings: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(surface(&settings, false), None);
+    }
+
+    #[test]
+    fn v_saves_the_look_per_screen() {
+        use config::Look;
+        let (mut app, root, p) = app_with_cfg("look", None);
+        let mut v = View {
+            next_look: true,
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        assert!(!v.next_look, "taken");
+        assert_eq!(app.cfg.view.watch, Look::Calm);
+        assert_eq!(config::load_from(&p).unwrap().view.watch, Look::Calm);
+        v = View {
+            next_look: true,
+            hub: Some(HubView::default()),
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        let saved = config::load_from(&p).unwrap().view;
+        assert_eq!((saved.watch, saved.hub), (Look::Calm, Look::Calm));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v_on_a_broken_file_changes_only_this_window() {
+        let (mut app, root, p) = app_with_cfg("lookbroken", Some("face = [[["));
+        let mut v = View {
+            next_look: true,
+            ..Default::default()
+        };
+        app.apply_look(&mut v);
+        assert_eq!(app.cfg.view.watch, config::Look::Calm);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "face = [[[");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn show_finished_overrides_auto_clear() {
         let root = std::env::temp_dir().join(format!("ari-cut-{}", std::process::id()));
         let mut app = app_on(&root, "s1", &[]);
@@ -1315,6 +1534,20 @@ mod key_tests {
             ..Default::default()
         });
         assert_eq!(app.clear_cut(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn message_animates_for_calms_glide() {
+        let root = std::env::temp_dir().join(format!("ari-glide-{}", std::process::id()));
+        let mut app = app_on(&root, "s1", &[]);
+        app.st.turn_active = false;
+        app.st.messages.push_back(crate::state::Msg {
+            t: 10_000,
+            ..Default::default()
+        });
+        assert!(app.animating(12_500), "Calm's packet glides for 3 s");
+        assert!(!app.animating(13_000));
         let _ = std::fs::remove_dir_all(&root);
     }
 

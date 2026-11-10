@@ -34,16 +34,25 @@ fn team() -> (State, Extras, u64) {
 }
 
 fn show(st: &State, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
-    show_u(st, &Usage::default(), x, now, v, w, h)
+    show_u(&Config::default(), st, &Usage::default(), x, now, v, w, h)
 }
 
-fn show_u(st: &State, u: &Usage, x: &Extras, now: u64, v: HubView, w: u16, h: u16) -> String {
-    let cfg = Config::default();
+#[allow(clippy::too_many_arguments)]
+fn show_u(
+    cfg: &Config,
+    st: &State,
+    u: &Usage,
+    x: &Extras,
+    now: u64,
+    v: HubView,
+    w: u16,
+    h: u16,
+) -> String {
     let i = Input {
         st,
         u,
         x,
-        cfg: &cfg,
+        cfg,
         now,
         clock: "13:04",
     };
@@ -67,7 +76,16 @@ fn hub_all_frame() {
         tokens: Some(tokens),
         ..Default::default()
     };
-    insta::assert_snapshot!(show_u(&st, &u, &x, now, HubView::default(), 168, 49));
+    insta::assert_snapshot!(show_u(
+        &Config::default(),
+        &st,
+        &u,
+        &x,
+        now,
+        HubView::default(),
+        168,
+        49
+    ));
 }
 
 #[test]
@@ -168,4 +186,169 @@ fn merge_cost_is_claude_only() {
     let (_, u, t) = merge(parts, 0);
     assert_eq!(u.cost_usd, Some(1.0));
     assert_eq!(t.total().input, 300);
+}
+
+// --- Calm hub and hub --all ---
+
+fn calm(all: bool) -> Config {
+    use ari_cli::config::{Look, Views};
+    let mut view = Views::default();
+    if all {
+        view.hub_all = Look::Calm;
+    } else {
+        view.hub = Look::Calm;
+    }
+    Config {
+        view,
+        ..Default::default()
+    }
+}
+
+fn calm_team(now: Option<u64>) -> (String, State) {
+    let (s, x, t) = team();
+    let out = show_u(
+        &calm(false),
+        &s,
+        &Usage::default(),
+        &x,
+        now.unwrap_or(t),
+        HubView::default(),
+        168,
+        49,
+    );
+    (out, s)
+}
+
+#[test]
+fn calm_hub_team() {
+    let (out, _) = calm_team(None);
+    for bad in ["tok", "ctx", "$"] {
+        assert!(!out.contains(bad), "{bad} in:\n{out}");
+    }
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn calm_hub_packet_caption() {
+    let (_, s) = calm_team(None);
+    let m = s.messages.iter().max_by_key(|m| m.t).unwrap();
+    let head: String = m.text.chars().take(20).collect();
+    let (out, _) = calm_team(Some(m.t + 1000));
+    assert!(out.contains('→') && out.contains(&head), "{head}:\n{out}");
+    let (out, _) = calm_team(Some(m.t + 3500));
+    assert!(!out.contains(&head), "{out}");
+}
+
+fn calm_all(parts: Vec<Part>) -> String {
+    let (st, u, tokens) = merge(parts, 1000);
+    let x = Extras {
+        tokens: Some(tokens),
+        ..Default::default()
+    };
+    show_u(&calm(true), &st, &u, &x, 1000, HubView::default(), 168, 49)
+}
+
+#[test]
+fn calm_hub_all() {
+    use ari_cli::app::App;
+    let out = calm_all(vec![
+        bare("api", App::Claude, Usage::default(), 1),
+        bare("web", App::Claude, Usage::default(), 1),
+    ]);
+    for name in ["api", "web"] {
+        let n = out
+            .lines()
+            .filter(|l| l.contains(&format!(" {name} ")))
+            .count();
+        assert_eq!(n, 1, "{name}:\n{out}");
+    }
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn calm_cards_clip_wide_names() {
+    use ari_cli::app::App;
+    use unicode_width::UnicodeWidthStr;
+    let mut p = bare("aaaaaaaa", App::Claude, Usage::default(), 1);
+    p.name = "日本語プロジェクト".repeat(5);
+    let out = calm_all(vec![p]);
+    for l in out.lines() {
+        assert!(l.width() <= 168, "{l}");
+    }
+    let card: Vec<&str> = out.lines().filter(|l| l.starts_with('│')).collect();
+    assert!(!card.is_empty(), "{out}");
+    for l in card {
+        assert!(l.trim_end().ends_with('│'), "border missing: {l}");
+    }
+}
+
+#[test]
+fn calm_card_shows_the_ask() {
+    use ari_cli::app::App;
+    let mut p = bare("aaaaaaaa", App::Claude, Usage::default(), 1);
+    p.st.agents.push(ari_cli::state::Agent {
+        id: "main".into(),
+        waiting: Some((1, "run it".into())),
+        ..Default::default()
+    });
+    let out = calm_all(vec![p]);
+    let card = |l: &&str| l.starts_with('│') && l.contains("needs you: run it");
+    assert!(out.lines().any(|l| card(&l)), "{out}");
+}
+
+#[test]
+fn calm_hub_empty() {
+    let out = show_u(
+        &calm(false),
+        &State::default(),
+        &Usage::default(),
+        &Extras::default(),
+        1,
+        HubView::default(),
+        168,
+        49,
+    );
+    assert!(out.contains("no agents yet"), "{out}");
+}
+
+// Constellation.
+
+fn sky_cfg() -> Config {
+    let mut cfg = Config::default();
+    cfg.view.hub = ari_cli::config::Look::Constellation;
+    cfg.view.hub_all = ari_cli::config::Look::Constellation;
+    cfg
+}
+
+#[test]
+fn sky_hub_team() {
+    let (s, x, now) = team();
+    let u = Usage::default();
+    insta::assert_snapshot!(show_u(
+        &sky_cfg(),
+        &s,
+        &u,
+        &x,
+        now,
+        HubView::default(),
+        168,
+        49
+    ));
+}
+
+#[test]
+fn sky_galaxy() {
+    let (s, x, now) = team();
+    let part = |key: &str, name: &str| Part {
+        key: key.into(),
+        name: name.into(),
+        st: s.clone(),
+        app: Default::default(),
+        u: Usage::default(),
+        tokens: x.tokens.clone().unwrap(),
+    };
+    let (st, u, _) = merge(vec![part("aaaaaaaa", "api"), part("bbbbbbbb", "web")], now);
+    let out = show_u(&sky_cfg(), &st, &u, &x, now, HubView::default(), 168, 49);
+    assert!(out.contains("api") && out.contains("web"), "{out}");
+    insta::assert_snapshot!(out);
 }

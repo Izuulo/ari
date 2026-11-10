@@ -1,0 +1,18 @@
+---
+source: src/simple/calm.rs
+expression: "to_plain(&draw(&st, &u, NOW, 60, 40))"
+---
+╭─ ARI ────────────────────────────────────────────────────╮
+│  ✗ main hit a snag                                       │
+│  ● on track · auth refactor                              │
+│  ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 4 of 7 done                          │
+│                                                          │
+│  ⠋ main    thinking.                                     │
+│  ⠸ Explore thinking.                                     │
+│  ✓ tests   finished                                      │
+│  z Plan    taking a break                                │
+│                                                          │
+│  memory ██████████░░░░ 71% full                          │
+│                                                          │
+│  v constellation                                         │
+╰──────────────────────────────────────────────────────────╯

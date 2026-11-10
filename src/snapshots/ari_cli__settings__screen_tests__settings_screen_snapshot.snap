@@ -7,6 +7,9 @@ expression: to_plain(&out)
    theme                     default            ││ ● ON TRACK      │                                                    
    face                      off                │
    ascii glyphs              off                │
+   watch view                full               │
+   hub view                  full               │
+   hub --all view            full               │
  COLOURS                                        │
    good                      ■ theme            │
    warn                      ■ theme            │

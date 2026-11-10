@@ -51,4 +51,4 @@ expression: "show_u(&st, &u, &x, now, HubView::default(), 168, 49)"
 │                                                                                                  ││ checker                                                   █  ✓   │
 │                                                                                                  ││           −10m                   −5m                     now     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────╯
-  ↑↓ select   ⏎ zoom   g graph   z show finished (4)   c clear finished   b git   x back to panel   s settings   q quit                                          168×49
+  ↑↓ select   ⏎ zoom   g graph   z show finished (4)   c clear finished   b git   x back to panel   v calm   s settings   q quit                                 168×49

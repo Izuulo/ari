@@ -1,6 +1,6 @@
 //! The settings screen in `ari watch` (`s`): every row, its value, how it steps, and the screen.
 
-use crate::config::{self, COLOR_CYCLE, Config, Position, THEMES};
+use crate::config::{self, COLOR_CYCLE, Config, Look, Position, THEMES};
 use crate::event::truncate;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -36,10 +36,17 @@ pub struct Item {
     pub label: &'static str,
 }
 
-const ITEMS: [(&str, &str, &str); 46] = [
+fn look_step(l: Look, d: i64) -> Look {
+    if d > 0 { l.next() } else { l.next().next() }
+}
+
+const ITEMS: [(&str, &str, &str); 49] = [
     ("LOOK", "theme", "theme"),
     ("LOOK", "face", "face"),
     ("LOOK", "ascii", "ascii glyphs"),
+    ("LOOK", "view.watch", "watch view"),
+    ("LOOK", "view.hub", "hub view"),
+    ("LOOK", "view.hub_all", "hub --all view"),
     ("COLOURS", "color.good", "good"),
     ("COLOURS", "color.warn", "warn"),
     ("COLOURS", "color.bad", "bad"),
@@ -134,6 +141,9 @@ pub fn value(cfg: &Config, key: &str) -> String {
         "theme" => cfg.theme.clone(),
         "face" => on(cfg.face),
         "ascii" => on(cfg.ascii),
+        "view.watch" => cfg.view.watch.name().into(),
+        "view.hub" => cfg.view.hub.name().into(),
+        "view.hub_all" => cfg.view.hub_all.name().into(),
         "bell" => on(cfg.bell),
         "auto_clear" => on(cfg.auto_clear),
         "hide_stale" => on(cfg.hide_stale),
@@ -212,6 +222,10 @@ pub fn step(cfg: &mut Config, key: &str, dir: i8) {
         }
         "face" => cfg.face ^= true,
         "ascii" => cfg.ascii ^= true,
+        // Three looks: back is next twice.
+        "view.watch" => cfg.view.watch = look_step(cfg.view.watch, d),
+        "view.hub" => cfg.view.hub = look_step(cfg.view.hub, d),
+        "view.hub_all" => cfg.view.hub_all = look_step(cfg.view.hub_all, d),
         "bell" => cfg.bell ^= true,
         "notify.desktop" => cfg.notify.desktop ^= true,
         "auto_clear" => cfg.auto_clear ^= true,
@@ -378,6 +392,9 @@ pub fn reset(cfg: &mut Config, key: &str) {
         "theme" => cfg.theme = def.theme,
         "face" => cfg.face = def.face,
         "ascii" => cfg.ascii = def.ascii,
+        "view.watch" => cfg.view.watch = def.view.watch,
+        "view.hub" => cfg.view.hub = def.view.hub,
+        "view.hub_all" => cfg.view.hub_all = def.view.hub_all,
         "bell" => cfg.bell = def.bell,
         "auto_clear" => cfg.auto_clear = def.auto_clear,
         "hide_stale" => cfg.hide_stale = def.hide_stale,
@@ -400,7 +417,7 @@ mod tests {
     #[test]
     fn items_cover_every_role_and_feature() {
         let it = items();
-        assert_eq!(it.len(), 46);
+        assert_eq!(it.len(), 49);
         for n in crate::config::NOTIFY_ON {
             let i = it
                 .iter()
@@ -428,6 +445,19 @@ mod tests {
             groups,
             ["LOOK", "COLOURS", "STATUSLINE", "PANEL", "ALERTS", "DATA"]
         );
+    }
+
+    #[test]
+    fn view_rows_cycle_and_reset() {
+        let mut c = Config::default();
+        assert_eq!(value(&c, "view.hub"), "full");
+        step(&mut c, "view.hub", 1);
+        assert_eq!(value(&c, "view.hub"), "calm");
+        step(&mut c, "view.hub", -1);
+        step(&mut c, "view.hub", -1);
+        assert_eq!(value(&c, "view.hub"), "constellation");
+        reset(&mut c, "view.hub");
+        assert_eq!(c.view.hub, Look::Full);
     }
 
     #[test]
@@ -806,7 +836,7 @@ mod screen_tests {
         let out = lines(
             &Screen {
                 cfg: &cfg,
-                sel: 13,
+                sel: 16,
                 path: "~/.config/ari/config.toml",
                 error: None,
                 note: None,
@@ -817,7 +847,7 @@ mod screen_tests {
                 color: false,
             },
             120,
-            40,
+            43,
         );
         insta::assert_snapshot!(to_plain(&out));
     }
