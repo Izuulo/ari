@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Risky commands.** `ari watch` shows the latest risky Bash command that ran under the verdict (recursive deletes, deletes outside the repo, `git reset --hard`, force pushes, forced cleans, discarded changes, deleted branches, `DROP TABLE`, raw disk writes) and `ari recap` lists every one. Watch-only: nothing is blocked.
 - **Simple views.** `v` cycles `ari watch`, the hub and `ari hub --all` through full, **Calm** (plain-English verbs, no numbers) and **Constellation** (each session as an animated star system). Alerts stay loud in both. Each screen remembers its view in `[view]` in `config.toml`; `--once` always prints the full view. `ari demo` starts in Constellation, and `ari demo --team` replays a session with helpers and messages.
 - **Calls section** in `ari watch`: main's recent tool calls, newest first, laid out like the hub's agent card (age, tool, target, ✓/✗ and duration). Turns sit below it and shrink first when space is short. Toggle either in settings → PANEL (`hide_panel = ["calls"]` / `["turns"]`).
 - **Hide stale agents** (`hide_stale`, off by default; settings → PANEL): `ari watch` and the hub drop subagents that went quiet for 5 min without finishing.

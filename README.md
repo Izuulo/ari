@@ -98,6 +98,17 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 
 `--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
 
+**Risky commands.** ARI flags Bash commands that ran and could lose work: a delete outside the repo, a recursive delete, `git reset --hard` and other ways of discarding uncommitted work, a force push, a deleted branch, an SQL drop or truncate, and a raw disk write. The latest shows under the verdict in `ari watch` (`⚠ ran git push --force · rewrites remote history · 2m`), and `ari recap` lists every one in a `risky` section. ARI never blocks a command; a command you denied at the prompt never ran and isn't flagged. Matching is by text, so it can't see:
+
+- commands hidden in scripts or task runners (`./clean.sh`, `make clean`, `npm run reset`);
+- variables and substitutions it can't resolve (`rm -rf $DIR`, `rm -rf $(cat list)`, backticks), aliases and shell functions;
+- other languages doing the deleting (`python -c "shutil.rmtree(...)"`, `node -e ...`);
+- file tools and MCP tools: a `Write` that overwrites a file, an `Edit` that empties one, a database MCP's drop;
+- symlinks: paths are resolved as text, never on disk;
+- PowerShell (`Remove-Item -Recurse`) and shell calls whose command isn't a single string.
+
+Known false alarms: SQL keywords in a heredoc that only writes a `.sql` file, and `rm -r` on a build folder, which is flagged even when harmless.
+
 ### The verdict
 
 | Verdict | Means |
