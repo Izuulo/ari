@@ -26,9 +26,9 @@ const TEMP_DIRS: [&str; 4] = [
     "/var/folders/",
     "/private/var/folders/",
 ];
-const TEXT_TOOLS: [&str; 13] = [
+const TEXT_TOOLS: [&str; 14] = [
     "echo", "printf", "grep", "egrep", "rg", "ag", "cat", "less", "head", "tail", "sed", "awk",
-    "git",
+    "git", "gh",
 ];
 const SQL: [&str; 4] = [
     "DROP TABLE",
@@ -91,14 +91,11 @@ pub fn commands(cmd: &str) -> Vec<Vec<String>> {
 }
 
 /// The first risky simple command in `cmd`, as (rule, its words cut to 80 chars).
-/// `cwd` is the repo; empty skips the outside rule. Paths resolve by text only.
-pub fn check(cmd: &str, cwd: &str, home: &str) -> Option<(&'static str, String)> {
-    let repo = if cwd.is_empty() {
-        String::new()
-    } else {
-        norm(cwd)
-    };
-    walk(cmd, &repo, &mut repo.clone(), home)
+/// `repo` is the project root and `cwd` the shell's folder (it can sit inside the repo);
+/// either empty skips the outside rule. Paths resolve by text only.
+pub fn check(cmd: &str, repo: &str, cwd: &str, home: &str) -> Option<(&'static str, String)> {
+    let known = |p: &str| if p.is_empty() { String::new() } else { norm(p) };
+    walk(cmd, &known(repo), &mut known(cwd), home)
 }
 
 fn walk(cmd: &str, repo: &str, cur: &mut String, home: &str) -> Option<(&'static str, String)> {
@@ -173,10 +170,12 @@ fn rule(prog: &str, args: &[String], repo: &str, cur: &str, home: &str) -> Optio
     // Options end at `--`; everything after it is a target.
     let opts = &args[..args.iter().position(|a| a == "--").unwrap_or(args.len())];
     if matches!(prog, "rm" | "rmdir" | "unlink" | "shred") && !repo.is_empty() && !cur.is_empty() {
-        let targets = args
-            .iter()
-            .enumerate()
-            .filter(|&(i, a)| i > opts.len() || (i < opts.len() && !a.starts_with('-')));
+        // `> /dev/null`: a redirect and its file are not targets.
+        let redirect =
+            |i: usize| args[i].contains(['<', '>']) || (i > 0 && args[i - 1].ends_with(['<', '>']));
+        let targets = args.iter().enumerate().filter(|&(i, a)| {
+            !redirect(i) && (i > opts.len() || (i < opts.len() && !a.starts_with('-')))
+        });
         for (_, t) in targets {
             if let Some(p) = resolve(t, cur, home) {
                 let temp = TEMP_DIRS.iter().any(|d| p.starts_with(d));
@@ -295,7 +294,7 @@ mod tests {
     use super::*;
 
     fn c(cmd: &str) -> Option<&'static str> {
-        check(cmd, "/home/u/proj", "/home/u").map(|(r, _)| r)
+        check(cmd, "/home/u/proj", "/home/u/proj", "/home/u").map(|(r, _)| r)
     }
 
     #[test]
@@ -367,7 +366,10 @@ mod tests {
         assert_eq!(c("bash -lc 'git reset --hard'"), Some(DISCARD));
         assert_eq!(c("find . | xargs rm -rf"), Some(RECURSIVE));
         assert_eq!(c("git -C ../other reset --hard"), Some(DISCARD));
-        assert_eq!(check("cd x && rm -rf y", "/p", "/h").unwrap().1, "rm -rf y");
+        assert_eq!(
+            check("cd x && rm -rf y", "/p", "/p", "/h").unwrap().1,
+            "rm -rf y"
+        );
     }
 
     #[test]
@@ -396,13 +398,37 @@ mod tests {
         assert_eq!(c("rm /tmp/a.txt"), None);
         assert_eq!(c("rm -rf $DIR"), Some(RECURSIVE)); // unknown target: not OUTSIDE
         assert_eq!(c("cd - && rm a"), None);
-        assert_eq!(check("rm -rf ../x", "", "/h").map(|r| r.0), Some(RECURSIVE)); // no cwd
-        assert_eq!(check("rm ../x", "", "/h"), None);
+        assert_eq!(
+            check("rm -rf ../x", "", "", "/h").map(|r| r.0),
+            Some(RECURSIVE)
+        ); // no cwd
+        assert_eq!(check("rm ../x", "", "", "/h"), None);
+    }
+
+    #[test]
+    fn review_false_alarms() {
+        // `gh` bodies are prose, not SQL.
+        assert_eq!(
+            c("gh pr create --title t --body \"we delete from the cache\""),
+            None
+        );
+        // A redirect target is not a delete target.
+        assert_eq!(c("rm -f a.o > /dev/null"), None);
+        assert_eq!(c("rm -f a.o 2> /dev/null"), None);
+        assert_eq!(c("rm -rf ../x 2>/dev/null"), Some(OUTSIDE));
+        // The shell sits in a subfolder: the repo is the project dir, not the cwd.
+        let sub =
+            |cmd: &str| check(cmd, "/home/u/proj", "/home/u/proj/src", "/home/u").map(|r| r.0);
+        assert_eq!(sub("rm ../README.md"), None);
+        assert_eq!(sub("rm ../../other.txt"), Some(OUTSIDE));
     }
 
     #[test]
     fn command_text_is_cut() {
         let long = format!("rm -rf {}", "a".repeat(200));
-        assert_eq!(check(&long, "/p", "/h").unwrap().1.chars().count(), 80);
+        assert_eq!(
+            check(&long, "/p", "/p", "/h").unwrap().1.chars().count(),
+            80
+        );
     }
 }

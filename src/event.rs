@@ -352,8 +352,11 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
         && ev.tool.as_deref() == Some("Bash")
         && let Some(cmd) = input.get("command").and_then(Value::as_str)
     {
-        let home = std::env::var("HOME").unwrap_or_default();
-        ev.risk = crate::risky::check(cmd, s("cwd").unwrap_or(""), &home)
+        let cwd = s("cwd").unwrap_or("");
+        let env = |k: &str| std::env::var(k).unwrap_or_default();
+        // The shell's cwd follows `cd` into subfolders; Claude Code names the root.
+        let repo = Some(env("CLAUDE_PROJECT_DIR")).filter(|r| !r.is_empty());
+        ev.risk = crate::risky::check(cmd, repo.as_deref().unwrap_or(cwd), cwd, &env("HOME"))
             .map(|(rule, cmd)| (rule.to_string(), cmd));
     }
     Some(ev)
