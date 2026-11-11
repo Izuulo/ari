@@ -1,6 +1,5 @@
 ---
 source: tests/hub.rs
-assertion_line: 76
 expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 ---
  ARI hub · Do these steps in order, using the tool…                                                                                                               13:04 
@@ -28,7 +27,7 @@ expression: "show(&s, &x, now, HubView::default(), 168, 49)"
 ┏━ ✓ main · haiku-5-5 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 22s ━┓╭─ context window ────────────────── 34k / 200k ─╮╭─ messages ─────────────────────── 0 in · 0 out ─╮
 ┃ main · 7 calls · 160k tok                                       ┃│ ctx ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17%   ││ none                                            │
 ┃ plan ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 2/2 tasks                                  ┃│ compacts near 90%                              ││                                                 │
-┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k                                ┃│                                                ││                                                 │
+┃ ctx ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 17% 34k                                ┃│ at start 26k (13%)                             ││                                                 │
 ┃ filled by messages 7.4k                                         ┃│ what filled it                                 ││                                                 │
 ┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ ││                                                 │
 ┃ 19s ToolS ToolSearch                                      ✓ .0s ┃│ estimate: each tool result is the jump in inp… ││                                                 │

@@ -1,6 +1,5 @@
 ---
 source: tests/hub.rs
-assertion_line: 115
 expression: "show(&s, &x, now, v, 168, 49)"
 ---
  ARI hub · Do these steps in order, using the tool…                                                                                                               13:04 
@@ -8,7 +7,7 @@ expression: "show(&s, &x, now, v, 168, 49)"
 ┏━ ✓ writer · haiku-5-5 · general-purpose ━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5s · 3 calls · 83k tok ━┓╭─ context window ───────────────────────────────────────── 22k / 200k ─╮
 ┃ spawned by main 5s ago · own context · …/subagents/agent-a824e787b00414e69.jsonl            ┃│ ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 11%   │
 ┃ prompt  You are the "writer" agent. Steps, in order:                                        ┃│ finished; its context was freed when it returned                      │
-┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│                                                                       │
+┃┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┃│ at start 16k (8%)                                                     │
 ┃  11s  Write        editing notes.md                                                   ✓ .0s ┃│ what filled it                                                        │
 ┃  11s  ToolSearch   ToolSearch                                                         ✓ .0s ┃│ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
 ┃   9s  SendMessage  message checker                                                    ✓ .0s ┃│ █ base: system, tools, CLA…   16k █ messages and replies       5.9k   │
