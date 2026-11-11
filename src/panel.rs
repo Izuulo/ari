@@ -117,6 +117,40 @@ pub fn local_hhmm(ms: u64) -> String {
     format!("{:02}:{:02}", s / 3600 % 24, s / 60 % 60)
 }
 
+/// Local `YYYY-MM-DD HH:MM`.
+pub fn local_date(ms: u64) -> String {
+    #[cfg(unix)]
+    {
+        let t = (ms / 1000) as libc::time_t;
+        // SAFETY: localtime_r only writes into the tm we own.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if !unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+            return format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday,
+                tm.tm_hour,
+                tm.tm_min
+            );
+        }
+    }
+    utc_date(ms)
+}
+
+/// UTC `YYYY-MM-DD HH:MM`, civil-from-days (Howard Hinnant).
+fn utc_date(ms: u64) -> String {
+    let z = (ms / 86_400_000) as i64 + 719_468;
+    let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let s = ms / 1000;
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", s / 3600 % 24, s / 60 % 60)
+}
+
 /// Local weekday, `Sun`…`Sat`.
 pub fn local_weekday(ms: u64) -> &'static str {
     const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3519,6 +3553,10 @@ pub(crate) mod tests {
         assert_eq!(sig_words(&e("StopFailure:rate_limit")), "api rate_limit");
         assert_eq!(sig_words(&e("WebFetch")), "webfetch");
         assert_eq!(local_hhmm(NOW).len(), 5);
+        let d = local_date(1_793_901_768_682);
+        assert_eq!((d.len(), &d[4..5], &d[10..11], &d[13..14]), (16, "-", " ", ":"));
+        assert_eq!(utc_date(1_793_901_768_682), "2026-11-05 18:02");
+        assert_eq!(utc_date(951_782_400_000), "2000-02-29 00:00");
         let home = std::env::var("HOME").unwrap();
         assert_eq!(tilde(&format!("{home}/ari/")), "~/ari");
         assert_eq!(tilde(&format!("{home}x/ari")), format!("{home}x/ari"));
