@@ -105,6 +105,18 @@ Changed files are grouped by the task in progress when they were edited, else by
 
 `--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
 
+### Lost a session? `ari find`
+
+```
+$ ari find token refresh
+2026-11-09 17:36  ~/proj  · auth refactor
+  you    fix the login loop
+  match  …the token refresh now retries once before logging you out…
+  cd /Users/me/proj && claude --resume df0da5f4-20ac-45f6-84c5-2efbfa63b576
+```
+
+Searches every Claude Code transcript, newest first, and prints the line that resumes the session from its own folder. It searches what you and Claude wrote (prompts, replies, titles), not tool output. Claude Code only; the newest 10 unless `--limit`; `--here` keeps this folder's sessions.
+
 **Risky commands.** ARI flags Bash commands that ran and could lose work: a delete outside the repo, a recursive delete, `git reset --hard` and other ways of discarding uncommitted work, a force push, a deleted branch, an SQL drop or truncate, and a raw disk write. The latest shows under the verdict in `ari watch` (`⚠ ran git push --force · rewrites remote history · 2m`), and `ari recap` lists every one in a `risky` section. ARI never blocks a command; a command you denied at the prompt never ran and isn't flagged. Matching is by text, so it can't see:
 
 - commands hidden in scripts or task runners (`./clean.sh`, `make clean`, `npm run reset`);
@@ -179,6 +191,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 | `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
 | `ari hub [--session <id> \| --all] [--ascii]` | The hub: every agent, its messages and context |
 | `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
+| `ari find <text> [--here] [--limit <n>]` | Search every Claude Code transcript; prints each match's folder, date, first prompt and the `claude --resume` command |
 | `ari demo [--team \| --codex \| --deepseek] [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed, starting in the Constellation view (`v` cycles views, nothing is saved); `--team` replays a session with helpers and messages; `--codex` and `--deepseek` show the stuck session as that app reports it |
 | `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |
 | `ari replay <dir>` | Print a recorded session as a timeline |
@@ -254,7 +267,7 @@ Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR
 
 **Will it break my statusline?** No. Your command runs with the same input and its output is printed untouched. If it fails or takes longer than 300 ms, only it is skipped. `ari uninstall` puts your settings back exactly.
 
-**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. `quality.jsonl` there keeps per-session counts only (reads, edits, failed calls, retries, prompts and the model name; no prompts, paths or output), pruned with `retention_days`. No telemetry.
+**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. `quality.jsonl` there keeps per-session counts only (reads, edits, failed calls, retries, prompts and the model name; no prompts, paths or output), pruned with `retention_days`. `ari find` only reads `~/.claude/projects`. No telemetry.
 
 **Windows?** Not yet; planned for 1.1.
 
