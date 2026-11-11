@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 17;
+const CACHE_VERSION: u32 = 18;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -25,6 +25,7 @@ const EDIT_LOG: usize = 60;
 pub const TEST_FLAGS: usize = 20;
 const RISKY_KEEP: usize = 20;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+const READS: [&str; 3] = ["Read", "Grep", "Glob"];
 /// Repeats of earlier work after a compaction that count as redoing it.
 const REDO_MIN: u32 = 3;
 /// Main's successful work calls remembered for redo detection.
@@ -140,6 +141,19 @@ pub struct State {
     pub test_flags: VecDeque<TestFlag>,
     /// Risky commands that ran, oldest first.
     pub risky: VecDeque<Risky>,
+    pub quality: Quality,
+}
+
+/// Whole-session counts, all agents, for the quality baseline (quality.rs).
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq)]
+#[serde(default)]
+pub struct Quality {
+    pub reads: u32,
+    pub edits: u32,
+    /// Failed calls that open or retry an error; interrupts excluded.
+    pub failed: u32,
+    /// Repeats of a still-unresolved error.
+    pub retries: u32,
 }
 
 /// A risky command that ran (see risky.rs); `agent` is the agent id, `main` for main.
@@ -646,6 +660,9 @@ impl State {
                     t.tools_ms += ev.t.saturating_sub(start);
                     t.tools_until = t.tools_until.max(ev.t);
                 }
+                let name = ev.tool.as_deref().unwrap_or("");
+                self.quality.reads += READS.contains(&name) as u32;
+                self.quality.edits += (FILE_EDITS.contains(&name) && ev.ok == Some(true)) as u32;
                 self.track_reads(ev, aid);
                 self.track_work(ev);
                 if let Some((rule, cmd)) = &ev.risk {
@@ -945,6 +962,7 @@ impl State {
             }
             return;
         }
+        self.quality.failed += 1;
         let msg = ev.msg.clone().unwrap_or_default();
         if let Some(e) = self
             .errors
@@ -953,6 +971,7 @@ impl State {
             .find(|e| e.sig == sig && e.resolved_t.is_none())
         {
             e.retries += 1;
+            self.quality.retries += 1;
             e.last_t = ev.t;
             e.time_ms += ev.dur.unwrap_or(0);
             e.msg = msg;
@@ -1901,6 +1920,41 @@ mod tests {
         assert_eq!((back.agent.as_str(), back.ok), ("ag1", false));
     }
 
+    #[test]
+    fn quality_counts_reads_edits_failures_retries() {
+        let ok = |name: &str, sig: &str| Event {
+            tool: Some(name.into()),
+            ..tool("PostToolUse", sig, Some(true))
+        };
+        let mut sub = ok("Read", "Read:/b");
+        sub.a = Some("sub1".into());
+        let mut bad_edit = ok("Edit", "Edit:/c");
+        bad_edit.e = "PostToolUseFailure".into();
+        bad_edit.ok = Some(false);
+        let mut int = tool("PostToolUseFailure", "Bash:sleep", Some(false));
+        int.kind = Some("interrupt".into());
+        let s = run(&[
+            prompt("go"),
+            ok("Read", "Read:/a"),
+            ok("Grep", "Grep:x"),
+            ok("Glob", "Glob:*"),
+            sub,
+            ok("Edit", "Edit:/a"),
+            bad_edit,
+            tool("PostToolUseFailure", "cargo test", Some(false)),
+            tool("PostToolUseFailure", "cargo test", Some(false)),
+            int,
+        ]);
+        assert_eq!(
+            s.quality,
+            Quality {
+                reads: 4,
+                edits: 1,
+                failed: 3,
+                retries: 1
+            }
+        );
+    }
     fn ev(e: &str) -> Event {
         Event {
             t: 1_000,
