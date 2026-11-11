@@ -145,10 +145,17 @@ fn utc_date(ms: u64) -> String {
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    let (d, m) = (
+        doy - (153 * mp + 2) / 5 + 1,
+        if mp < 10 { mp + 3 } else { mp - 9 },
+    );
     let y = yoe + era * 400 + i64::from(m <= 2);
     let s = ms / 1000;
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", s / 3600 % 24, s / 60 % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        s / 3600 % 24,
+        s / 60 % 60
+    )
 }
 
 /// Local weekday, `Sun`…`Sat`.
@@ -3554,7 +3561,10 @@ pub(crate) mod tests {
         assert_eq!(sig_words(&e("WebFetch")), "webfetch");
         assert_eq!(local_hhmm(NOW).len(), 5);
         let d = local_date(1_793_901_768_682);
-        assert_eq!((d.len(), &d[4..5], &d[10..11], &d[13..14]), (16, "-", " ", ":"));
+        assert_eq!(
+            (d.len(), &d[4..5], &d[10..11], &d[13..14]),
+            (16, "-", " ", ":")
+        );
         assert_eq!(utc_date(1_793_901_768_682), "2026-11-05 18:02");
         assert_eq!(utc_date(951_782_400_000), "2000-02-29 00:00");
         let home = std::env::var("HOME").unwrap();

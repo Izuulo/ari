@@ -31,14 +31,16 @@ pub fn parse(args: &[String]) -> Result<Opts, String> {
             w => words.push(w),
         }
     }
-    if words.is_empty() {
+    // One space between words, so the snippet's collapsed text can match.
+    let query = words
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if query.is_empty() {
         return Err("what to look for? (ari find <text> [--here] [--limit <n>])".into());
     }
-    Ok(Opts {
-        query: words.join(" "),
-        here,
-        limit,
-    })
+    Ok(Opts { query, here, limit })
 }
 
 #[cfg(test)]
@@ -66,6 +68,8 @@ mod tests {
         );
         assert!(a(&[]).is_err());
         assert!(a(&["--here"]).is_err());
+        assert!(a(&["  "]).is_err());
+        assert_eq!(a(&["a  b", "c"]).unwrap().query, "a b c");
         assert!(a(&["x", "--limit", "0"]).is_err());
         assert!(a(&["x", "--limit", "501"]).is_err());
         assert!(a(&["x", "--limit"]).is_err());
