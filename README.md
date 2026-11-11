@@ -118,8 +118,8 @@ Known false alarms: SQL keywords in a heredoc that only writes a `.sql` file, an
 | `↻ STUCK` | Going in circles: the same command failing again and again, the same call repeated with nothing changing between, one file edited 12 times with no passing test, or an edit undone and redone. Shows the tokens spent since it got stuck |
 | `↻ RETRYING` | Something just failed and Claude is still working on it |
 | `● ON TRACK` | Working, nothing failing |
-| `✓ DONE` | Turn finished and every task is complete |
-| `◌ IDLE` | Turn finished; tasks incomplete or none |
+| `✓ DONE` | Turn finished cleanly, with every task complete or no task list |
+| `◌ IDLE` | No turn yet, or the turn stopped with tasks still open |
 
 `⟲ redo ×N` next to the verdict: after a compaction, main repeated N edits or commands it had already done before it (re-running tests and looking around don't count).
 
