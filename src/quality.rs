@@ -84,6 +84,74 @@ pub fn compact(root: &Path, max_age_ms: u64, now: u64) {
     let _ = paths::write_atomic(&root.join(FILE), text.as_bytes());
 }
 
+pub const MIN_SESSIONS: usize = 5;
+pub const MIN_EDITS: u32 = 5;
+pub const BASELINE_SESSIONS: usize = 30;
+pub const READS_LOW: f64 = 0.6;
+pub const RATE_HIGH: f64 = 1.5;
+pub const RATE_FLOOR: f64 = 1.0;
+
+/// A rate worse than the user's usual on this model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Deviation {
+    pub what: &'static str,
+    pub now: f64,
+    pub usual: f64,
+}
+
+impl Deviation {
+    pub fn text(&self) -> String {
+        format!(
+            "{} {:.1} · your usual {:.1}",
+            self.what, self.now, self.usual
+        )
+    }
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
+/// Compare `cur` with the median of its past sessions on the same model; only worse shows.
+pub fn check(cur: &Summary, history: &[Summary]) -> Vec<Deviation> {
+    let past: Vec<&Summary> = history
+        .iter()
+        .rev()
+        .filter(|s| s.id != cur.id && s.model == cur.model && s.edits >= MIN_EDITS)
+        .take(BASELINE_SESSIONS)
+        .collect();
+    if past.len() < MIN_SESSIONS || cur.edits < MIN_EDITS {
+        return Vec::new();
+    }
+    type Rate = fn(&Summary) -> f64;
+    let rates: [(&'static str, Rate); 3] = [
+        ("reads/edit", |s| s.reads as f64 / s.edits as f64),
+        ("errors/prompt", |s| s.failed as f64 / s.turns.max(1) as f64),
+        ("retries/prompt", |s| {
+            s.retries as f64 / s.turns.max(1) as f64
+        }),
+    ];
+    rates
+        .into_iter()
+        .filter_map(|(what, rate)| {
+            let now = rate(cur);
+            let usual = median(past.iter().map(|s| rate(s)).collect());
+            let worse = if what == "reads/edit" {
+                now <= usual * READS_LOW
+            } else {
+                now >= usual * RATE_HIGH && now >= usual + RATE_FLOOR
+            };
+            worse.then_some(Deviation { what, now, usual })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +174,91 @@ mod tests {
     }
     fn line(s: &Summary) -> String {
         serde_json::to_string(s).unwrap() + "\n"
+    }
+
+    fn s(
+        id: &str,
+        model: &str,
+        turns: u32,
+        reads: u32,
+        edits: u32,
+        failed: u32,
+        retries: u32,
+    ) -> Summary {
+        Summary {
+            id: id.into(),
+            model: model.into(),
+            turns,
+            reads,
+            edits,
+            failed,
+            retries,
+            ..Default::default()
+        }
+    }
+    fn past(model: &str, reads: &[u32]) -> Vec<Summary> {
+        reads
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| s(&format!("p{i}"), model, 2, r, 10, 0, 0))
+            .collect()
+    }
+
+    #[test]
+    fn low_reads_per_edit_shows() {
+        let h = past("Opus", &[60, 60, 62, 61, 60]);
+        let d = check(&s("cur", "Opus", 2, 20, 10, 0, 0), &h);
+        assert_eq!(d.len(), 1);
+        assert_eq!((d[0].what, d[0].now, d[0].usual), ("reads/edit", 2.0, 6.0));
+        assert_eq!(d[0].text(), "reads/edit 2.0 · your usual 6.0");
+    }
+
+    #[test]
+    fn needs_min_sessions_and_min_edits() {
+        let cur = s("cur", "Opus", 2, 20, 10, 0, 0);
+        assert!(check(&cur, &past("Opus", &[60; 4])).is_empty());
+        let few = s("cur", "Opus", 2, 8, 4, 0, 0);
+        assert!(check(&few, &past("Opus", &[60; 5])).is_empty());
+        let mut h = past("Opus", &[60; 4]);
+        h.push(s("small", "Opus", 2, 24, 4, 0, 0));
+        assert!(check(&cur, &h).is_empty());
+    }
+
+    #[test]
+    fn excludes_itself_and_other_models() {
+        let cur = s("cur", "Opus", 2, 20, 10, 0, 0);
+        let mine: Vec<Summary> = (0..5).map(|_| s("cur", "Opus", 2, 60, 10, 0, 0)).collect();
+        assert!(check(&cur, &mine).is_empty());
+        assert!(check(&cur, &past("Haiku", &[60; 5])).is_empty());
+    }
+
+    #[test]
+    fn zero_usual_errors_needs_floor() {
+        let h: Vec<Summary> = (0..5)
+            .map(|i| s(&format!("p{i}"), "Opus", 5, 60, 10, 0, 0))
+            .collect();
+        assert!(check(&s("cur", "Opus", 4, 60, 10, 2, 0), &h).is_empty());
+        let d = check(&s("cur", "Opus", 4, 60, 10, 6, 0), &h);
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            (d[0].what, d[0].now, d[0].usual),
+            ("errors/prompt", 1.5, 0.0)
+        );
+    }
+
+    #[test]
+    fn better_than_usual_is_silent() {
+        let h: Vec<Summary> = (0..5)
+            .map(|i| s(&format!("p{i}"), "Opus", 2, 60, 10, 4, 2))
+            .collect();
+        assert!(check(&s("cur", "Opus", 2, 90, 10, 0, 0), &h).is_empty());
+    }
+
+    #[test]
+    fn median_not_mean() {
+        let h = past("Opus", &[10, 60, 60, 60, 600]);
+        let d = check(&s("cur", "Opus", 2, 20, 10, 0, 0), &h);
+        assert_eq!(d[0].usual, 6.0);
     }
 
     #[test]

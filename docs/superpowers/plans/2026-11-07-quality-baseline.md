@@ -107,17 +107,17 @@
   - `pub fn Deviation::text(&self) -> String` → `format!("{} {:.1} · your usual {:.1}", what, now, usual)`.
   - `pub fn check(cur: &Summary, history: &[Summary]) -> Vec<Deviation>`: past = history entries with `id != cur.id`, `model == cur.model`, `edits >= MIN_EDITS`, newest `BASELINE_SESSIONS`. Empty when `past.len() < MIN_SESSIONS` or `cur.edits < MIN_EDITS`. Rates: reads/edits; failed/turns.max(1); retries/turns.max(1). Usual = median (mean of the two middle values for an even count). Order: reads, errors, retries.
 
-- [ ] **Step 1: Write the failing tests** (helper `fn s(id: &str, model: &str, turns, reads, edits, failed, retries) -> Summary`):
+- [x] **Step 1: Write the failing tests** (helper `fn s(id: &str, model: &str, turns, reads, edits, failed, retries) -> Summary`):
   - `low_reads_per_edit_shows`: 5 past `Opus` sessions with reads/edit 6, 6, 6.2, 6.1, 6 (edits 10) and cur reads 20 / edits 10 → one deviation, `what == "reads/edit"`, `now == 2.0`, `usual == 6.0`, `text() == "reads/edit 2.0 · your usual 6.0"`.
   - `needs_min_sessions_and_min_edits`: 4 past → empty; 5 past but cur `edits == 4` → empty; a past session with `edits == 4` doesn't count toward the 5.
   - `excludes_itself_and_other_models`: 5 past `Opus` with the same id as `cur` → empty; 5 past `Haiku` → empty.
   - `zero_usual_errors_needs_floor` (every summary here has reads 60, edits 10, so reads/edit never deviates): past failed 0 / turns 5; cur failed 2 / turns 4 (0.5/prompt) → empty; cur failed 6 / turns 4 (1.5/prompt) → `errors/prompt` deviation with `usual == 0.0`.
   - `better_than_usual_is_silent`: cur with more reads and fewer errors than usual → empty.
   - `median_not_mean`: past reads/edit 1, 6, 6, 6, 60 → `usual == 6.0`.
-- [ ] **Step 2: Run** `cargo test quality::` — FAIL.
-- [ ] **Step 3: Implement** the constants, `Deviation`, `check`.
-- [ ] **Step 4: Run** `cargo test quality::` — PASS.
-- [ ] **Step 5: Commit** `feat(quality): compare a session with your own baseline`.
+- [x] **Step 2: Run** `cargo test quality::` — FAIL.
+- [x] **Step 3: Implement** the constants, `Deviation`, `check`.
+- [x] **Step 4: Run** `cargo test quality::` — PASS.
+- [x] **Step 5: Commit** `feat(quality): compare a session with your own baseline`.
 
 ---
 
