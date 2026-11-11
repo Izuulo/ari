@@ -138,8 +138,20 @@ const CONFIG_FILES: [&str; 12] = [
 /// Why a changed file deserves a careful look, if it does. `inside`: under the session's cwd.
 pub fn look(rel: &str, inside: bool) -> Option<&'static str> {
     if !inside {
-        return Some("outside repo");
+        // Scratch files in the temp dir aren't changes to review.
+        let temp = [
+            "/tmp/",
+            "/private/tmp/",
+            "/var/folders/",
+            "/private/var/folders/",
+        ];
+        return (!temp.iter().any(|t| rel.starts_with(t))).then_some("outside repo");
     }
+    // A subagent's worktree is a checkout of the repo: judge the path inside it.
+    let rel = rel
+        .strip_prefix(".claude/worktrees/")
+        .and_then(|r| r.split_once('/'))
+        .map_or(rel, |(_, r)| r);
     let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
     let in_dir = |set: &[&str]| dirs.split('/').any(|d| set.contains(&d));
     let ext = Path::new(name).extension().and_then(|e| e.to_str());
@@ -1136,6 +1148,15 @@ mod tests {
         assert_eq!(look(".env.local", true), Some("config"));
         assert_eq!(look(".claude/settings.json", true), Some("config"));
         assert_eq!(look("src/main.rs", true), None);
+        assert_eq!(look(".claude/worktrees/agent-1/src/main.rs", true), None);
+        assert_eq!(
+            look(".claude/worktrees/agent-1/tests/a.rs", true),
+            Some("test")
+        );
+        assert_eq!(
+            look("/private/tmp/claude-501/x/scratchpad/t.py", false),
+            None
+        );
         assert_eq!(look("docs/testing.md", true), None); // "testing" is not a test dir
     }
 
