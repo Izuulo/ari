@@ -3,6 +3,8 @@
 
 pub const FIND_LIMIT: usize = 10;
 pub const MAX_LIMIT: usize = 500;
+const SNIPPET: usize = 100;
+const SNIPPET_BEFORE: usize = 30;
 
 #[derive(Debug, PartialEq)]
 pub struct Opts {
@@ -43,6 +45,27 @@ pub fn parse(args: &[String]) -> Result<Opts, String> {
     Ok(Opts { query, here, limit })
 }
 
+/// About `SNIPPET` chars of `text` around the first `needle` (already
+/// ASCII-lowercased), whitespace collapsed, `…` where it was cut.
+pub fn snippet(text: &str, needle: &str) -> Option<String> {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // ASCII lowercasing keeps byte offsets, so `at` indexes `text` too.
+    let at = text.to_ascii_lowercase().find(needle)?;
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .nth(SNIPPET_BEFORE - 1)
+        .map_or(0, |(i, _)| i);
+    let mut rest = text[start..].chars();
+    let s: String = rest.by_ref().take(SNIPPET).collect();
+    let (pre, post) = (start > 0, rest.next().is_some());
+    Some(format!(
+        "{}{s}{}",
+        if pre { "…" } else { "" },
+        if post { "…" } else { "" }
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +97,24 @@ mod tests {
         assert!(a(&["x", "--limit", "501"]).is_err());
         assert!(a(&["x", "--limit"]).is_err());
         assert!(a(&["x", "--nope"]).is_err());
+    }
+
+    #[test]
+    fn snippet_cuts_around_the_match() {
+        let text = format!(
+            "{} the Token refresh failed {}",
+            "a ".repeat(100),
+            "b ".repeat(100)
+        );
+        let s = snippet(&text, "token refresh").unwrap();
+        assert!(s.starts_with('…') && s.ends_with('…'), "{s}");
+        assert!(s.contains("Token refresh"), "{s}");
+        assert!(s.chars().count() <= SNIPPET + 2, "{s}");
+        assert_eq!(
+            snippet("short\n\n  text here", "text").unwrap(),
+            "short text here"
+        );
+        assert_eq!(snippet("🦀🦀 crab 🦀", "crab").unwrap(), "🦀🦀 crab 🦀");
+        assert_eq!(snippet("nothing", "zzz"), None);
     }
 }
