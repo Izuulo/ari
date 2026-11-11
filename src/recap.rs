@@ -63,6 +63,135 @@ pub struct Recap {
     pub test_flags: Vec<String>,
     /// Risky commands that ran in the window, oldest first; `agent` is the agent's label.
     pub risky: Vec<crate::state::Risky>,
+    /// Changed files by the task or prompt that caused them, in order of first edit.
+    pub groups: Vec<Group>,
+}
+
+/// A file changed in the window; `path` as `Recap.files` shows it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changed {
+    pub path: String,
+    pub edits: u32,
+    pub added: u32,
+    pub removed: u32,
+    pub look: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Group {
+    pub cause: String,
+    pub files: Vec<Changed>,
+}
+
+/// Look labels, riskiest first: the review order follows this.
+const LOOKS: [&str; 6] = [
+    "outside repo",
+    "migration",
+    "CI",
+    "lockfile",
+    "test",
+    "config",
+];
+const TEST_DIRS: [&str; 8] = [
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "e2e",
+    "fixtures",
+    "snapshots",
+    "__snapshots__",
+];
+const MIGRATION_DIRS: [&str; 3] = ["migrations", "migrate", "alembic"];
+const CI_PREFIXES: [&str; 4] = [
+    ".github/workflows/",
+    ".github/actions/",
+    ".circleci/",
+    ".buildkite/",
+];
+const CI_FILES: [&str; 4] = [
+    ".gitlab-ci.yml",
+    "Jenkinsfile",
+    "azure-pipelines.yml",
+    ".travis.yml",
+];
+const CONFIG_EXT: [&str; 6] = ["toml", "yaml", "yml", "ini", "cfg", "conf"];
+const CONFIG_FILES: [&str; 12] = [
+    "package.json",
+    "tsconfig.json",
+    "Makefile",
+    "CMakeLists.txt",
+    "go.mod",
+    "Gemfile",
+    "requirements.txt",
+    "setup.py",
+    "Dockerfile",
+    ".gitignore",
+    "CLAUDE.md",
+    "AGENTS.md",
+];
+
+/// Why a changed file deserves a careful look, if it does. `inside`: under the session's cwd.
+pub fn look(rel: &str, inside: bool) -> Option<&'static str> {
+    if !inside {
+        return Some("outside repo");
+    }
+    let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+    let in_dir = |set: &[&str]| dirs.split('/').any(|d| set.contains(&d));
+    let ext = Path::new(name).extension().and_then(|e| e.to_str());
+    if in_dir(&MIGRATION_DIRS) || name.contains("migration") {
+        Some("migration")
+    } else if CI_PREFIXES.iter().any(|p| rel.starts_with(p)) || CI_FILES.contains(&name) {
+        Some("CI")
+    } else if [".lock", "-lock.json", "-lock.yaml"]
+        .iter()
+        .any(|x| name.ends_with(x))
+        || ["go.sum", "bun.lockb"].contains(&name)
+    {
+        Some("lockfile")
+    } else if in_dir(&TEST_DIRS)
+        || name.starts_with("test_")
+        || ["_test.", ".test.", ".spec.", "_spec."]
+            .iter()
+            .any(|x| name.contains(x))
+        || name == "conftest.py"
+    {
+        Some("test")
+    } else if ext.is_some_and(|e| CONFIG_EXT.contains(&e))
+        || CONFIG_FILES.contains(&name)
+        || name.starts_with(".env")
+        || in_dir(&[".claude"])
+    {
+        Some("config")
+    } else {
+        None
+    }
+}
+
+/// One entry per path across the groups, flagged files first (riskiest kind first),
+/// then the most lines changed, then by path.
+pub fn review_order(groups: &[Group]) -> Vec<Changed> {
+    let mut by: BTreeMap<&str, Changed> = BTreeMap::new();
+    for f in groups.iter().flat_map(|g| &g.files) {
+        let e = by.entry(&f.path).or_insert_with(|| Changed {
+            path: f.path.clone(),
+            look: f.look,
+            ..Default::default()
+        });
+        e.edits += f.edits;
+        e.added += f.added;
+        e.removed += f.removed;
+    }
+    let rank = |l: Option<&str>| l.and_then(|l| LOOKS.iter().position(|x| *x == l));
+    let mut v: Vec<Changed> = by.into_values().collect();
+    // Stable sort keeps the BTreeMap's path order for ties.
+    v.sort_by_key(|f| {
+        (
+            rank(f.look).unwrap_or(LOOKS.len()),
+            std::cmp::Reverse(f.added + f.removed),
+        )
+    });
+    v
 }
 
 fn fold(events: &[Event]) -> State {
@@ -701,6 +830,67 @@ mod tests {
             false,
         ));
         assert!(quiet.contains("│ nothing happened since "), "{quiet}");
+    }
+
+    #[test]
+    fn look_marks_files_to_check() {
+        assert_eq!(look("~/notes.md", false), Some("outside repo"));
+        assert_eq!(look("db/migrations/001_users.sql", true), Some("migration"));
+        assert_eq!(look(".github/workflows/ci.yml", true), Some("CI"));
+        assert_eq!(look("Cargo.lock", true), Some("lockfile"));
+        assert_eq!(look("web/package-lock.json", true), Some("lockfile"));
+        assert_eq!(look("tests/cli.rs", true), Some("test"));
+        assert_eq!(look("test_calc.py", true), Some("test"));
+        assert_eq!(look("src/auth.test.ts", true), Some("test"));
+        assert_eq!(look("src/snapshots/a.snap", true), Some("test"));
+        assert_eq!(look("Cargo.toml", true), Some("config"));
+        assert_eq!(look(".env.local", true), Some("config"));
+        assert_eq!(look(".claude/settings.json", true), Some("config"));
+        assert_eq!(look("src/main.rs", true), None);
+        assert_eq!(look("docs/testing.md", true), None); // "testing" is not a test dir
+    }
+
+    #[test]
+    fn review_order_riskiest_first() {
+        let f = |path: &str, added: u32, removed: u32| Changed {
+            path: path.into(),
+            edits: 1,
+            added,
+            removed,
+            look: look(path, !path.starts_with('~')),
+        };
+        let groups = [
+            Group {
+                cause: "a".into(),
+                files: vec![
+                    f("src/big.rs", 40, 10),
+                    f("tests/t.rs", 5, 0),
+                    f("src/small.rs", 1, 0),
+                ],
+            },
+            Group {
+                cause: "b".into(),
+                files: vec![
+                    f("src/small.rs", 1, 0),
+                    f("Cargo.toml", 1, 0),
+                    f("~/x.txt", 1, 0),
+                    f(".github/workflows/ci.yml", 2, 0),
+                ],
+            },
+        ];
+        let order = review_order(&groups);
+        assert_eq!(
+            order.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+            [
+                "~/x.txt",
+                ".github/workflows/ci.yml",
+                "tests/t.rs",
+                "Cargo.toml",
+                "src/big.rs",
+                "src/small.rs"
+            ]
+        );
+        assert_eq!((order[5].edits, order[5].added), (2, 2));
     }
 
     #[test]
