@@ -322,6 +322,8 @@ pub fn normalize(raw: &Value, t: u64) -> Option<Event> {
                 .map_or(0, |a| {
                     a.iter()
                         .filter(|t| t.get("status").and_then(Value::as_str) == Some("running"))
+                        // A monitor watches until stopped; it rarely wakes Claude, so the turn is over (D29).
+                        .filter(|t| t.get("type").and_then(Value::as_str) != Some("monitor"))
                         .count()
                 });
             ev.bg = Some(running as u32);
@@ -1282,7 +1284,7 @@ mod tests {
     fn lifecycle_events() {
         let stop = n(
             json!({"hook_event_name":"Stop","last_assistant_message":"\nStill waiting.\nmore",
-            "background_tasks":[{"id":"x","type":"subagent","status":"running"},{"id":"y","status":"completed"}]}),
+            "background_tasks":[{"id":"x","type":"subagent","status":"running"},{"id":"m","type":"monitor","status":"running"},{"id":"y","status":"completed"}]}),
         );
         assert_eq!(stop.bg, Some(1));
         assert_eq!(stop.msg.as_deref(), Some("Still waiting."));
