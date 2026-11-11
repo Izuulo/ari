@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Context at start.** Under the ctx bar `ari watch` shows how much context was already used before Claude's first reply (system prompt, tools, MCP servers, CLAUDE.md, first message), `▲` from 20% of the window; the hub zoom's context box too. Token caches rebuild once.
 - Calm view in `ari watch` names the folder it follows in the top-right of its border.
 - **Review order in `ari recap`.** Changed files are grouped by the task or prompt that caused them, the ones to look at hard (tests, config, lockfiles, CI, migrations, outside the repo) are flagged, and a `review` section suggests an order. `--md` and the `r` view in `ari watch` too.
 - **Your usual, as a baseline.** When a session reads less before editing, or fails and retries more per prompt, than your own past sessions on the same model, `ari watch`'s session section says so (`⚠ reads/edit 2.0 · your usual 6.1`). It needs 5 earlier sessions with at least 5 edits; the counts live in `~/.local/state/ari/quality.jsonl` (no prompts, paths or output). Existing sessions rebuild once.
