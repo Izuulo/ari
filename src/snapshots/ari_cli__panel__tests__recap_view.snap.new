@@ -1,0 +1,35 @@
+---
+source: src/panel.rs
+assertion_line: 3215
+expression: out
+---
+╭─ ARI ──────────────────────── 12:41 ─╮
+│ ● ON TRACK · auth refactor           │
+│ ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 4/7 tasks       │
+│ ▸ now: hook up token refresh         │
+├─ recap (r to close) ─────────────────┤
+│ since start                          │
+├─ tasks ──────────────────────────────┤
+│ ▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱ 2/3 tasks       │
+│ ✓ scaffold                           │
+│ ✓ build                              │
+│ ◻ write docs                         │
+├─ errors ─────────────────────────────┤
+│ 1 hit · 1 fixed · 0 open             │
+│ ✓ cargo test · passed on retry       │
+├─ files ──────────────────────────────┤
+│ 2 edited · 1 to look at              │
+│ › “fix the token refresh”            │
+│   src/a.rs ×2  +30 −4                │
+│   tests/a.rs  +12 · test             │
+├─ review ─────────────────────────────┤
+│ 1. tests/a.rs · test                 │
+│ 2. src/a.rs                          │
+├─ commits ────────────────────────────┤
+│ abc1234 feat: retry the token refre… │
+├─ session ────────────────────────────┤
+│ tests    58 passed → 71 passed       │
+│ cost     $2.69 · +156 −23 lines      │
+│ models   opus-5-5 (main), haiku-5-5… │
+│ mistakes 1 failed call · 2s          │
+╰──────────────────────────────────────╯

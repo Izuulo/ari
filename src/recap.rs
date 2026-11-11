@@ -83,6 +83,10 @@ pub struct Group {
     pub files: Vec<Changed>,
 }
 
+pub(crate) const GROUPS_SHOWN: usize = 6;
+pub(crate) const FILES_PER_GROUP: usize = 8;
+pub(crate) const REVIEW_SHOWN: usize = 10;
+
 /// Look labels, riskiest first: the review order follows this.
 const LOOKS: [&str; 6] = [
     "outside repo",
@@ -549,24 +553,25 @@ pub fn commits(cwd: &str, since_ms: u64) -> Vec<String> {
     out.lines().map(String::from).collect()
 }
 
-fn files_line(r: &Recap) -> String {
-    r.files
-        .iter()
-        .take(8)
-        .map(|(f, n)| {
-            if *n > 1 {
-                format!("{f} ×{n}")
-            } else {
-                f.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-        + &if r.files.len() > 8 {
-            format!(" and {} more", r.files.len() - 8)
-        } else {
-            String::new()
-        }
+/// `path ×n (look)`, for Markdown.
+fn md_file(f: &Changed) -> String {
+    let mut s = f.path.clone();
+    if f.edits > 1 {
+        s += &format!(" ×{}", f.edits);
+    }
+    if let Some(l) = f.look {
+        s += &format!(" ({l})");
+    }
+    s
+}
+
+/// ` and N more` when `n` is over `cap`.
+fn more(n: usize, cap: usize) -> String {
+    if n > cap {
+        format!(" and {} more", n - cap)
+    } else {
+        String::new()
+    }
 }
 
 pub(crate) fn split_line(r: &Recap) -> Option<String> {
@@ -625,7 +630,11 @@ pub(crate) fn mistakes_line(r: &Recap) -> Option<String> {
 /// Markdown bullets, for pasting into a PR.
 pub fn markdown(r: &Recap) -> String {
     let mut out = String::from("### Recap\n\n");
-    let mut item = |k: &str, v: String| out += &format!("- **{k}:** {v}\n");
+    let mut item = |k: &str, v: String| {
+        // Nested bullets start on the next line, with no trailing space.
+        let sep = if v.starts_with('\n') { "" } else { " " };
+        out += &format!("- **{k}:**{sep}{v}\n");
+    };
     if !r.done.is_empty() {
         item("Done", r.done.join(", "));
     }
@@ -655,8 +664,39 @@ pub fn markdown(r: &Recap) -> String {
     if let Some(t) = tests_line(r) {
         item("Tests", t);
     }
-    if !r.files.is_empty() {
-        item("Files", files_line(r));
+    if !r.groups.is_empty() {
+        let hidden = r.groups.len().saturating_sub(GROUPS_SHOWN);
+        let mut v = if hidden > 0 {
+            format!("and {hidden} earlier")
+        } else {
+            String::new()
+        };
+        for g in &r.groups[hidden..] {
+            let shown: Vec<String> = g.files.iter().take(FILES_PER_GROUP).map(md_file).collect();
+            v += &format!(
+                "\n  - {}: {}{}",
+                g.cause,
+                shown.join(", "),
+                more(g.files.len(), FILES_PER_GROUP)
+            );
+        }
+        item("Files", v);
+        let order = review_order(&r.groups);
+        if order.len() >= 2 {
+            let shown: Vec<String> = order
+                .iter()
+                .take(REVIEW_SHOWN)
+                .enumerate()
+                .map(|(i, f)| match f.look {
+                    Some(l) => format!("{}. {} ({l})", i + 1, f.path),
+                    None => format!("{}. {}", i + 1, f.path),
+                })
+                .collect();
+            item(
+                "Review order",
+                shown.join(", ") + &more(order.len(), REVIEW_SHOWN),
+            );
+        }
     }
     if !r.commits.is_empty() {
         item("Commits", r.commits.join("; "));
@@ -678,6 +718,7 @@ mod tests {
     use super::*;
     use crate::event::{Event, to_line};
     use std::path::{Path, PathBuf};
+    use unicode_width::UnicodeWidthStr;
 
     fn fixture_dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("ari-recap-{}-{name}", std::process::id()));
@@ -710,7 +751,12 @@ mod tests {
         assert!(text.contains("│ ✓ scaffold"), "{text}");
         assert!(text.contains("├─ errors "), "{text}");
         assert!(text.contains("│ 1 hit · 1 fixed · 0 open"), "{text}");
-        assert!(text.contains("│ calc.py ×2"), "{text}");
+        assert!(text.contains("│ 2 edited · 1 to look at"), "{text}");
+        assert!(text.contains("│ › task: scaffold"), "{text}");
+        assert!(text.contains("│   test_calc.py  +4 · test"), "{text}");
+        assert!(text.contains("├─ review "), "{text}");
+        assert!(text.contains("│ 1. test_calc.py · test"), "{text}");
+        assert!(text.contains("│ 2. calc.py"), "{text}");
         assert!(text.contains("│ time     "), "{text}");
         assert!(!text.contains("├─ commits"), "not a git repo: {text}");
         assert!(text.trim_end().ends_with('╯'), "{text}");
@@ -720,7 +766,16 @@ mod tests {
             md.contains("- **Done:** scaffold, build, survey, summarize"),
             "{md}"
         );
-        assert!(md.contains("- **Files:** calc.py ×2, test_calc.py"), "{md}");
+        assert!(
+            md.contains(
+                "- **Files:**\n  - task: scaffold: calc.py, test_calc.py (test)\n  - task: build: calc.py\n"
+            ),
+            "{md}"
+        );
+        assert!(
+            md.contains("- **Review order:** 1. test_calc.py (test), 2. calc.py\n"),
+            "{md}"
+        );
     }
 
     #[test]
@@ -973,6 +1028,39 @@ mod tests {
                 ("/elsewhere/x.txt", Some("outside repo"))
             ]
         );
+    }
+
+    #[test]
+    fn long_recap_is_capped() {
+        let mut events = Vec::new();
+        for i in 0..20u64 {
+            events.push(prompt(i * 10_000, &format!("step {i}")));
+            for f in 0..3 {
+                events.push(edit(
+                    i * 10_000 + 1 + f,
+                    "Edit",
+                    &format!("/p/src/m{i}_{f}.rs"),
+                ));
+            }
+        }
+        let r = build(&in_p("long", &events), Since::Start, 300_000);
+        let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 80, false, false));
+        assert_eq!(text.matches("│ › ").count(), 6, "{text}");
+        assert!(text.contains("and 14 earlier"), "{text}");
+        let review = text.split("├─ review").nth(1).unwrap();
+        let numbered = review
+            .lines()
+            .filter(|l| l.starts_with("│ ") && l.contains(". src/"));
+        assert_eq!(numbered.count(), 10, "{text}");
+        assert!(review.contains("and 50 more"), "{text}");
+        assert!(text.lines().all(|l| l.width() <= 80), "{text}");
+        let md = markdown(&r);
+        assert_eq!(md.matches("\n  - “step").count(), 6, "{md}");
+        let rev = md
+            .lines()
+            .find(|l| l.starts_with("- **Review order:**"))
+            .unwrap();
+        assert!(rev.ends_with("and 50 more"), "{md}");
     }
 
     #[test]

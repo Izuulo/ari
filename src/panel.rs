@@ -627,26 +627,71 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
                 .collect(),
         });
     }
-    if !r.files.is_empty() {
-        let mut rows: Vec<Row> = r
-            .files
-            .iter()
-            .take(8)
-            .map(|(f, n)| {
-                let mut row = vec![Span::raw(f.clone())];
-                if *n > 1 {
-                    row.push(c.dim(format!(" ×{n}")));
+    if !r.groups.is_empty() {
+        use crate::recap::{FILES_PER_GROUP, GROUPS_SHOWN, REVIEW_SHOWN};
+        let warn = Style::new().fg(Color::Yellow);
+        let order = crate::recap::review_order(&r.groups);
+        let flagged = order.iter().filter(|f| f.look.is_some()).count();
+        let mut head = format!("{} edited", order.len());
+        if flagged > 0 {
+            head += &format!(" · {flagged} to look at");
+        }
+        let mut rows: Vec<Row> = vec![vec![Span::raw(head)]];
+        let hidden = r.groups.len().saturating_sub(GROUPS_SHOWN);
+        if hidden > 0 {
+            rows.push(vec![c.dim(format!("and {hidden} earlier"))]);
+        }
+        for g in &r.groups[hidden..] {
+            rows.push(vec![c.dim("› "), Span::raw(g.cause.clone())]);
+            for f in g.files.iter().take(FILES_PER_GROUP) {
+                let mut row = vec![Span::raw(format!("  {}", f.path))];
+                if f.edits > 1 {
+                    row.push(c.dim(format!(" ×{}", f.edits)));
                 }
-                row
-            })
-            .collect();
-        if r.files.len() > 8 {
-            rows.push(vec![c.dim(format!("and {} more", r.files.len() - 8))]);
+                if f.added > 0 {
+                    row.push(c.dim(format!("  +{}", f.added)));
+                }
+                if f.removed > 0 {
+                    row.push(c.dim(format!(" −{}", f.removed)));
+                }
+                if let Some(l) = f.look {
+                    row.push(c.span(format!(" · {l}"), warn));
+                }
+                rows.push(row);
+            }
+            if g.files.len() > FILES_PER_GROUP {
+                rows.push(vec![
+                    c.dim(format!("  and {} more", g.files.len() - FILES_PER_GROUP)),
+                ]);
+            }
         }
         out.push(Section {
             title: Some("files"),
             rows,
         });
+        if order.len() >= 2 {
+            let mut rows: Vec<Row> = order
+                .iter()
+                .take(REVIEW_SHOWN)
+                .enumerate()
+                .map(|(i, f)| {
+                    let mut row = vec![Span::raw(format!("{}. {}", i + 1, f.path))];
+                    if let Some(l) = f.look {
+                        row.push(c.span(format!(" · {l}"), warn));
+                    }
+                    row
+                })
+                .collect();
+            if order.len() > REVIEW_SHOWN {
+                rows.push(vec![
+                    c.dim(format!("and {} more", order.len() - REVIEW_SHOWN)),
+                ]);
+            }
+            out.push(Section {
+                title: Some("review"),
+                rows,
+            });
+        }
     }
     if !r.commits.is_empty() {
         let rows = r
@@ -3209,7 +3254,26 @@ pub(crate) mod tests {
                     ..Default::default()
                 },
             )),
-            files: vec![("src/a.rs".into(), 2), ("src/b.rs".into(), 1)],
+            files: vec![("src/a.rs".into(), 2), ("tests/a.rs".into(), 1)],
+            groups: vec![crate::recap::Group {
+                cause: "“fix the token refresh”".into(),
+                files: vec![
+                    crate::recap::Changed {
+                        path: "src/a.rs".into(),
+                        edits: 2,
+                        added: 30,
+                        removed: 4,
+                        look: None,
+                    },
+                    crate::recap::Changed {
+                        path: "tests/a.rs".into(),
+                        edits: 1,
+                        added: 12,
+                        removed: 0,
+                        look: Some("test"),
+                    },
+                ],
+            }],
             commits: vec!["abc1234 feat: retry the token refresh".into()],
             wall_ms: 21 * 60_000,
             cost: Some(2.69),
