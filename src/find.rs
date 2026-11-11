@@ -237,6 +237,19 @@ pub fn search(projects: &Path, query: &str, here: Option<&str>, limit: usize) ->
         .collect()
 }
 
+fn format(h: &Hit) -> String {
+    let title = h.title.as_ref().map(|t| format!("  · {t}"));
+    format!(
+        "{}  {}{}\n  you    {}\n  match  {}\n  {}",
+        crate::panel::local_date(h.mtime_ms),
+        crate::panel::tilde(&h.cwd),
+        title.unwrap_or_default(),
+        h.prompt.as_deref().unwrap_or("(no prompt)"),
+        h.snippet,
+        resume_cmd(&h.cwd, &h.id)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,5 +514,31 @@ mod tests {
     #[test]
     fn missing_projects_dir() {
         assert!(search(Path::new("/nonexistent-ari"), "x", None, 10).is_empty());
+    }
+
+    #[test]
+    fn format_matches_the_spec() {
+        let mut h = Hit {
+            id: "abc".into(),
+            cwd: "/p/My Project".into(),
+            mtime_ms: 1_793_901_768_682,
+            title: Some("auth".into()),
+            prompt: Some("fix it".into()),
+            snippet: "…the token…".into(),
+        };
+        let out = format(&h);
+        let l: Vec<&str> = out.lines().collect();
+        assert_eq!(l.len(), 4);
+        assert!(
+            l[0].starts_with(&crate::panel::local_date(h.mtime_ms)),
+            "{}",
+            l[0]
+        );
+        assert!(l[0].ends_with("/p/My Project  · auth"), "{}", l[0]);
+        assert_eq!(l[1], "  you    fix it");
+        assert_eq!(l[2], "  match  …the token…");
+        assert_eq!(l[3], "  cd '/p/My Project' && claude --resume abc");
+        h.prompt = None;
+        assert_eq!(format(&h).lines().nth(1), Some("  you    (no prompt)"));
     }
 }
