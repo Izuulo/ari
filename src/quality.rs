@@ -1,7 +1,7 @@
 //! Quality baseline: one summary line per session in `<state root>/quality.jsonl`
 //! (counts only: no prompts, paths or output), compared against the user's own usual.
 
-use crate::{hook, paths, state::State};
+use crate::{app::App, hook, paths, state, state::State, usage};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -48,6 +48,18 @@ pub fn record(root: &Path, s: &Summary) {
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_BYTES) {
         compact(root, u64::MAX, s.t);
     }
+}
+
+/// The hook's entry point at main's Stop and at SessionEnd: fold the session, append its summary.
+pub fn on_stop(root: &Path, dir: &Path, id: &str, t: u64, app: App) {
+    let st = state::load_session(dir);
+    if st.turns == 0 {
+        return;
+    }
+    let model = usage::load(dir)
+        .model
+        .unwrap_or_else(|| app.as_str().into());
+    record(root, &Summary::of(id, t, &model, &st));
 }
 
 /// Every session's last summary, oldest first; broken lines are skipped.

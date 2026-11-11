@@ -1,7 +1,8 @@
 //! `ari hook`: called synchronously by Claude Code, Codex and dsh on every hook event.
-//! Rules: always exit 0, never print, append one line, do nothing heavy.
+//! Rules: always exit 0, never print, append one line, do nothing heavy,
+//! except folding the session once per turn at Stop (quality summary).
 
-use crate::{app::App, config, event, notify, paths};
+use crate::{app::App, config, event, notify, paths, quality};
 use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -53,8 +54,12 @@ fn handle(app: App) {
     if ev.e == "SessionStart" {
         let days = cfg.retention_days.max(1);
         prune(&root, Duration::from_secs(days * 86_400), &dir);
+        quality::compact(&root, days * 86_400_000, t);
     }
     let _ = append(&dir.join("events.jsonl"), event::to_line(&ev).as_bytes());
+    if (ev.e == "Stop" && ev.a.is_none()) || ev.e == "SessionEnd" {
+        quality::on_stop(&root, &dir, sid, t, app);
+    }
     if let Some(n) = notify::check(&dir, &cfg, t) {
         notify::send(&n, &cfg.notify);
     }
