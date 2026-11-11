@@ -155,7 +155,7 @@ pub fn check(cur: &Summary, history: &[Summary]) -> Vec<Deviation> {
             let now = rate(cur);
             let usual = median(past.iter().map(|s| rate(s)).collect());
             let worse = if what == "reads/edit" {
-                now <= usual * READS_LOW
+                now <= usual * READS_LOW && now <= usual - RATE_FLOOR
             } else {
                 now >= usual * RATE_HIGH && now >= usual + RATE_FLOOR
             };
@@ -264,6 +264,13 @@ mod tests {
             .map(|i| s(&format!("p{i}"), "Opus", 2, 60, 10, 4, 2))
             .collect();
         assert!(check(&s("cur", "Opus", 2, 90, 10, 0, 0), &h).is_empty());
+    }
+
+    #[test]
+    fn low_usual_reads_need_floor() {
+        // Reads through Bash don't count, so a usual near 1 read/edit: a drop to 0.1 is noise.
+        let h = past("Opus", &[9; 5]);
+        assert!(check(&s("cur", "Opus", 2, 1, 10, 0, 0), &h).is_empty());
     }
 
     #[test]
