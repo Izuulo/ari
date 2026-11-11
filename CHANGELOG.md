@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`ari find <text>`** searches every Claude Code transcript, newest first, and prints each match's folder, date, first prompt, a snippet and the exact `cd … && claude --resume <id>` line. `--here` keeps this folder's sessions, `--limit` shows more than 10.
 - **Context at start.** Under the ctx bar `ari watch` shows how much context was already used before Claude's first reply (system prompt, tools, MCP servers, CLAUDE.md, first message), `▲` from 20% of the window; the hub zoom's context box too. Token caches rebuild once.
 - Calm view in `ari watch` names the folder it follows in the top-right of its border.
 - **Review order in `ari recap`.** Changed files are grouped by the task or prompt that caused them, the ones to look at hard (tests, config, lockfiles, CI, migrations, outside the repo) are flagged, and a `review` section suggests an order. `--md` and the `r` view in `ari watch` too.
