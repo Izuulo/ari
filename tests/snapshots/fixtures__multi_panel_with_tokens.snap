@@ -33,6 +33,7 @@ expression: out
 │ 18s ToolS ToolSearch                           ✓ .0s │
 ├─ usage ──────────────────────────────────────────────┤
 │ ▲ at this pace: 5h limit in ~55m                     │
+│     at start 27k (14%)                               │
 ├─ session ────────────────────────────────────────────┤
 │ cost    $0.12 · $0.03/task done                      │
 │ tokens  481k · 3.1k out · cache 90% hit, saved $0.39 │

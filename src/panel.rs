@@ -1338,6 +1338,22 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> O
 }
 
 const TREND_MS: u64 = 30 * 60_000;
+/// Context already used at start, as a percent of the window, that earns the `▲` warning.
+pub const START_LARGE_PCT: f64 = 20.0;
+
+/// `at start 31k (16%)`: the first request's input side; `None` when unknown.
+pub(crate) fn start_note(start: u64, window: u64) -> Option<(String, bool)> {
+    if start == 0 {
+        return None;
+    }
+    let pct = start as f64 * 100.0 / window.max(1) as f64;
+    let n = format!("at start {} ({pct:.0}%)", fmt_tokens(start));
+    Some(if pct >= START_LARGE_PCT {
+        (format!("▲ {n} · system, tools, MCP, CLAUDE.md"), true)
+    } else {
+        (n, false)
+    })
+}
 
 /// Samples from the 30 min before the newest one that carry a value, as (t, value).
 fn recent(
@@ -1409,6 +1425,15 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         )]);
     }
     rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
+    let start = x.tokens.as_ref().map_or(0, |t| t.main.start);
+    if let Some((text, large)) = start_note(start, u.ctx_size.unwrap_or(200_000)) {
+        let text = format!("    {text}");
+        rows.push(vec![if large {
+            c.span(text, Style::new().fg(Color::Yellow))
+        } else {
+            c.dim(text)
+        }]);
+    }
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
         rows.push(vec![c.span(
@@ -2386,6 +2411,68 @@ pub(crate) mod tests {
             out.contains("↻ edit lib.rs failed 4× in a row") && !out.contains("while stuck"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn start_note_copy() {
+        assert_eq!(
+            start_note(31_000, 200_000),
+            Some(("at start 31k (16%)".into(), false))
+        );
+        assert_eq!(
+            start_note(46_000, 200_000),
+            Some((
+                "▲ at start 46k (23%) · system, tools, MCP, CLAUDE.md".into(),
+                true
+            ))
+        );
+        assert!(start_note(40_000, 200_000).unwrap().1);
+        assert_eq!(
+            start_note(46_000, 1_000_000).unwrap(),
+            ("at start 46k (5%)".into(), false)
+        );
+        assert_eq!(start_note(0, 200_000), None);
+    }
+
+    #[test]
+    fn ctx_at_start_row() {
+        let (st, mut u) = multi();
+        u.ctx_pct = Some(40.0);
+        u.ctx_size = Some(200_000);
+        let at = |start: u64, w: u16| {
+            let x = Extras {
+                tokens: Some(crate::tokens::TokenCache {
+                    main: crate::tokens::Ledger {
+                        start,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let out = lines(
+                &st,
+                &u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                w,
+                60,
+                false,
+            );
+            for l in &out {
+                assert!(l.width() <= w as usize, "line wider than {w}");
+            }
+            to_plain(&out)
+        };
+        let out = at(46_000, 80);
+        let l = |k: &str| out.lines().position(|l| l.contains(k)).unwrap_or(999);
+        assert!(l("▲ at start 46k (23%)") < 999, "{out}");
+        assert!(l("ctx ") < l("▲ at start 46k (23%)"), "{out}");
+        assert!(!at(0, 80).contains("at start"));
+        at(46_000, 40);
     }
 
     #[test]
