@@ -96,8 +96,14 @@ pub fn panel(i: &Input, w: u16, h: u16, color: bool, next: &str) -> Vec<Line<'st
     let hh = h.min(rows.len() as u16 + top + 2);
     let mut buf = Buffer::empty(Rect::new(0, 0, w, hh));
     let title = vec![Span::styled("ARI", bold())];
+    // The folder this panel follows, so you can tell sessions apart at a glance.
+    let room = (w as usize).saturating_sub(14);
+    let folder = match &i.u.dir {
+        Some(d) if room >= 4 => vec![Span::styled(clip(&crate::panel::tilde(d), room), bold())],
+        _ => vec![],
+    };
     let area = buf.area;
-    let inner = frame(&mut buf, area, title, vec![], faint(), false);
+    let inner = frame(&mut buf, area, title, folder, faint(), false);
     let inner = Rect::new(
         inner.x + 2,
         inner.y,
@@ -164,8 +170,12 @@ mod tests {
 
     #[test]
     fn calm_panel_hides_numbers() {
-        let (st, u) = multi();
+        let (st, mut u) = multi();
+        u.dir = Some("/x/proj".into());
         let t = to_plain(&draw(&st, &u, NOW, 60, 40));
+        assert!(t.lines().next().unwrap().contains(" /x/proj ─╮"), "{t}");
+        // Past the top border, which names the folder.
+        let t = t.lines().skip(1).collect::<Vec<_>>().join("\n");
         assert!(!t.contains(['$', '/']) && !t.contains("tok"), "{t}");
         assert!(t.contains("on track") && t.contains("4 of 7 done"), "{t}");
         assert!(t.contains("z Plan") && t.contains("v constellation"), "{t}");
@@ -182,7 +192,8 @@ mod tests {
 
     #[test]
     fn calm_panel_tiny() {
-        let (st, u) = multi();
+        let (st, mut u) = multi();
+        u.dir = Some("/a/really/long/folder/name/for/a/project".into());
         for (w, h) in [(30, 10), (12, 4), (5, 2)] {
             for l in draw(&st, &u, NOW, w, h) {
                 assert!(l.width() <= w as usize, "{w}x{h}");
