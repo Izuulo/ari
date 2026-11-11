@@ -211,6 +211,32 @@ fn scan(path: &Path, mtime_ms: u64, needle: &str, here: Option<&str>) -> Option<
     })
 }
 
+/// Main transcripts (`projects/*/*.jsonl`, not `<id>/subagents/`), newest
+/// first, scanned in that order until `limit` match.
+pub fn search(projects: &Path, query: &str, here: Option<&str>, limit: usize) -> Vec<Hit> {
+    let ms = |m: &std::fs::Metadata| {
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64)
+    };
+    let mut files: Vec<(u64, std::path::PathBuf)> = std::fs::read_dir(projects)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .flat_map(|d| std::fs::read_dir(d.path()).into_iter().flatten().flatten())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|e| Some((ms(&e.metadata().ok().filter(|m| m.is_file())?), e.path())))
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let needle = query.to_ascii_lowercase();
+    files
+        .iter()
+        .filter_map(|(t, p)| scan(p, *t, &needle, here))
+        .take(limit)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,5 +447,59 @@ mod tests {
             ["d"]
         );
         assert!(t(serde_json::json!({"type":"attachment","content":"e"})).is_empty());
+    }
+
+    fn ids(hits: &[Hit]) -> Vec<&str> {
+        hits.iter().map(|h| h.id.as_str()).collect()
+    }
+
+    #[test]
+    fn finds_newest_first() {
+        let r = tmp("newest");
+        project(
+            &r,
+            "-p-a",
+            "a",
+            &[user("/p/a", "fix the token refresh")],
+            100,
+        );
+        let b = [user("/p/b", "hello"), asst("the token refresh works now")];
+        project(&r, "-p-b", "b", &b, 200);
+        project(&r, "-p-c", "c", &[user("/p/c", "unrelated")], 300);
+        let hits = search(&r, "token refresh", None, 10);
+        assert_eq!(ids(&hits), ["b", "a"]);
+        assert_eq!(hits[0].prompt.as_deref(), Some("hello"));
+        assert!(hits[0].snippet.contains("token refresh"));
+        assert_eq!((hits[0].cwd.as_str(), hits[0].mtime_ms), ("/p/b", 200_000));
+    }
+
+    #[test]
+    fn here_filters_by_cwd() {
+        let r = tmp("here");
+        project(&r, "-p-a", "a", &[user("/p/a", "zebra")], 1);
+        project(&r, "-p-b", "b", &[user("/p/b", "zebra")], 2);
+        assert_eq!(ids(&search(&r, "zebra", Some("/p/a"), 10)), ["a"]);
+    }
+
+    #[test]
+    fn limit_caps_results() {
+        let r = tmp("limit");
+        for (id, t) in [("x1", 1), ("x2", 2), ("x3", 3)] {
+            project(&r, "d", id, &[user("/p", "zebra")], t);
+        }
+        assert_eq!(ids(&search(&r, "zebra", None, 2)), ["x3", "x2"]);
+    }
+
+    #[test]
+    fn subagent_transcripts_skipped() {
+        let r = tmp("subagents");
+        project(&r, "d/abc/subagents", "agent-x", &[user("/p", "zebra")], 1);
+        project(&r, "d", "abc", &[user("/p", "hi")], 1);
+        assert!(search(&r, "zebra", None, 10).is_empty());
+    }
+
+    #[test]
+    fn missing_projects_dir() {
+        assert!(search(Path::new("/nonexistent-ari"), "x", None, 10).is_empty());
     }
 }
