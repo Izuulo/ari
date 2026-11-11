@@ -237,6 +237,36 @@ pub fn search(projects: &Path, query: &str, here: Option<&str>, limit: usize) ->
         .collect()
 }
 
+pub fn run(args: &[String]) -> ! {
+    let fail = |code: i32, msg: &str| -> ! {
+        eprintln!("{msg}");
+        std::process::exit(code)
+    };
+    let o = parse(args).unwrap_or_else(|e| fail(2, &format!("ari find: {e}")));
+    let projects = crate::setup::settings_path()
+        .and_then(|p| Some(p.parent()?.join("projects")))
+        .unwrap_or_else(|| fail(2, "ari find: HOME is not set"));
+    if !projects.is_dir() {
+        let p = crate::panel::tilde(&projects.to_string_lossy());
+        fail(1, &format!("no Claude Code transcripts in {p}"));
+    }
+    let here = o.here.then(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let hits = search(&projects, &o.query, here.as_deref(), o.limit);
+    if hits.is_empty() {
+        fail(1, &format!("no session mentions \"{}\"", o.query));
+    }
+    let out: Vec<String> = hits.iter().map(format).collect();
+    println!("{}", out.join("\n\n"));
+    if hits.len() == o.limit {
+        eprintln!("newest {} shown; --limit for more", o.limit);
+    }
+    std::process::exit(0)
+}
+
 fn format(h: &Hit) -> String {
     let title = h.title.as_ref().map(|t| format!("  · {t}"));
     format!(
