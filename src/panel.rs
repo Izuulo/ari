@@ -1425,7 +1425,12 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         )]);
     }
     rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
-    let start = x.tokens.as_ref().map_or(0, |t| t.main.start);
+    // Only under a ctx meter: without the statusline it would hang under another row.
+    let start = x
+        .tokens
+        .as_ref()
+        .filter(|_| u.ctx_pct.is_some())
+        .map_or(0, |t| t.main.start);
     if let Some((text, large)) = start_note(start, u.ctx_size.unwrap_or(200_000)) {
         let text = format!("    {text}");
         rows.push(vec![if large {
@@ -2439,7 +2444,7 @@ pub(crate) mod tests {
         let (st, mut u) = multi();
         u.ctx_pct = Some(40.0);
         u.ctx_size = Some(200_000);
-        let at = |start: u64, w: u16| {
+        let at = |u: &Usage, start: u64, w: u16| {
             let x = Extras {
                 tokens: Some(crate::tokens::TokenCache {
                     main: crate::tokens::Ledger {
@@ -2452,7 +2457,7 @@ pub(crate) mod tests {
             };
             let out = lines(
                 &st,
-                &u,
+                u,
                 &x,
                 &Config::default(),
                 View::default(),
@@ -2467,12 +2472,17 @@ pub(crate) mod tests {
             }
             to_plain(&out)
         };
-        let out = at(46_000, 80);
+        let out = at(&u, 46_000, 80);
         let l = |k: &str| out.lines().position(|l| l.contains(k)).unwrap_or(999);
         assert!(l("▲ at start 46k (23%)") < 999, "{out}");
         assert!(l("ctx ") < l("▲ at start 46k (23%)"), "{out}");
-        assert!(!at(0, 80).contains("at start"));
-        at(46_000, 40);
+        assert!(!at(&u, 0, 80).contains("at start"));
+        u.ctx_pct = None;
+        assert!(
+            !at(&u, 46_000, 80).contains("at start"),
+            "no ctx meter, no row"
+        );
+        at(&u, 46_000, 40);
     }
 
     #[test]
