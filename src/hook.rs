@@ -67,7 +67,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// One `write_all` on an O_APPEND file: lines under 4 KB from concurrent hooks never interleave.
-fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     OpenOptions::new()
         .create(true)
         .append(true)

@@ -52,14 +52,14 @@
   - `const READS: [&str; 3] = ["Read", "Grep", "Glob"];`
   - `CACHE_VERSION` +1 from whatever `main` has (sibling §7 plans bump it too; cached states without the counters are rebuilt from the log).
 
-- [ ] **Step 1: Write the failing test** `quality_counts_reads_edits_failures_retries` in `state.rs` tests, using the existing `ev`/`tool`/`run`/`prompt` helpers. Events: `prompt("go")`; `PostToolUse` with `tool` `Read` (sig `Read:/a`, ok), `Grep` (ok), `Glob` (ok) and a subagent `Read` (`a: Some("sub1")`, sig `Read:/b`, ok); `PostToolUse` `Edit` sig `Edit:/a` ok `Some(true)`; `PostToolUseFailure` `Edit` sig `Edit:/c` ok `Some(false)`; `tool("PostToolUseFailure", "cargo test", Some(false))` twice; one failure with `kind: Some("interrupt")`.
+- [x] **Step 1: Write the failing test** `quality_counts_reads_edits_failures_retries` in `state.rs` tests, using the existing `ev`/`tool`/`run`/`prompt` helpers. Events: `prompt("go")`; `PostToolUse` with `tool` `Read` (sig `Read:/a`, ok), `Grep` (ok), `Glob` (ok) and a subagent `Read` (`a: Some("sub1")`, sig `Read:/b`, ok); `PostToolUse` `Edit` sig `Edit:/a` ok `Some(true)`; `PostToolUseFailure` `Edit` sig `Edit:/c` ok `Some(false)`; `tool("PostToolUseFailure", "cargo test", Some(false))` twice; one failure with `kind: Some("interrupt")`.
   ```rust
   assert_eq!(s.quality, Quality { reads: 4, edits: 1, failed: 3, retries: 1 });
   ```
-- [ ] **Step 2: Run** `cargo test state::tests::quality_counts` — expect FAIL (no `quality` field).
-- [ ] **Step 3: Implement.** In the Post arm, before `self.track_reads(ev, aid)`: `reads += 1` when `ev.tool` is in `READS`; `edits += 1` when it is in `FILE_EDITS` and `ev.ok == Some(true)`. In `tool_result`, after the interrupt early return and the `ok` early return: `failed += 1`; in the existing-error branch (where `e.retries += 1`) also `self.quality.retries += 1`. Bump `CACHE_VERSION` by one.
-- [ ] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
-- [ ] **Step 5: Commit** `feat(state): count reads, edits, failed calls and retries per session`.
+- [x] **Step 2: Run** `cargo test state::tests::quality_counts` — expect FAIL (no `quality` field).
+- [x] **Step 3: Implement.** In the Post arm, before `self.track_reads(ev, aid)`: `reads += 1` when `ev.tool` is in `READS`; `edits += 1` when it is in `FILE_EDITS` and `ev.ok == Some(true)`. In `tool_result`, after the interrupt early return and the `ok` early return: `failed += 1`; in the existing-error branch (where `e.retries += 1`) also `self.quality.retries += 1`. Bump `CACHE_VERSION` by one.
+- [x] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
+- [x] **Step 5: Commit** `feat(state): count reads, edits, failed calls and retries per session`.
 
 ---
 
@@ -80,16 +80,16 @@
   - `pub fn load(root: &Path) -> Vec<Summary>`: unparsable lines skipped; the last line per `id` wins; sorted by `t`, oldest first; missing file → empty.
   - `pub fn compact(root: &Path, max_age_ms: u64, now: u64)`: `load`, drop `now - t > max_age_ms`, keep the newest `MAX_SESSIONS`, rewrite with `paths::write_atomic` (one line each). Missing file → nothing written. Comment: `// shortcut: a Stop line appended during the rewrite is lost; the session's next Stop writes it again.`
 
-- [ ] **Step 1: Write the failing tests** in `quality.rs` (temp dir per test, as in `sessions.rs` tests):
+- [x] **Step 1: Write the failing tests** in `quality.rs` (temp dir per test, as in `sessions.rs` tests):
   - `summary_of_state`: a `State` with `turns: 3` and `quality { reads: 12, edits: 4, failed: 2, retries: 1 }` → `Summary::of("s1", 9, "Opus", &st)` has those numbers, `id == "s1"`, `t == 9`, `model == "Opus"`.
   - `load_keeps_last_line_per_session_and_skips_garbage`: file with `s1 (t=1, reads 1)`, `not json`, `{"id":"s2","t":2}`, half a line `{"id":"s1","t":`, `s1 (t=3, reads 7)` → `load` returns ids `["s2", "s1"]` and `s1.reads == 7`.
   - `compact_drops_old_and_caps_count`: 205 sessions with `t = 1..=205`; `compact(root, u64::MAX, 205)` → 200 lines, oldest `t == 6`, newest `t == 205`; then `compact(root, 100, 300)` → only `t >= 200` remain (6 lines). Every line of the rewritten file parses.
   - `record_appends_and_compacts_past_max_bytes`: write a file just under `MAX_BYTES` of repeated lines for one id `"big"`, `record` another summary → file now has 2 lines (`big` deduped, new one).
   - `missing_file_is_empty_and_not_created`: `load` on an empty dir → empty; `compact` → no file created.
-- [ ] **Step 2: Run** `cargo test quality::` — FAIL.
-- [ ] **Step 3: Implement** the above in `src/quality.rs`.
-- [ ] **Step 4: Run** `cargo test quality::` — PASS.
-- [ ] **Step 5: Commit** `feat(quality): per-session summary history with retention and a size cap`.
+- [x] **Step 2: Run** `cargo test quality::` — FAIL.
+- [x] **Step 3: Implement** the above in `src/quality.rs`.
+- [x] **Step 4: Run** `cargo test quality::` — PASS.
+- [x] **Step 5: Commit** `feat(quality): per-session summary history with retention and a size cap`.
 
 ---
 
