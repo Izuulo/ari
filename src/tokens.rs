@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
-pub(crate) const CACHE_VERSION: u32 = 4;
+pub(crate) const CACHE_VERSION: u32 = 5;
 /// Requests with fewer input-side tokens than this don't move the hit-rate needle.
 const MIN_HIT_TOKENS: u64 = 1000;
 const RECENT_IDS: usize = 16;
@@ -48,6 +48,8 @@ pub struct Ledger {
     pub tool_ids: VecDeque<(String, String)>,
     /// Tools whose results arrived since the latest request.
     pub pending: Vec<String>,
+    /// Input side of the first non-empty request: context used before the first reply.
+    pub start: u64,
 }
 
 impl Ledger {
@@ -165,6 +167,9 @@ impl Ledger {
         self.output += t.output;
         self.requests += 1;
         let side = t.input + t.cache_write + t.cache_read;
+        if self.start == 0 && side > 0 {
+            self.start = side;
+        }
         self.grow(side);
         if side >= MIN_HIT_TOKENS {
             self.prev_hit = self.last_hit;
@@ -515,6 +520,7 @@ mod tests {
             });
         }
         let c = update(&dir, &st, main.to_str());
+        assert_eq!(c.main.start, 27_592);
         assert_eq!(c.agents["a3a6a01361cc3173c"].output, 192);
         assert_eq!(c.agents["a5114050eef69c100"].cache_read, 22432);
         let t = c.total();
@@ -526,6 +532,48 @@ mod tests {
             key(&c),
             "second pass adds nothing"
         );
+    }
+
+    #[test]
+    fn start_is_the_first_request_and_survives_shrink() {
+        let t = [
+            asst("m1", 100, 900, &[]),
+            asst("m2", 100, 1100, &[]),
+            asst("m3", 100, 400, &[]),
+        ];
+        let l = ledger_from(&t.join("\n"));
+        assert_eq!(l.start, 1000);
+        assert_eq!(fill(&l), [("base", 500)]);
+    }
+
+    #[test]
+    fn start_skips_empty_usage() {
+        let t = [asst("m0", 0, 0, &[]), asst("m1", 100, 900, &[])];
+        assert_eq!(ledger_from(&t.join("\n")).start, 1000);
+    }
+
+    #[test]
+    fn start_counts_a_repeated_entry_once() {
+        let t = [
+            asst("m1", 100, 900, &[]),
+            asst("m1", 100, 900, &[]),
+            asst("m2", 100, 1500, &[]),
+        ];
+        assert_eq!(ledger_from(&t.join("\n")).start, 1000);
+    }
+
+    #[test]
+    fn old_cache_version_rereads() {
+        let dir = tmp("oldcache");
+        let main = fixture("multi/transcript.jsonl");
+        let len = std::fs::metadata(&main).unwrap().len();
+        std::fs::write(
+            dir.join("tokens.json"),
+            format!(r#"{{"v":4,"main":{{"offset":{len}}}}}"#),
+        )
+        .unwrap();
+        let c = update(&dir, &State::default(), main.to_str());
+        assert_eq!(c.main.start, 27_592);
     }
 
     #[test]
