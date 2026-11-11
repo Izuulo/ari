@@ -66,6 +66,24 @@ pub fn snippet(text: &str, needle: &str) -> Option<String> {
     ))
 }
 
+/// `cd <cwd> && claude --resume <id>`, the cwd shell-quoted when it needs it.
+pub fn resume_cmd(cwd: &str, id: &str) -> String {
+    if cwd.is_empty() {
+        return format!("claude --resume {id}");
+    }
+    let plain = cwd
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._~+-".contains(c));
+    if plain {
+        format!("cd {cwd} && claude --resume {id}")
+    } else {
+        format!(
+            "cd '{}' && claude --resume {id}",
+            cwd.replace('\'', "'\\''")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +134,22 @@ mod tests {
         );
         assert_eq!(snippet("🦀🦀 crab 🦀", "crab").unwrap(), "🦀🦀 crab 🦀");
         assert_eq!(snippet("nothing", "zzz"), None);
+    }
+
+    #[test]
+    fn resume_command_is_quoted() {
+        assert_eq!(
+            resume_cmd("/p/proj", "abc"),
+            "cd /p/proj && claude --resume abc"
+        );
+        assert_eq!(
+            resume_cmd("/p/My Project", "abc"),
+            "cd '/p/My Project' && claude --resume abc"
+        );
+        assert_eq!(
+            resume_cmd("/tmp/it's", "abc"),
+            "cd '/tmp/it'\\''s' && claude --resume abc"
+        );
+        assert_eq!(resume_cmd("", "abc"), "claude --resume abc");
     }
 }
