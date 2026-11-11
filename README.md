@@ -86,15 +86,22 @@ done      4 tasks
 errors    1 hit · 1 fixed · 0 open
 check     ⚠ skip added · test_calc.py
 tests     58 passed → 71 passed
-files     2 edited
-            calc.py ×2
-            test_calc.py
+files     2 edited · 1 to look at
+            › task: scaffold
+              calc.py  +2
+              test_calc.py  +4 · test
+            › task: build
+              calc.py  +1 −1
+review    1. test_calc.py · test
+          2. calc.py
 commits   1
             e885f9c feat: retry the token refresh
 time      21m · claude 64% · tools 22% · idle 14%
 cost      $2.69 · +156 −23 lines
 models    opus-5-5 (main), haiku-5-5 (2 agents)
 ```
+
+Changed files are grouped by the task in progress when they were edited, else by the prompt you typed. Files to look at hard (outside the repo, migrations, CI, lockfiles, tests, config) are flagged and come first in the review order, then the biggest changes. Only file-tool edits count (not `sed -i`, `mv`, formatters or codegen); with several tasks in progress at once, edits go to the first; a background subagent that edits after your next prompt is credited to that prompt.
 
 `--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
 
