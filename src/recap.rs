@@ -221,7 +221,65 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         Since::Ago(ms) => now.saturating_sub(ms),
     };
     let split_at = events.partition_point(|e| e.t < from);
-    let (before, after) = (fold(&events[..split_at]), fold(&events));
+    let before = fold(&events[..split_at]);
+    // Replay once by hand so each edit sees the task in progress and the last real prompt.
+    let mut after = State::default();
+    let mut prompt: Option<(u64, &str)> = None;
+    let mut files: BTreeMap<String, u32> = BTreeMap::new();
+    let mut groups: Vec<(String, Group)> = Vec::new();
+    for (i, e) in events.iter().enumerate() {
+        let msg = e.msg.as_deref().unwrap_or("");
+        if e.e == "UserPromptSubmit" && !crate::event::is_synthetic(msg) {
+            prompt = Some((e.t, msg));
+        }
+        if i >= split_at
+            && e.e == "PostToolUse"
+            && let Some((tool, path)) = e.sig.as_deref().and_then(|s| s.split_once(':'))
+            && matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+        {
+            let (rel, inside) = rel_path(path, &cwd);
+            *files.entry(rel.clone()).or_default() += 1;
+            let (key, cause) = match (after.now_task(), prompt) {
+                (Some(t), _) => (format!("task:{}", t.id), format!("task: {}", t.subject)),
+                (None, Some((t, m))) => (
+                    format!("prompt:{t}"),
+                    format!("“{}”", crate::event::truncate(m, 50)),
+                ),
+                (None, None) => ("none".into(), "before your first prompt".into()),
+            };
+            let g = match groups.iter().position(|(k, _)| *k == key) {
+                Some(i) => &mut groups[i].1,
+                None => {
+                    groups.push((
+                        key,
+                        Group {
+                            cause,
+                            files: Vec::new(),
+                        },
+                    ));
+                    &mut groups.last_mut().unwrap().1
+                }
+            };
+            let f = match g.files.iter().position(|f| f.path == rel) {
+                Some(i) => &mut g.files[i],
+                None => {
+                    // An unknown cwd says nothing about where the repo is.
+                    let look = look(&rel, inside || cwd.is_empty());
+                    g.files.push(Changed {
+                        path: rel,
+                        look,
+                        ..Default::default()
+                    });
+                    g.files.last_mut().unwrap()
+                }
+            };
+            let (a, d) = e.lines.unwrap_or_default();
+            f.edits += 1;
+            f.added += a;
+            f.removed += d;
+        }
+        after.apply(e);
+    }
     let window = &events[split_at..];
     let was_done = |id: &str| {
         before
@@ -293,21 +351,8 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
     if let Some(last) = after.test_runs.back().filter(|t| t.t >= from) {
         r.tests = Some((before.test_runs.back().copied(), *last));
     }
-    let mut files: BTreeMap<String, u32> = BTreeMap::new();
-    for e in window.iter().filter(|e| e.e == "PostToolUse") {
-        if let Some((tool, path)) = e.sig.as_deref().and_then(|s| s.split_once(':'))
-            && matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
-        {
-            let rel = path
-                .strip_prefix(&cwd)
-                .map(|p| p.trim_start_matches('/'))
-                .filter(|p| !cwd.is_empty() && !p.is_empty())
-                .map(String::from)
-                .unwrap_or_else(|| crate::panel::tilde(path));
-            *files.entry(rel).or_default() += 1;
-        }
-    }
     r.files = files.into_iter().collect();
+    r.groups = groups.into_iter().map(|(_, g)| g).collect();
     r.risky = window
         .iter()
         .filter_map(|e| {
@@ -394,6 +439,18 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         })
         .collect();
     r
+}
+
+/// `path` relative to `cwd` when under it (and whether it was), else tilde'd.
+fn rel_path(path: &str, cwd: &str) -> (String, bool) {
+    match path
+        .strip_prefix(cwd)
+        .map(|p| p.trim_start_matches('/'))
+        .filter(|p| !cwd.is_empty() && !p.is_empty())
+    {
+        Some(p) => (p.to_string(), true),
+        None => (crate::panel::tilde(path), false),
+    }
 }
 
 fn fail(msg: &str) -> ! {
@@ -830,6 +887,150 @@ mod tests {
             false,
         ));
         assert!(quiet.contains("│ nothing happened since "), "{quiet}");
+    }
+
+    fn causes(r: &Recap) -> Vec<&str> {
+        r.groups.iter().map(|g| g.cause.as_str()).collect()
+    }
+
+    fn prompt(t: u64, msg: &str) -> Event {
+        Event {
+            t,
+            e: "UserPromptSubmit".into(),
+            msg: Some(msg.into()),
+            ..Default::default()
+        }
+    }
+
+    fn edit(t: u64, tool: &str, path: &str) -> Event {
+        Event {
+            t,
+            e: "PostToolUse".into(),
+            tool: Some(tool.into()),
+            sig: Some(format!("{tool}:{path}")),
+            ok: Some(true),
+            lines: Some((1, 0)),
+            ..Default::default()
+        }
+    }
+
+    fn in_p(name: &str, events: &[Event]) -> PathBuf {
+        let d = session_from(name, events);
+        std::fs::write(d.join("meta.json"), r#"{"cwd":"/p"}"#).unwrap();
+        d
+    }
+
+    #[test]
+    fn files_grouped_by_task() {
+        let d = fixture_dir("groups");
+        let g = &build(&d, Since::Start, END).groups;
+        assert_eq!(
+            g.iter().map(|g| g.cause.as_str()).collect::<Vec<_>>(),
+            ["task: scaffold", "task: build"]
+        );
+        assert_eq!(
+            g[0].files
+                .iter()
+                .map(|f| (f.path.as_str(), f.added, f.removed, f.look))
+                .collect::<Vec<_>>(),
+            [
+                ("calc.py", 2, 0, None),
+                ("test_calc.py", 4, 0, Some("test"))
+            ]
+        );
+        assert_eq!(
+            (
+                g[1].files[0].path.as_str(),
+                g[1].files[0].added,
+                g[1].files[0].removed
+            ),
+            ("calc.py", 1, 1)
+        );
+    }
+
+    #[test]
+    fn files_grouped_by_prompt_without_tasks() {
+        let d = in_p(
+            "by-prompt",
+            &[
+                prompt(1_000, "fix login"),
+                edit(2_000, "Edit", "/p/src/login.rs"),
+                prompt(5_000, "add tests"),
+                edit(6_000, "Write", "/p/tests/login.rs"),
+                edit(7_000, "Edit", "/elsewhere/x.txt"),
+            ],
+        );
+        let r = build(&d, Since::Start, 8_000);
+        assert_eq!(causes(&r), ["“fix login”", "“add tests”"]);
+        assert_eq!(
+            r.groups[1]
+                .files
+                .iter()
+                .map(|f| (f.path.as_str(), f.look))
+                .collect::<Vec<_>>(),
+            [
+                ("tests/login.rs", Some("test")),
+                ("/elsewhere/x.txt", Some("outside repo"))
+            ]
+        );
+    }
+
+    #[test]
+    fn same_prompt_twice_is_two_groups() {
+        let d = in_p(
+            "twice",
+            &[
+                prompt(1_000, "continue"),
+                edit(2_000, "Edit", "/p/a.rs"),
+                prompt(5_000, "continue"),
+                edit(6_000, "Edit", "/p/a.rs"),
+            ],
+        );
+        assert_eq!(
+            causes(&build(&d, Since::Start, 7_000)),
+            ["“continue”", "“continue”"]
+        );
+    }
+
+    #[test]
+    fn window_mid_turn_keeps_its_prompt() {
+        let d = in_p(
+            "mid-turn",
+            &[prompt(1_000, "refactor"), edit(50_000, "Edit", "/p/a.rs")],
+        );
+        assert_eq!(
+            causes(&build(&d, Since::Ago(20_000), 60_000)),
+            ["“refactor”"]
+        );
+    }
+
+    #[test]
+    fn edits_before_any_prompt() {
+        let d = in_p("no-prompt", &[edit(1_000, "Edit", "/p/a.rs")]);
+        assert_eq!(
+            causes(&build(&d, Since::Start, 2_000)),
+            ["before your first prompt"]
+        );
+    }
+
+    #[test]
+    fn synthetic_prompts_are_not_causes() {
+        let d = in_p(
+            "synthetic",
+            &[
+                prompt(1_000, "ship it"),
+                prompt(2_000, "<task-notification>done</task-notification>"),
+                edit(3_000, "Edit", "/p/a.rs"),
+            ],
+        );
+        assert_eq!(causes(&build(&d, Since::Start, 4_000)), ["“ship it”"]);
+    }
+
+    #[test]
+    fn unknown_cwd_flags_nothing_outside() {
+        let d = session_from("no-cwd", &[edit(1_000, "Edit", "/p/src/a.rs")]);
+        let f = &build(&d, Since::Start, 2_000).groups[0].files[0];
+        assert_eq!((f.path.as_str(), f.look), ("/p/src/a.rs", None));
     }
 
     #[test]
