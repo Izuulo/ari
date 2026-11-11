@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 15;
+const CACHE_VERSION: u32 = 16;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -23,6 +23,7 @@ const UNDO_REPEATS: usize = 2;
 const EDIT_LOG: usize = 60;
 /// Test flags kept per session.
 pub const TEST_FLAGS: usize = 20;
+const RISKY_KEEP: usize = 20;
 const FILE_EDITS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 /// Repeats of earlier work after a compaction that count as redoing it.
 const REDO_MIN: u32 = 3;
@@ -137,6 +138,19 @@ pub struct State {
     pub redo: Option<Redo>,
     /// Test files deleted, skips added, tests edited while red; oldest first.
     pub test_flags: VecDeque<TestFlag>,
+    /// Risky commands that ran, oldest first.
+    pub risky: VecDeque<Risky>,
+}
+
+/// A risky command that ran (see risky.rs); `agent` is the agent id, `main` for main.
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Risky {
+    pub t: u64,
+    pub agent: String,
+    pub rule: String,
+    pub cmd: String,
+    pub ok: bool,
 }
 
 /// A change to the tests worth a look: `skip added`, `deleted` or `edited while failing`.
@@ -634,6 +648,18 @@ impl State {
                 }
                 self.track_reads(ev, aid);
                 self.track_work(ev);
+                if let Some((rule, cmd)) = &ev.risk {
+                    self.risky.push_back(Risky {
+                        t: ev.t,
+                        agent: aid.into(),
+                        rule: rule.clone(),
+                        cmd: cmd.clone(),
+                        ok: ev.ok.unwrap_or(true),
+                    });
+                    if self.risky.len() > RISKY_KEEP {
+                        self.risky.pop_front();
+                    }
+                }
                 if let Some((pass, fail)) = ev.tests {
                     self.test_runs.push_back(TestRun {
                         t: ev.t,
@@ -1851,6 +1877,27 @@ mod tests {
         }]);
         assert_eq!(s.tasks[0].owner.as_deref(), Some("impl"));
         assert_eq!(s.tasks[0].blocked, ["3"]);
+    }
+
+    #[test]
+    fn risky_commands_are_kept() {
+        let mut st = State::default();
+        for i in 0..22u64 {
+            let last = i == 21;
+            st.apply(&Event {
+                t: 1_000 + i,
+                tool: Some("Bash".into()),
+                a: last.then(|| "ag1".into()),
+                ok: Some(!last),
+                risk: Some(("recursive delete".into(), format!("rm -r d{i}"))),
+                ..ev("PostToolUse")
+            });
+        }
+        st.apply(&ev("PostToolUse"));
+        assert_eq!(st.risky.len(), 20);
+        assert_eq!(st.risky.front().unwrap().cmd, "rm -r d2");
+        let back = st.risky.back().unwrap();
+        assert_eq!((back.agent.as_str(), back.ok), ("ag1", false));
     }
 
     fn ev(e: &str) -> Event {

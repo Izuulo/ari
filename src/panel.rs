@@ -280,6 +280,9 @@ pub fn lines(
                         )],
                     );
                 }
+                if let Some(r) = risky_row(st, &c, now) {
+                    rows.insert(1.min(rows.len()), r);
+                }
                 if let Some(b) = badges(st, u, &c) {
                     rows.insert(1.min(rows.len()), b);
                 }
@@ -594,6 +597,23 @@ fn recap_sections(r: &Recap, c: &Ctx, header: bool) -> Vec<Section> {
         out.push(Section {
             title: Some("errors"),
             rows,
+        });
+    }
+    if !r.risky.is_empty() {
+        let warn = Style::new().fg(Color::Yellow);
+        let row = |k: &crate::state::Risky| {
+            let mut t = format!("{} · {}", k.cmd, k.rule);
+            if k.agent != "main" {
+                t += &format!(" · {}", k.agent);
+            }
+            if !k.ok {
+                t += " · failed";
+            }
+            vec![c.span("⚠ ", warn), Span::raw(t)]
+        };
+        out.push(Section {
+            title: Some("risky"),
+            rows: r.risky.iter().map(row).collect(),
         });
     }
     if !r.test_flags.is_empty() {
@@ -1381,6 +1401,22 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
 }
 
 /// Model, effort, mode, worktree, PR and line counts in one dim row; each part only when known.
+/// The latest risky command that ran, and how many older ones are kept.
+fn risky_row(st: &State, c: &Ctx, now: u64) -> Option<Row> {
+    let r = st.risky.back()?;
+    let mut s = format!(
+        "⚠ ran {} · {} · {}",
+        r.cmd,
+        r.rule,
+        age(now.saturating_sub(r.t))
+    );
+    if st.risky.len() > 1 {
+        s += &format!(" · +{} more", st.risky.len() - 1);
+    }
+    let warn = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    Some(vec![c.span(s, warn)])
+}
+
 fn badges(st: &State, u: &Usage, c: &Ctx) -> Option<Row> {
     let mut parts: Vec<Span<'static>> = Vec::new();
     parts.extend(u.model.clone().map(|m| c.dim(m)));
@@ -2368,6 +2404,51 @@ pub(crate) mod tests {
         assert_eq!(st.verdict(), crate::state::Verdict::Done);
         let out = render(&st, &u, View::default(), 60, 60);
         assert!(out.contains("DONE · tests failing"), "{out}");
+    }
+
+    #[test]
+    fn risky_row_under_the_verdict() {
+        let (mut st, u) = multi();
+        assert!(!render(&st, &u, View::default(), 80, 40).contains("⚠ ran"));
+        for (t, rule, cmd) in [
+            (
+                NOW - 180_000,
+                "discards uncommitted work",
+                "git reset --hard",
+            ),
+            (NOW - 60_000, "delete outside repo", "rm -rf ../x"),
+        ] {
+            st.apply(&crate::event::Event {
+                t,
+                e: "PostToolUse".into(),
+                tool: Some("Bash".into()),
+                ok: Some(true),
+                risk: Some((rule.into(), cmd.into())),
+                ..Default::default()
+            });
+        }
+        let out = render(&st, &u, View::default(), 80, 40);
+        assert!(
+            out.contains("⚠ ran rm -rf ../x · delete outside repo · 1m · +1 more"),
+            "{out}"
+        );
+        let cfg = Config {
+            ascii: true,
+            ..Config::default()
+        };
+        let asc = to_plain(&lines(
+            &st,
+            &u,
+            &Extras::default(),
+            &cfg,
+            View::default(),
+            NOW,
+            "12:41",
+            80,
+            40,
+            false,
+        ));
+        assert!(asc.contains("! ran rm -rf ../x"), "{asc}");
     }
 
     #[test]

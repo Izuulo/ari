@@ -17,6 +17,7 @@ pub mod panel;
 pub mod paths;
 pub mod recap;
 pub mod replay;
+pub mod risky;
 pub mod sessions;
 pub mod settings;
 pub mod setup;

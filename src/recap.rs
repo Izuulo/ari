@@ -61,6 +61,8 @@ pub struct Recap {
     pub reread: u32,
     /// Test changes in the window: `{kind} · {file}`.
     pub test_flags: Vec<String>,
+    /// Risky commands that ran in the window, oldest first; `agent` is the agent's label.
+    pub risky: Vec<crate::state::Risky>,
 }
 
 fn fold(events: &[Event]) -> State {
@@ -177,6 +179,28 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         }
     }
     r.files = files.into_iter().collect();
+    r.risky = window
+        .iter()
+        .filter_map(|e| {
+            let (rule, cmd) = e.risk.clone()?;
+            let agent = match e.a.as_deref() {
+                None | Some("main") => "main".to_string(),
+                Some(id) => after
+                    .agents
+                    .iter()
+                    .find(|a| a.id == id)
+                    .map_or_else(|| id.to_string(), |a| a.label()),
+            };
+            let ok = e.ok.unwrap_or(true);
+            Some(crate::state::Risky {
+                t: e.t,
+                agent,
+                rule,
+                cmd,
+                ok,
+            })
+        })
+        .collect();
     r.files.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     if !cwd.is_empty() {
         r.commits = commits(&cwd, from);
@@ -435,6 +459,10 @@ pub fn markdown(r: &Recap) -> String {
     if !r.still_open.is_empty() {
         item("Failing", r.still_open.join(", "));
     }
+    if !r.risky.is_empty() {
+        let each = r.risky.iter().map(|k| format!("{} ({})", k.cmd, k.rule));
+        item("Risky", each.collect::<Vec<_>>().join("; "));
+    }
     if !r.test_flags.is_empty() {
         item("Check", r.test_flags.join(", "));
     }
@@ -520,6 +548,55 @@ mod tests {
             "hit before the window, fixed in it"
         );
         assert_eq!(r.files, vec![("calc.py".to_string(), 1)]);
+    }
+
+    #[test]
+    fn risky_commands_in_the_window() {
+        let ran = |t: u64, cmd: &str, rule: &str| Event {
+            t,
+            e: "PostToolUse".into(),
+            tool: Some("Bash".into()),
+            ok: Some(true),
+            risk: Some((rule.into(), cmd.into())),
+            ..Default::default()
+        };
+        let d = session_from(
+            "risky",
+            &[
+                ran(1_000, "git reset --hard", "discards uncommitted work"),
+                Event {
+                    a: Some("ag1".into()),
+                    at: Some("Explore".into()),
+                    ok: Some(false),
+                    ..ran(60_000, "rm -rf ../x", "delete outside repo")
+                },
+            ],
+        );
+        assert_eq!(build(&d, Since::Start, 70_000).risky.len(), 2);
+        let r = build(&d, Since::Ago(30_000), 70_000);
+        assert_eq!(r.risky.len(), 1);
+        assert_eq!(
+            (r.risky[0].cmd.as_str(), r.risky[0].ok),
+            ("rm -rf ../x", false)
+        );
+        let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 60, false, false));
+        assert!(text.contains("├─ risky "), "{text}");
+        assert!(
+            text.contains("⚠ rm -rf ../x · delete outside repo · Explore · failed"),
+            "{text}"
+        );
+        assert!(
+            markdown(&r).contains("- **Risky:** rm -rf ../x (delete outside repo)"),
+            "{}",
+            markdown(&r)
+        );
+    }
+
+    #[test]
+    fn no_risky_section_when_clean() {
+        let r = build(&fixture_dir("clean"), Since::Start, END);
+        let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 60, false, false));
+        assert!(!text.contains("├─ risky"), "{text}");
     }
 
     fn session_from(name: &str, events: &[Event]) -> PathBuf {

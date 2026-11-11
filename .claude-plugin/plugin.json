@@ -1,6 +1,6 @@
 {
   "name": "ari",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "All Relevant Information: a zero-token status panel for Claude Code. Stop asking Claude how it's going.",
   "author": { "name": "Finn Ritter", "url": "https://github.com/Izuulo" },
   "homepage": "https://github.com/Izuulo/ari",
