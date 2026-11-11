@@ -46,6 +46,8 @@ struct App {
     st: State,
     usage: Usage,
     x: bar::Extras,
+    /// Past sessions' quality summaries, read when a session is picked (not per frame).
+    history: Vec<crate::quality::Summary>,
     /// The session repo's git section, refreshed off-thread.
     git: crate::git::Watcher,
     /// `ari hub --all`: each live session's repo, by session folder.
@@ -169,6 +171,7 @@ impl App {
                 self.st = State::default();
                 self.usage = Usage::default();
                 self.x = bar::Extras::default();
+                self.history = crate::quality::load(&self.root);
             }
         }
         let Some(dir) = &self.dir else { return };
@@ -216,6 +219,10 @@ impl App {
             self.x.samples = burn::recent(dir);
             self.x.compacts_in = burn::forecast(dir, &self.st, &self.cfg);
             self.x.plan = state::plan_file(&self.st);
+            let id = dir.file_name().unwrap_or_default().to_string_lossy();
+            let model = (self.usage.model.as_deref()).unwrap_or(self.session_app.as_str());
+            let cur = crate::quality::Summary::of(&id, now, model, &self.st);
+            self.x.quality = crate::quality::check(&cur, &self.history);
         }
         self.git.poll(self.usage.dir.as_deref());
         self.x.git = self.git.git.clone();
@@ -924,6 +931,7 @@ pub fn run(args: &[String]) -> ! {
         st: State::default(),
         usage: Usage::default(),
         x: bar::Extras::default(),
+        history: Vec::new(),
         git: Default::default(),
         gits: Default::default(),
         mtimes: (None, None),
@@ -1551,6 +1559,36 @@ mod key_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn quality_deviation_reaches_extras() {
+        let root = std::env::temp_dir().join(format!("ari-quality-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let past: String = (0..5)
+            .map(|i| {
+                format!(
+                    "{{\"id\":\"p{i}\",\"t\":{i},\"model\":\"claude\",\"turns\":2,\"reads\":60,\"edits\":10}}\n"
+                )
+            })
+            .collect();
+        std::fs::write(root.join(crate::quality::FILE), past).unwrap();
+        let mut events = vec![r#"{"t":1,"e":"UserPromptSubmit","msg":"go"}"#.to_string()];
+        for t in 2..8 {
+            events.push(format!(
+                r#"{{"t":{t},"e":"PostToolUse","tool":"Edit","ok":true}}"#
+            ));
+        }
+        for t in 8..10 {
+            events.push(format!(
+                r#"{{"t":{t},"e":"PostToolUse","tool":"Read","ok":true}}"#
+            ));
+        }
+        let mut app = app_on(&root, "cur", &events);
+        app.refresh();
+        assert_eq!(app.x.quality.first().map(|d| d.what), Some("reads/edit"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn app_on(root: &Path, id: &str, events: &[String]) -> App {
         let d = root.join("sessions").join(id);
         std::fs::create_dir_all(&d).unwrap();
@@ -1572,6 +1610,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            history: Vec::new(),
             git: Default::default(),
             gits: Default::default(),
             mtimes: (None, None),
@@ -2082,6 +2121,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            history: Vec::new(),
             git: Default::default(),
             gits: Default::default(),
             mtimes: (None, None),
@@ -2161,6 +2201,7 @@ mod key_tests {
             st: State::default(),
             usage: Usage::default(),
             x: bar::Extras::default(),
+            history: Vec::new(),
             git: Default::default(),
             gits: Default::default(),
             mtimes: (None, None),

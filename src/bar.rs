@@ -36,6 +36,8 @@ pub struct Extras {
     pub repos: Vec<crate::git::Repo>,
     /// `ari hub --all`: each session's checkbox plan file, by session key, in place of `plan`.
     pub plans: Vec<(String, crate::state::PlanFile)>,
+    /// Rates worse than the user's usual on this model (panel only).
+    pub quality: Vec<crate::quality::Deviation>,
 }
 
 /// Forecasts are only worth showing this close.
