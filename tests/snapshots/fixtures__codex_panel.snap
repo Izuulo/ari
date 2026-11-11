@@ -3,7 +3,7 @@ source: tests/fixtures.rs
 expression: out
 ---
 ╭─ ARI ──────────────────────────────────────── 12:00 ─╮
-│ ◌ IDLE · unverified · Codex · Run the tests and fix… │
+│ ✓ DONE · tests failing · Codex · Run the tests and … │
 │ gpt-5.5-codex                                        │
 ├─ agents ─────────────────────────────────────────────┤
 │ ◌ main      idle                                     │

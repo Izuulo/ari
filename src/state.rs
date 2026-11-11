@@ -8,7 +8,7 @@ use std::path::Path;
 pub const STALE_MS: u64 = 300_000;
 const RECENT: usize = 10;
 const MAX_ERRORS: usize = 100;
-const CACHE_VERSION: u32 = 16;
+const CACHE_VERSION: u32 = 17;
 const CALLS: usize = 30;
 const STUCK_WINDOW: usize = 10;
 const RECENT_CALLS: usize = 40;
@@ -74,9 +74,9 @@ const WAITS_ON_YOU: [&str; 3] = [
     "elicitation_url_dialog",
 ];
 
-const NEEDS_YOU: [&str; 5] = [
+/// `idle_prompt` is left out: it fires 60 s after every finished turn, so it would hide DONE (D29).
+const NEEDS_YOU: [&str; 4] = [
     "permission_prompt",
-    "idle_prompt",
     "agent_needs_input",
     "elicitation_dialog",
     "elicitation_url_dialog",
@@ -1180,7 +1180,8 @@ impl State {
                 return Verdict::Blocked;
             }
             let (done, total) = self.tasks_done();
-            return if total > 0 && done == total {
+            // A finished answer is DONE; a turn that stopped with tasks still open is IDLE.
+            return if (self.turns > 0 || total > 0) && done == total {
                 Verdict::Done
             } else {
                 Verdict::Idle
@@ -2292,7 +2293,7 @@ mod tests {
         assert_eq!(s.verdict(), Verdict::OnTrack);
         assert_eq!(s.open_errors(), 1);
         s.apply(&stop(0));
-        assert_eq!(s.verdict(), Verdict::Idle);
+        assert_eq!(s.verdict(), Verdict::Done);
     }
 
     #[test]
@@ -2336,7 +2337,22 @@ mod tests {
         ]);
         assert_eq!(s.verdict(), Verdict::Idle);
         let s = run(&[prompt("go"), stop(0)]);
-        assert_eq!(s.verdict(), Verdict::Idle);
+        assert_eq!(
+            s.verdict(),
+            Verdict::Done,
+            "an answer with no task list is done"
+        );
+        assert_eq!(State::default().verdict(), Verdict::Idle);
+    }
+
+    #[test]
+    fn idle_prompt_after_an_answer_is_not_needs_you() {
+        let idle = Event {
+            kind: Some("idle_prompt".into()),
+            ..ev("Notification")
+        };
+        let s = run(&[prompt("what is X?"), stop(0), idle]);
+        assert_eq!(s.verdict(), Verdict::Done);
     }
 
     #[test]

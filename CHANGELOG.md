@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A finished answer now reads DONE, not IDLE, when the turn had no task list. It no longer turns into NEEDS YOU a minute later (Claude Code's "waiting for your input" reminder), and a running monitor no longer keeps it ON TRACK. IDLE now means the turn stopped with tasks still open. Existing sessions rebuild once.
+
 ## 0.4.0 - 2026-11-09
 
 - **Risky commands.** `ari watch` shows the latest risky Bash command that ran under the verdict (recursive deletes, deletes outside the repo, `git reset --hard`, force pushes, forced cleans, discarded changes, deleted branches, `DROP TABLE`, raw disk writes) and `ari recap` lists every one. Watch-only: nothing is blocked.

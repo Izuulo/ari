@@ -440,8 +440,8 @@ mod tests {
         let (st, u, x, now) = frame_for(&STUCK, App::Codex, &evs, u64::MAX);
         assert_eq!(
             st.verdict(),
-            Verdict::Idle,
-            "no task list, so it ends idle, not done"
+            Verdict::Done,
+            "no task list, and the turn ended cleanly"
         );
         assert!(reaches_stuck(&evs, App::Codex));
         assert_eq!(x.app, App::Codex);
@@ -478,7 +478,7 @@ mod tests {
             "failures still show"
         );
         let (st, u, x, now) = frame_for(&STUCK, App::Dsh, &evs, u64::MAX);
-        assert_eq!(st.verdict(), Verdict::Idle);
+        assert_eq!(st.verdict(), Verdict::Done);
         assert!(reaches_stuck(&evs, App::Dsh));
         assert_eq!(u, Usage::default());
         assert!(x.tokens.is_none());
