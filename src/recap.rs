@@ -63,6 +63,151 @@ pub struct Recap {
     pub test_flags: Vec<String>,
     /// Risky commands that ran in the window, oldest first; `agent` is the agent's label.
     pub risky: Vec<crate::state::Risky>,
+    /// Changed files by the task or prompt that caused them, in order of first edit.
+    pub groups: Vec<Group>,
+}
+
+/// A file changed in the window; `path` as `Recap.files` shows it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changed {
+    pub path: String,
+    pub edits: u32,
+    pub added: u32,
+    pub removed: u32,
+    pub look: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Group {
+    pub cause: String,
+    pub files: Vec<Changed>,
+}
+
+pub(crate) const GROUPS_SHOWN: usize = 6;
+pub(crate) const FILES_PER_GROUP: usize = 8;
+pub(crate) const REVIEW_SHOWN: usize = 10;
+
+/// Look labels, riskiest first: the review order follows this.
+const LOOKS: [&str; 6] = [
+    "outside repo",
+    "migration",
+    "CI",
+    "lockfile",
+    "test",
+    "config",
+];
+const TEST_DIRS: [&str; 8] = [
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "e2e",
+    "fixtures",
+    "snapshots",
+    "__snapshots__",
+];
+const MIGRATION_DIRS: [&str; 3] = ["migrations", "migrate", "alembic"];
+const CI_PREFIXES: [&str; 4] = [
+    ".github/workflows/",
+    ".github/actions/",
+    ".circleci/",
+    ".buildkite/",
+];
+const CI_FILES: [&str; 4] = [
+    ".gitlab-ci.yml",
+    "Jenkinsfile",
+    "azure-pipelines.yml",
+    ".travis.yml",
+];
+const CONFIG_EXT: [&str; 6] = ["toml", "yaml", "yml", "ini", "cfg", "conf"];
+const CONFIG_FILES: [&str; 12] = [
+    "package.json",
+    "tsconfig.json",
+    "Makefile",
+    "CMakeLists.txt",
+    "go.mod",
+    "Gemfile",
+    "requirements.txt",
+    "setup.py",
+    "Dockerfile",
+    ".gitignore",
+    "CLAUDE.md",
+    "AGENTS.md",
+];
+
+/// Why a changed file deserves a careful look, if it does. `inside`: under the session's cwd.
+pub fn look(rel: &str, inside: bool) -> Option<&'static str> {
+    if !inside {
+        // Scratch files in the temp dir aren't changes to review.
+        let temp = [
+            "/tmp/",
+            "/private/tmp/",
+            "/var/folders/",
+            "/private/var/folders/",
+        ];
+        return (!temp.iter().any(|t| rel.starts_with(t))).then_some("outside repo");
+    }
+    // A subagent's worktree is a checkout of the repo: judge the path inside it.
+    let rel = rel
+        .strip_prefix(".claude/worktrees/")
+        .and_then(|r| r.split_once('/'))
+        .map_or(rel, |(_, r)| r);
+    let (dirs, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+    let in_dir = |set: &[&str]| dirs.split('/').any(|d| set.contains(&d));
+    let ext = Path::new(name).extension().and_then(|e| e.to_str());
+    if in_dir(&MIGRATION_DIRS) || name.contains("migration") {
+        Some("migration")
+    } else if CI_PREFIXES.iter().any(|p| rel.starts_with(p)) || CI_FILES.contains(&name) {
+        Some("CI")
+    } else if [".lock", "-lock.json", "-lock.yaml"]
+        .iter()
+        .any(|x| name.ends_with(x))
+        || ["go.sum", "bun.lockb"].contains(&name)
+    {
+        Some("lockfile")
+    } else if in_dir(&TEST_DIRS)
+        || name.starts_with("test_")
+        || ["_test.", ".test.", ".spec.", "_spec."]
+            .iter()
+            .any(|x| name.contains(x))
+        || name == "conftest.py"
+    {
+        Some("test")
+    } else if ext.is_some_and(|e| CONFIG_EXT.contains(&e))
+        || CONFIG_FILES.contains(&name)
+        || name.starts_with(".env")
+        || in_dir(&[".claude"])
+    {
+        Some("config")
+    } else {
+        None
+    }
+}
+
+/// One entry per path across the groups, flagged files first (riskiest kind first),
+/// then the most lines changed, then by path.
+pub fn review_order(groups: &[Group]) -> Vec<Changed> {
+    let mut by: BTreeMap<&str, Changed> = BTreeMap::new();
+    for f in groups.iter().flat_map(|g| &g.files) {
+        let e = by.entry(&f.path).or_insert_with(|| Changed {
+            path: f.path.clone(),
+            look: f.look,
+            ..Default::default()
+        });
+        e.edits += f.edits;
+        e.added += f.added;
+        e.removed += f.removed;
+    }
+    let rank = |l: Option<&str>| l.and_then(|l| LOOKS.iter().position(|x| *x == l));
+    let mut v: Vec<Changed> = by.into_values().collect();
+    // Stable sort keeps the BTreeMap's path order for ties.
+    v.sort_by_key(|f| {
+        (
+            rank(f.look).unwrap_or(LOOKS.len()),
+            std::cmp::Reverse(f.added + f.removed),
+        )
+    });
+    v
 }
 
 fn fold(events: &[Event]) -> State {
@@ -92,7 +237,65 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         Since::Ago(ms) => now.saturating_sub(ms),
     };
     let split_at = events.partition_point(|e| e.t < from);
-    let (before, after) = (fold(&events[..split_at]), fold(&events));
+    let before = fold(&events[..split_at]);
+    // Replay once by hand so each edit sees the task in progress and the last real prompt.
+    let mut after = State::default();
+    let mut prompt: Option<(u64, &str)> = None;
+    let mut files: BTreeMap<String, u32> = BTreeMap::new();
+    let mut groups: Vec<(String, Group)> = Vec::new();
+    for (i, e) in events.iter().enumerate() {
+        let msg = e.msg.as_deref().unwrap_or("");
+        if e.e == "UserPromptSubmit" && !crate::event::is_synthetic(msg) {
+            prompt = Some((e.t, msg));
+        }
+        if i >= split_at
+            && e.e == "PostToolUse"
+            && let Some((tool, path)) = e.sig.as_deref().and_then(|s| s.split_once(':'))
+            && matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+        {
+            let (rel, inside) = rel_path(path, &cwd);
+            *files.entry(rel.clone()).or_default() += 1;
+            let (key, cause) = match (after.now_task(), prompt) {
+                (Some(t), _) => (format!("task:{}", t.id), format!("task: {}", t.subject)),
+                (None, Some((t, m))) => (
+                    format!("prompt:{t}"),
+                    format!("“{}”", crate::event::truncate(m, 50)),
+                ),
+                (None, None) => ("none".into(), "before your first prompt".into()),
+            };
+            let g = match groups.iter().position(|(k, _)| *k == key) {
+                Some(i) => &mut groups[i].1,
+                None => {
+                    groups.push((
+                        key,
+                        Group {
+                            cause,
+                            files: Vec::new(),
+                        },
+                    ));
+                    &mut groups.last_mut().unwrap().1
+                }
+            };
+            let f = match g.files.iter().position(|f| f.path == rel) {
+                Some(i) => &mut g.files[i],
+                None => {
+                    // An unknown cwd says nothing about where the repo is.
+                    let look = look(&rel, inside || cwd.is_empty());
+                    g.files.push(Changed {
+                        path: rel,
+                        look,
+                        ..Default::default()
+                    });
+                    g.files.last_mut().unwrap()
+                }
+            };
+            let (a, d) = e.lines.unwrap_or_default();
+            f.edits += 1;
+            f.added += a;
+            f.removed += d;
+        }
+        after.apply(e);
+    }
     let window = &events[split_at..];
     let was_done = |id: &str| {
         before
@@ -164,21 +367,8 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
     if let Some(last) = after.test_runs.back().filter(|t| t.t >= from) {
         r.tests = Some((before.test_runs.back().copied(), *last));
     }
-    let mut files: BTreeMap<String, u32> = BTreeMap::new();
-    for e in window.iter().filter(|e| e.e == "PostToolUse") {
-        if let Some((tool, path)) = e.sig.as_deref().and_then(|s| s.split_once(':'))
-            && matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
-        {
-            let rel = path
-                .strip_prefix(&cwd)
-                .map(|p| p.trim_start_matches('/'))
-                .filter(|p| !cwd.is_empty() && !p.is_empty())
-                .map(String::from)
-                .unwrap_or_else(|| crate::panel::tilde(path));
-            *files.entry(rel).or_default() += 1;
-        }
-    }
     r.files = files.into_iter().collect();
+    r.groups = groups.into_iter().map(|(_, g)| g).collect();
     r.risky = window
         .iter()
         .filter_map(|e| {
@@ -265,6 +455,18 @@ pub fn build(dir: &Path, since: Since, now: u64) -> Recap {
         })
         .collect();
     r
+}
+
+/// `path` relative to `cwd` when under it (and whether it was), else tilde'd.
+fn rel_path(path: &str, cwd: &str) -> (String, bool) {
+    match path
+        .strip_prefix(cwd)
+        .map(|p| p.trim_start_matches('/'))
+        .filter(|p| !cwd.is_empty() && !p.is_empty())
+    {
+        Some(p) => (p.to_string(), true),
+        None => (crate::panel::tilde(path), false),
+    }
 }
 
 fn fail(msg: &str) -> ! {
@@ -363,24 +565,25 @@ pub fn commits(cwd: &str, since_ms: u64) -> Vec<String> {
     out.lines().map(String::from).collect()
 }
 
-fn files_line(r: &Recap) -> String {
-    r.files
-        .iter()
-        .take(8)
-        .map(|(f, n)| {
-            if *n > 1 {
-                format!("{f} ×{n}")
-            } else {
-                f.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-        + &if r.files.len() > 8 {
-            format!(" and {} more", r.files.len() - 8)
-        } else {
-            String::new()
-        }
+/// `path ×n (look)`, for Markdown.
+fn md_file(f: &Changed) -> String {
+    let mut s = f.path.clone();
+    if f.edits > 1 {
+        s += &format!(" ×{}", f.edits);
+    }
+    if let Some(l) = f.look {
+        s += &format!(" ({l})");
+    }
+    s
+}
+
+/// ` and N more` when `n` is over `cap`.
+fn more(n: usize, cap: usize) -> String {
+    if n > cap {
+        format!(" and {} more", n - cap)
+    } else {
+        String::new()
+    }
 }
 
 pub(crate) fn split_line(r: &Recap) -> Option<String> {
@@ -439,7 +642,11 @@ pub(crate) fn mistakes_line(r: &Recap) -> Option<String> {
 /// Markdown bullets, for pasting into a PR.
 pub fn markdown(r: &Recap) -> String {
     let mut out = String::from("### Recap\n\n");
-    let mut item = |k: &str, v: String| out += &format!("- **{k}:** {v}\n");
+    let mut item = |k: &str, v: String| {
+        // Nested bullets start on the next line, with no trailing space.
+        let sep = if v.starts_with('\n') { "" } else { " " };
+        out += &format!("- **{k}:**{sep}{v}\n");
+    };
     if !r.done.is_empty() {
         item("Done", r.done.join(", "));
     }
@@ -469,8 +676,39 @@ pub fn markdown(r: &Recap) -> String {
     if let Some(t) = tests_line(r) {
         item("Tests", t);
     }
-    if !r.files.is_empty() {
-        item("Files", files_line(r));
+    if !r.groups.is_empty() {
+        let hidden = r.groups.len().saturating_sub(GROUPS_SHOWN);
+        let mut v = if hidden > 0 {
+            format!("and {hidden} earlier")
+        } else {
+            String::new()
+        };
+        for g in &r.groups[hidden..] {
+            let shown: Vec<String> = g.files.iter().take(FILES_PER_GROUP).map(md_file).collect();
+            v += &format!(
+                "\n  - {}: {}{}",
+                g.cause,
+                shown.join(", "),
+                more(g.files.len(), FILES_PER_GROUP)
+            );
+        }
+        item("Files", v);
+        let order = review_order(&r.groups);
+        if order.len() >= 2 {
+            let shown: Vec<String> = order
+                .iter()
+                .take(REVIEW_SHOWN)
+                .enumerate()
+                .map(|(i, f)| match f.look {
+                    Some(l) => format!("{}. {} ({l})", i + 1, f.path),
+                    None => format!("{}. {}", i + 1, f.path),
+                })
+                .collect();
+            item(
+                "Review order",
+                shown.join(", ") + &more(order.len(), REVIEW_SHOWN),
+            );
+        }
     }
     if !r.commits.is_empty() {
         item("Commits", r.commits.join("; "));
@@ -492,6 +730,7 @@ mod tests {
     use super::*;
     use crate::event::{Event, to_line};
     use std::path::{Path, PathBuf};
+    use unicode_width::UnicodeWidthStr;
 
     fn fixture_dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("ari-recap-{}-{name}", std::process::id()));
@@ -524,7 +763,12 @@ mod tests {
         assert!(text.contains("│ ✓ scaffold"), "{text}");
         assert!(text.contains("├─ errors "), "{text}");
         assert!(text.contains("│ 1 hit · 1 fixed · 0 open"), "{text}");
-        assert!(text.contains("│ calc.py ×2"), "{text}");
+        assert!(text.contains("│ 2 edited · 1 to look at"), "{text}");
+        assert!(text.contains("│ › task: scaffold"), "{text}");
+        assert!(text.contains("│   test_calc.py  +4 · test"), "{text}");
+        assert!(text.contains("├─ review "), "{text}");
+        assert!(text.contains("│ 1. test_calc.py · test"), "{text}");
+        assert!(text.contains("│ 2. calc.py"), "{text}");
         assert!(text.contains("│ time     "), "{text}");
         assert!(!text.contains("├─ commits"), "not a git repo: {text}");
         assert!(text.trim_end().ends_with('╯'), "{text}");
@@ -534,7 +778,16 @@ mod tests {
             md.contains("- **Done:** scaffold, build, survey, summarize"),
             "{md}"
         );
-        assert!(md.contains("- **Files:** calc.py ×2, test_calc.py"), "{md}");
+        assert!(
+            md.contains(
+                "- **Files:**\n  - task: scaffold: calc.py, test_calc.py (test)\n  - task: build: calc.py\n"
+            ),
+            "{md}"
+        );
+        assert!(
+            md.contains("- **Review order:** 1. test_calc.py (test), 2. calc.py\n"),
+            "{md}"
+        );
     }
 
     #[test]
@@ -701,6 +954,253 @@ mod tests {
             false,
         ));
         assert!(quiet.contains("│ nothing happened since "), "{quiet}");
+    }
+
+    fn causes(r: &Recap) -> Vec<&str> {
+        r.groups.iter().map(|g| g.cause.as_str()).collect()
+    }
+
+    fn prompt(t: u64, msg: &str) -> Event {
+        Event {
+            t,
+            e: "UserPromptSubmit".into(),
+            msg: Some(msg.into()),
+            ..Default::default()
+        }
+    }
+
+    fn edit(t: u64, tool: &str, path: &str) -> Event {
+        Event {
+            t,
+            e: "PostToolUse".into(),
+            tool: Some(tool.into()),
+            sig: Some(format!("{tool}:{path}")),
+            ok: Some(true),
+            lines: Some((1, 0)),
+            ..Default::default()
+        }
+    }
+
+    fn in_p(name: &str, events: &[Event]) -> PathBuf {
+        let d = session_from(name, events);
+        std::fs::write(d.join("meta.json"), r#"{"cwd":"/p"}"#).unwrap();
+        d
+    }
+
+    #[test]
+    fn files_grouped_by_task() {
+        let d = fixture_dir("groups");
+        let g = &build(&d, Since::Start, END).groups;
+        assert_eq!(
+            g.iter().map(|g| g.cause.as_str()).collect::<Vec<_>>(),
+            ["task: scaffold", "task: build"]
+        );
+        assert_eq!(
+            g[0].files
+                .iter()
+                .map(|f| (f.path.as_str(), f.added, f.removed, f.look))
+                .collect::<Vec<_>>(),
+            [
+                ("calc.py", 2, 0, None),
+                ("test_calc.py", 4, 0, Some("test"))
+            ]
+        );
+        assert_eq!(
+            (
+                g[1].files[0].path.as_str(),
+                g[1].files[0].added,
+                g[1].files[0].removed
+            ),
+            ("calc.py", 1, 1)
+        );
+    }
+
+    #[test]
+    fn files_grouped_by_prompt_without_tasks() {
+        let d = in_p(
+            "by-prompt",
+            &[
+                prompt(1_000, "fix login"),
+                edit(2_000, "Edit", "/p/src/login.rs"),
+                prompt(5_000, "add tests"),
+                edit(6_000, "Write", "/p/tests/login.rs"),
+                edit(7_000, "Edit", "/elsewhere/x.txt"),
+            ],
+        );
+        let r = build(&d, Since::Start, 8_000);
+        assert_eq!(causes(&r), ["“fix login”", "“add tests”"]);
+        assert_eq!(
+            r.groups[1]
+                .files
+                .iter()
+                .map(|f| (f.path.as_str(), f.look))
+                .collect::<Vec<_>>(),
+            [
+                ("tests/login.rs", Some("test")),
+                ("/elsewhere/x.txt", Some("outside repo"))
+            ]
+        );
+    }
+
+    #[test]
+    fn long_recap_is_capped() {
+        let mut events = Vec::new();
+        for i in 0..20u64 {
+            events.push(prompt(i * 10_000, &format!("step {i}")));
+            for f in 0..3 {
+                events.push(edit(
+                    i * 10_000 + 1 + f,
+                    "Edit",
+                    &format!("/p/src/m{i}_{f}.rs"),
+                ));
+            }
+        }
+        let r = build(&in_p("long", &events), Since::Start, 300_000);
+        let text = crate::panel::to_plain(&crate::panel::recap_lines(&r, 80, false, false));
+        assert_eq!(text.matches("│ › ").count(), 6, "{text}");
+        assert!(text.contains("and 14 earlier"), "{text}");
+        let review = text.split("├─ review").nth(1).unwrap();
+        let numbered = review
+            .lines()
+            .filter(|l| l.starts_with("│ ") && l.contains(". src/"));
+        assert_eq!(numbered.count(), 10, "{text}");
+        assert!(review.contains("and 50 more"), "{text}");
+        assert!(text.lines().all(|l| l.width() <= 80), "{text}");
+        let md = markdown(&r);
+        assert_eq!(md.matches("\n  - “step").count(), 6, "{md}");
+        let rev = md
+            .lines()
+            .find(|l| l.starts_with("- **Review order:**"))
+            .unwrap();
+        assert!(rev.ends_with("and 50 more"), "{md}");
+    }
+
+    #[test]
+    fn same_prompt_twice_is_two_groups() {
+        let d = in_p(
+            "twice",
+            &[
+                prompt(1_000, "continue"),
+                edit(2_000, "Edit", "/p/a.rs"),
+                prompt(5_000, "continue"),
+                edit(6_000, "Edit", "/p/a.rs"),
+            ],
+        );
+        assert_eq!(
+            causes(&build(&d, Since::Start, 7_000)),
+            ["“continue”", "“continue”"]
+        );
+    }
+
+    #[test]
+    fn window_mid_turn_keeps_its_prompt() {
+        let d = in_p(
+            "mid-turn",
+            &[prompt(1_000, "refactor"), edit(50_000, "Edit", "/p/a.rs")],
+        );
+        assert_eq!(
+            causes(&build(&d, Since::Ago(20_000), 60_000)),
+            ["“refactor”"]
+        );
+    }
+
+    #[test]
+    fn edits_before_any_prompt() {
+        let d = in_p("no-prompt", &[edit(1_000, "Edit", "/p/a.rs")]);
+        assert_eq!(
+            causes(&build(&d, Since::Start, 2_000)),
+            ["before your first prompt"]
+        );
+    }
+
+    #[test]
+    fn synthetic_prompts_are_not_causes() {
+        let d = in_p(
+            "synthetic",
+            &[
+                prompt(1_000, "ship it"),
+                prompt(2_000, "<task-notification>done</task-notification>"),
+                edit(3_000, "Edit", "/p/a.rs"),
+            ],
+        );
+        assert_eq!(causes(&build(&d, Since::Start, 4_000)), ["“ship it”"]);
+    }
+
+    #[test]
+    fn unknown_cwd_flags_nothing_outside() {
+        let d = session_from("no-cwd", &[edit(1_000, "Edit", "/p/src/a.rs")]);
+        let f = &build(&d, Since::Start, 2_000).groups[0].files[0];
+        assert_eq!((f.path.as_str(), f.look), ("/p/src/a.rs", None));
+    }
+
+    #[test]
+    fn look_marks_files_to_check() {
+        assert_eq!(look("~/notes.md", false), Some("outside repo"));
+        assert_eq!(look("db/migrations/001_users.sql", true), Some("migration"));
+        assert_eq!(look(".github/workflows/ci.yml", true), Some("CI"));
+        assert_eq!(look("Cargo.lock", true), Some("lockfile"));
+        assert_eq!(look("web/package-lock.json", true), Some("lockfile"));
+        assert_eq!(look("tests/cli.rs", true), Some("test"));
+        assert_eq!(look("test_calc.py", true), Some("test"));
+        assert_eq!(look("src/auth.test.ts", true), Some("test"));
+        assert_eq!(look("src/snapshots/a.snap", true), Some("test"));
+        assert_eq!(look("Cargo.toml", true), Some("config"));
+        assert_eq!(look(".env.local", true), Some("config"));
+        assert_eq!(look(".claude/settings.json", true), Some("config"));
+        assert_eq!(look("src/main.rs", true), None);
+        assert_eq!(look(".claude/worktrees/agent-1/src/main.rs", true), None);
+        assert_eq!(
+            look(".claude/worktrees/agent-1/tests/a.rs", true),
+            Some("test")
+        );
+        assert_eq!(
+            look("/private/tmp/claude-501/x/scratchpad/t.py", false),
+            None
+        );
+        assert_eq!(look("docs/testing.md", true), None); // "testing" is not a test dir
+    }
+
+    #[test]
+    fn review_order_riskiest_first() {
+        let f = |path: &str, added: u32, removed: u32| Changed {
+            path: path.into(),
+            edits: 1,
+            added,
+            removed,
+            look: look(path, !path.starts_with('~')),
+        };
+        let groups = [
+            Group {
+                cause: "a".into(),
+                files: vec![
+                    f("src/big.rs", 40, 10),
+                    f("tests/t.rs", 5, 0),
+                    f("src/small.rs", 1, 0),
+                ],
+            },
+            Group {
+                cause: "b".into(),
+                files: vec![
+                    f("src/small.rs", 1, 0),
+                    f("Cargo.toml", 1, 0),
+                    f("~/x.txt", 1, 0),
+                    f(".github/workflows/ci.yml", 2, 0),
+                ],
+            },
+        ];
+        let order = review_order(&groups);
+        assert_eq!(
+            order.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+            [
+                "~/x.txt",
+                ".github/workflows/ci.yml",
+                "tests/t.rs",
+                "Cargo.toml",
+                "src/big.rs",
+                "src/small.rs"
+            ]
+        );
+        assert_eq!((order[5].edits, order[5].added), (2, 2));
     }
 
     #[test]
