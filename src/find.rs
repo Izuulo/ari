@@ -1,6 +1,8 @@
 //! `ari find <text>`: search every Claude Code transcript, newest first,
 //! and print how to resume each match.
 
+use serde_json::Value;
+
 pub const FIND_LIMIT: usize = 10;
 pub const MAX_LIMIT: usize = 500;
 const SNIPPET: usize = 100;
@@ -84,6 +86,32 @@ pub fn resume_cmd(cwd: &str, id: &str) -> String {
     }
 }
 
+/// The text of one transcript line that you or Claude wrote: prompts,
+/// replies and titles. Tool output and JSON keys never count.
+fn texts(v: &Value) -> Vec<&str> {
+    let s = |k: &str| v.get(k).and_then(Value::as_str);
+    let content = v.pointer("/message/content");
+    let text_items = || {
+        content
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|i| i.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|i| i.get("text").and_then(Value::as_str))
+    };
+    match s("type") {
+        Some("user") => match content.and_then(Value::as_str) {
+            Some(t) => vec![t],
+            None => text_items().collect(),
+        },
+        Some("assistant") => text_items().collect(),
+        Some("custom-title") => s("customTitle").into_iter().collect(),
+        Some("ai-title") => s("aiTitle").into_iter().collect(),
+        Some("summary") => s("summary").into_iter().collect(),
+        _ => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +179,35 @@ mod tests {
             "cd '/tmp/it'\\''s' && claude --resume abc"
         );
         assert_eq!(resume_cmd("", "abc"), "claude --resume abc");
+    }
+
+    #[test]
+    fn texts_are_prompts_replies_and_titles() {
+        let t = |v: Value| texts(&v).into_iter().map(String::from).collect::<Vec<_>>();
+        assert_eq!(
+            t(serde_json::json!({"type":"user","message":{"content":"hi"}})),
+            ["hi"]
+        );
+        assert_eq!(
+            t(serde_json::json!({"type":"user","message":{"content":[
+                {"type":"text","text":"a"},
+                {"type":"tool_result","content":"secret"}]}})),
+            ["a"]
+        );
+        assert_eq!(
+            t(serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"thinking","thinking":"x"},{"type":"text","text":"b"},
+                {"type":"tool_use","input":{"cmd":"y"}}]}})),
+            ["b"]
+        );
+        assert_eq!(
+            t(serde_json::json!({"type":"custom-title","customTitle":"c"})),
+            ["c"]
+        );
+        assert_eq!(
+            t(serde_json::json!({"type":"ai-title","aiTitle":"d"})),
+            ["d"]
+        );
+        assert!(t(serde_json::json!({"type":"attachment","content":"e"})).is_empty());
     }
 }
