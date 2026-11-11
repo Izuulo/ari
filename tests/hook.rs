@@ -262,3 +262,87 @@ fn notifications_on_with_no_notifier_stay_silent() {
     let seen = std::fs::read_to_string(s.join("ari/sessions/s1/notify.json")).unwrap();
     assert!(seen.contains(r#""fired":"stuck""#), "{seen}");
 }
+
+fn quality_lines(state: &Path) -> Vec<String> {
+    std::fs::read_to_string(state.join("ari/quality.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+fn ev_bytes(v: serde_json::Value) -> Vec<u8> {
+    v.to_string().into_bytes()
+}
+
+#[test]
+fn stop_records_a_quality_summary() {
+    let s = tmp("quality-stop");
+    let base = serde_json::json!({"session_id": "s1", "cwd": "/p"});
+    let with = |extra: serde_json::Value| {
+        let mut v = base.clone();
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        ev_bytes(v)
+    };
+    for p in [
+        with(serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt": "fix it"})),
+        with(
+            serde_json::json!({"hook_event_name": "PostToolUse", "tool_name": "Read",
+            "tool_input": {"file_path": "/p/a.rs"}, "tool_use_id": "toolu_1"}),
+        ),
+        with(
+            serde_json::json!({"hook_event_name": "PostToolUse", "tool_name": "Edit",
+            "tool_input": {"file_path": "/p/a.rs", "old_string": "a", "new_string": "b"},
+            "tool_use_id": "toolu_2"}),
+        ),
+        with(serde_json::json!({"hook_event_name": "Stop"})),
+    ] {
+        assert_silent(&hook(&s, &p));
+    }
+    let lines = quality_lines(&s);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(
+        (&v["id"], &v["turns"], &v["reads"], &v["edits"], &v["model"]),
+        (
+            &serde_json::json!("s1"),
+            &serde_json::json!(1),
+            &serde_json::json!(1),
+            &serde_json::json!(1),
+            &serde_json::json!("claude")
+        )
+    );
+    assert!(!lines[0].contains("fix it") && !lines[0].contains("a.rs"));
+    let sub = with(serde_json::json!({"hook_event_name": "Stop", "agent_id": "ab1"}));
+    assert_silent(&hook(&s, &sub));
+    assert_eq!(quality_lines(&s).len(), 1);
+    assert_silent(&hook(
+        &s,
+        &with(serde_json::json!({"hook_event_name": "SessionEnd"})),
+    ));
+    assert_eq!(quality_lines(&s).len(), 2);
+}
+
+#[test]
+fn session_start_compacts_quality_history() {
+    let s = tmp("quality-compact");
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    std::fs::create_dir_all(s.join("ari")).unwrap();
+    let text = format!(
+        "{{\"id\":\"old\",\"t\":1}}\n{{\"id\":\"s9\",\"t\":{}}}\n{{\"id\":\"s9\",\"t\":{now}}}\n",
+        now - 1000
+    );
+    std::fs::write(s.join("ari/quality.jsonl"), text).unwrap();
+    let start = ev_bytes(
+        serde_json::json!({"session_id": "s2", "hook_event_name": "SessionStart", "cwd": "/p"}),
+    );
+    assert_silent(&hook(&s, &start));
+    let lines = quality_lines(&s);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("\"s9\""));
+}

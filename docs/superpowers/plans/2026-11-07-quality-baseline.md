@@ -52,14 +52,14 @@
   - `const READS: [&str; 3] = ["Read", "Grep", "Glob"];`
   - `CACHE_VERSION` +1 from whatever `main` has (sibling §7 plans bump it too; cached states without the counters are rebuilt from the log).
 
-- [ ] **Step 1: Write the failing test** `quality_counts_reads_edits_failures_retries` in `state.rs` tests, using the existing `ev`/`tool`/`run`/`prompt` helpers. Events: `prompt("go")`; `PostToolUse` with `tool` `Read` (sig `Read:/a`, ok), `Grep` (ok), `Glob` (ok) and a subagent `Read` (`a: Some("sub1")`, sig `Read:/b`, ok); `PostToolUse` `Edit` sig `Edit:/a` ok `Some(true)`; `PostToolUseFailure` `Edit` sig `Edit:/c` ok `Some(false)`; `tool("PostToolUseFailure", "cargo test", Some(false))` twice; one failure with `kind: Some("interrupt")`.
+- [x] **Step 1: Write the failing test** `quality_counts_reads_edits_failures_retries` in `state.rs` tests, using the existing `ev`/`tool`/`run`/`prompt` helpers. Events: `prompt("go")`; `PostToolUse` with `tool` `Read` (sig `Read:/a`, ok), `Grep` (ok), `Glob` (ok) and a subagent `Read` (`a: Some("sub1")`, sig `Read:/b`, ok); `PostToolUse` `Edit` sig `Edit:/a` ok `Some(true)`; `PostToolUseFailure` `Edit` sig `Edit:/c` ok `Some(false)`; `tool("PostToolUseFailure", "cargo test", Some(false))` twice; one failure with `kind: Some("interrupt")`.
   ```rust
   assert_eq!(s.quality, Quality { reads: 4, edits: 1, failed: 3, retries: 1 });
   ```
-- [ ] **Step 2: Run** `cargo test state::tests::quality_counts` — expect FAIL (no `quality` field).
-- [ ] **Step 3: Implement.** In the Post arm, before `self.track_reads(ev, aid)`: `reads += 1` when `ev.tool` is in `READS`; `edits += 1` when it is in `FILE_EDITS` and `ev.ok == Some(true)`. In `tool_result`, after the interrupt early return and the `ok` early return: `failed += 1`; in the existing-error branch (where `e.retries += 1`) also `self.quality.retries += 1`. Bump `CACHE_VERSION` by one.
-- [ ] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
-- [ ] **Step 5: Commit** `feat(state): count reads, edits, failed calls and retries per session`.
+- [x] **Step 2: Run** `cargo test state::tests::quality_counts` — expect FAIL (no `quality` field).
+- [x] **Step 3: Implement.** In the Post arm, before `self.track_reads(ev, aid)`: `reads += 1` when `ev.tool` is in `READS`; `edits += 1` when it is in `FILE_EDITS` and `ev.ok == Some(true)`. In `tool_result`, after the interrupt early return and the `ok` early return: `failed += 1`; in the existing-error branch (where `e.retries += 1`) also `self.quality.retries += 1`. Bump `CACHE_VERSION` by one.
+- [x] **Step 4: Run** `cargo test` — PASS, no snapshot changes.
+- [x] **Step 5: Commit** `feat(state): count reads, edits, failed calls and retries per session`.
 
 ---
 
@@ -80,16 +80,16 @@
   - `pub fn load(root: &Path) -> Vec<Summary>`: unparsable lines skipped; the last line per `id` wins; sorted by `t`, oldest first; missing file → empty.
   - `pub fn compact(root: &Path, max_age_ms: u64, now: u64)`: `load`, drop `now - t > max_age_ms`, keep the newest `MAX_SESSIONS`, rewrite with `paths::write_atomic` (one line each). Missing file → nothing written. Comment: `// shortcut: a Stop line appended during the rewrite is lost; the session's next Stop writes it again.`
 
-- [ ] **Step 1: Write the failing tests** in `quality.rs` (temp dir per test, as in `sessions.rs` tests):
+- [x] **Step 1: Write the failing tests** in `quality.rs` (temp dir per test, as in `sessions.rs` tests):
   - `summary_of_state`: a `State` with `turns: 3` and `quality { reads: 12, edits: 4, failed: 2, retries: 1 }` → `Summary::of("s1", 9, "Opus", &st)` has those numbers, `id == "s1"`, `t == 9`, `model == "Opus"`.
   - `load_keeps_last_line_per_session_and_skips_garbage`: file with `s1 (t=1, reads 1)`, `not json`, `{"id":"s2","t":2}`, half a line `{"id":"s1","t":`, `s1 (t=3, reads 7)` → `load` returns ids `["s2", "s1"]` and `s1.reads == 7`.
   - `compact_drops_old_and_caps_count`: 205 sessions with `t = 1..=205`; `compact(root, u64::MAX, 205)` → 200 lines, oldest `t == 6`, newest `t == 205`; then `compact(root, 100, 300)` → only `t >= 200` remain (6 lines). Every line of the rewritten file parses.
   - `record_appends_and_compacts_past_max_bytes`: write a file just under `MAX_BYTES` of repeated lines for one id `"big"`, `record` another summary → file now has 2 lines (`big` deduped, new one).
   - `missing_file_is_empty_and_not_created`: `load` on an empty dir → empty; `compact` → no file created.
-- [ ] **Step 2: Run** `cargo test quality::` — FAIL.
-- [ ] **Step 3: Implement** the above in `src/quality.rs`.
-- [ ] **Step 4: Run** `cargo test quality::` — PASS.
-- [ ] **Step 5: Commit** `feat(quality): per-session summary history with retention and a size cap`.
+- [x] **Step 2: Run** `cargo test quality::` — FAIL.
+- [x] **Step 3: Implement** the above in `src/quality.rs`.
+- [x] **Step 4: Run** `cargo test quality::` — PASS.
+- [x] **Step 5: Commit** `feat(quality): per-session summary history with retention and a size cap`.
 
 ---
 
@@ -107,17 +107,17 @@
   - `pub fn Deviation::text(&self) -> String` → `format!("{} {:.1} · your usual {:.1}", what, now, usual)`.
   - `pub fn check(cur: &Summary, history: &[Summary]) -> Vec<Deviation>`: past = history entries with `id != cur.id`, `model == cur.model`, `edits >= MIN_EDITS`, newest `BASELINE_SESSIONS`. Empty when `past.len() < MIN_SESSIONS` or `cur.edits < MIN_EDITS`. Rates: reads/edits; failed/turns.max(1); retries/turns.max(1). Usual = median (mean of the two middle values for an even count). Order: reads, errors, retries.
 
-- [ ] **Step 1: Write the failing tests** (helper `fn s(id: &str, model: &str, turns, reads, edits, failed, retries) -> Summary`):
+- [x] **Step 1: Write the failing tests** (helper `fn s(id: &str, model: &str, turns, reads, edits, failed, retries) -> Summary`):
   - `low_reads_per_edit_shows`: 5 past `Opus` sessions with reads/edit 6, 6, 6.2, 6.1, 6 (edits 10) and cur reads 20 / edits 10 → one deviation, `what == "reads/edit"`, `now == 2.0`, `usual == 6.0`, `text() == "reads/edit 2.0 · your usual 6.0"`.
   - `needs_min_sessions_and_min_edits`: 4 past → empty; 5 past but cur `edits == 4` → empty; a past session with `edits == 4` doesn't count toward the 5.
   - `excludes_itself_and_other_models`: 5 past `Opus` with the same id as `cur` → empty; 5 past `Haiku` → empty.
   - `zero_usual_errors_needs_floor` (every summary here has reads 60, edits 10, so reads/edit never deviates): past failed 0 / turns 5; cur failed 2 / turns 4 (0.5/prompt) → empty; cur failed 6 / turns 4 (1.5/prompt) → `errors/prompt` deviation with `usual == 0.0`.
   - `better_than_usual_is_silent`: cur with more reads and fewer errors than usual → empty.
   - `median_not_mean`: past reads/edit 1, 6, 6, 6, 60 → `usual == 6.0`.
-- [ ] **Step 2: Run** `cargo test quality::` — FAIL.
-- [ ] **Step 3: Implement** the constants, `Deviation`, `check`.
-- [ ] **Step 4: Run** `cargo test quality::` — PASS.
-- [ ] **Step 5: Commit** `feat(quality): compare a session with your own baseline`.
+- [x] **Step 2: Run** `cargo test quality::` — FAIL.
+- [x] **Step 3: Implement** the constants, `Deviation`, `check`.
+- [x] **Step 4: Run** `cargo test quality::` — PASS.
+- [x] **Step 5: Commit** `feat(quality): compare a session with your own baseline`.
 
 ---
 
@@ -132,13 +132,13 @@
 - Consumes: `quality::{record, compact, Summary}` (Task 2), `state::load_session`, `usage::load`, `App::as_str`.
 - Produces: `pub fn quality::on_stop(root: &Path, dir: &Path, id: &str, t: u64, app: App)`: `load_session(dir)`; returns when `st.turns == 0`; model = `usage::load(dir).model` else `app.as_str()`; `record(root, &Summary::of(id, t, &model, &st))`.
 
-- [ ] **Step 1: Write the failing integration test** `stop_records_a_quality_summary` in `tests/hook.rs`, with the existing `hook`/`tmp` helpers and payloads shaped like `pre_tool`: for session `s1` send `UserPromptSubmit` (prompt `"fix it"`), a `PostToolUse` `Read` (`tool_input.file_path`), a `PostToolUse` `Edit` (`file_path`, `old_string`, `new_string`), then `Stop`. Assert every call is silent, `ari/quality.jsonl` has exactly 1 line, and it parses with `"id":"s1"`, `"turns":1`, `"reads":1`, `"edits":1`, `"model":"claude"`. Then a `Stop` carrying `agent_id` (a subagent's) → still 1 line. Then `SessionEnd` for `s1` → 2 lines.
-- [ ] **Step 2: Write the failing test** `session_start_compacts_quality_history`: pre-write `ari/quality.jsonl` with a line `t = 1` (ancient) and two lines for id `s9` (recent `t`); send `SessionStart` for `s2` → the file has one line, for `s9`.
-- [ ] **Step 3: Run** `cargo test --test hook` — FAIL.
-- [ ] **Step 4: Implement.** In `handle`, after the event is appended: `if (ev.e == "Stop" && ev.a.is_none()) || ev.e == "SessionEnd" { quality::on_stop(&root, &dir, sid, t, app) }`. In the existing `SessionStart` branch, after `prune`: `quality::compact(&root, days * 86_400_000, t)`. Update the doc comment: "do nothing heavy, except folding the session once per turn at Stop".
-- [ ] **Step 5: Measure the Stop hook.** Copy the largest dir under `~/.local/state/ari/sessions/` to a temp `XDG_STATE_HOME`, delete its `state.json` (worst case), and time 20 runs of `echo '{"session_id":"<id>","hook_event_name":"Stop","cwd":"/p"}' | ari hook`. Record p95 in the PR. Above 50 ms worst case: record on `SessionEnd` only and say so in the PR. If the usual case (fresh `state.json`) is above the FAQ's "about 3 ms (p95)", the FAQ line gets "(Stop, once per turn: about N ms)" in Task 5's docs step.
-- [ ] **Step 6: Run** `cargo test` — PASS.
-- [ ] **Step 7: Commit** `feat(hook): record a quality summary at Stop and SessionEnd`.
+- [x] **Step 1: Write the failing integration test** `stop_records_a_quality_summary` in `tests/hook.rs`, with the existing `hook`/`tmp` helpers and payloads shaped like `pre_tool`: for session `s1` send `UserPromptSubmit` (prompt `"fix it"`), a `PostToolUse` `Read` (`tool_input.file_path`), a `PostToolUse` `Edit` (`file_path`, `old_string`, `new_string`), then `Stop`. Assert every call is silent, `ari/quality.jsonl` has exactly 1 line, and it parses with `"id":"s1"`, `"turns":1`, `"reads":1`, `"edits":1`, `"model":"claude"`. Then a `Stop` carrying `agent_id` (a subagent's) → still 1 line. Then `SessionEnd` for `s1` → 2 lines.
+- [x] **Step 2: Write the failing test** `session_start_compacts_quality_history`: pre-write `ari/quality.jsonl` with a line `t = 1` (ancient) and two lines for id `s9` (recent `t`); send `SessionStart` for `s2` → the file has one line, for `s9`.
+- [x] **Step 3: Run** `cargo test --test hook` — FAIL.
+- [x] **Step 4: Implement.** In `handle`, after the event is appended: `if (ev.e == "Stop" && ev.a.is_none()) || ev.e == "SessionEnd" { quality::on_stop(&root, &dir, sid, t, app) }`. In the existing `SessionStart` branch, after `prune`: `quality::compact(&root, days * 86_400_000, t)`. Update the doc comment: "do nothing heavy, except folding the session once per turn at Stop".
+- [x] **Step 5: Measure the Stop hook.** Copy the largest dir under `~/.local/state/ari/sessions/` to a temp `XDG_STATE_HOME`, delete its `state.json` (worst case), and time 20 runs of `echo '{"session_id":"<id>","hook_event_name":"Stop","cwd":"/p"}' | ari hook`. Record p95 in the PR. Above 50 ms worst case: record on `SessionEnd` only and say so in the PR. If the usual case (fresh `state.json`) is above the FAQ's "about 3 ms (p95)", the FAQ line gets "(Stop, once per turn: about N ms)" in Task 5's docs step.
+- [x] **Step 6: Run** `cargo test` — PASS.
+- [x] **Step 7: Commit** `feat(hook): record a quality summary at Stop and SessionEnd`.
 
 ---
 
@@ -155,13 +155,13 @@
   - `App.history: Vec<quality::Summary>`: `quality::load(&self.root)` in `refresh` when `dir != self.dir` (a new session is picked), not per frame.
   - In `refresh`'s `if changed` block: `self.x.quality = quality::check(&Summary::of(<dir file name>, hook::now_ms(), &model, &self.st), &self.history)`, `model` = `self.usage.model` else `self.session_app.as_str()` (same rule as the hook).
 
-- [ ] **Step 1: Write the failing panel test** `quality_rows_only_when_deviating` in `panel.rs` tests: `lines(...)` with `Extras { quality: vec![Deviation { what: "reads/edit", now: 2.0, usual: 6.1 }], .. }` at 80 wide → the `session` section contains `⚠ reads/edit 2.0 · your usual 6.1`; with `Extras::default()` → no `your usual`; with `hide_panel = ["session"]` → no `your usual`.
-- [ ] **Step 2: Write the failing watch test** `quality_deviation_reaches_extras`: write `<root>/quality.jsonl` with 5 summaries (`model "claude"`, turns 2, reads 60, edits 10, failed 0, retries 0); `app_on(root, "cur", events)` where events are one prompt, 6 successful `Edit` results and 2 `Read` results; `app.refresh()` → `app.x.quality[0].what == "reads/edit"`. Add `history: Vec::new()` to `app_on`.
-- [ ] **Step 3: Run** `cargo test panel:: watch::` — FAIL.
-- [ ] **Step 4: Implement.** `panel::session`: after the tokens rows, one row per deviation: `c.span(format!("⚠ {}", d.text()), Style::new().fg(Color::Yellow))` (`⚠` already maps to `!` in `--ascii`). Wire `Extras.quality` and `App.history` as above.
-- [ ] **Step 5: Run** `cargo test` (no existing `.snap` may change), `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
-- [ ] **Step 6: Run the real thing.** `cargo install --path . --root ~/.local --force` (per the local-install note: `rm` the old binary first if `cp` is killed), use Claude Code for a few sessions, check `~/.local/state/ari/quality.jsonl` gains one line per Stop and contains no prompt text or paths.
-- [ ] **Step 7: Commit** `feat(panel): show reads per edit, errors and retries against your usual`.
-- [ ] **Step 8: Docs.** README: one sentence in "What you get" after the git-section sentence: when a session reads less before editing, or fails and retries more, than your usual on that model, the session section says so (e.g. `⚠ reads/edit 2.0 · your usual 6.1`); it needs 5 earlier sessions with at least 5 edits. FAQ "Where does my data go?": add that `quality.jsonl` keeps per-session counts only (no prompts, paths or output), pruned with `retention_days`. DECISIONS.md: a new entry (next free D-number) with the bullets from "Decisions this plan makes". CHANGELOG `## Unreleased`: one line, **Your usual, as a baseline.** … Commit `docs: quality baseline`.
-- [ ] **Step 9: Version bump.** Next patch after the version on `main` (e.g. `0.3.1` → `0.3.2`) in `Cargo.toml`, `.claude-plugin/plugin.json`, and `Cargo.lock` (`cargo build` refreshes it). Commit `chore: bump version to <x.y.z>`.
-- [ ] **Step 10: Finish.** Full CI commands pass; PR with a bullet body.
+- [x] **Step 1: Write the failing panel test** `quality_rows_only_when_deviating` in `panel.rs` tests: `lines(...)` with `Extras { quality: vec![Deviation { what: "reads/edit", now: 2.0, usual: 6.1 }], .. }` at 80 wide → the `session` section contains `⚠ reads/edit 2.0 · your usual 6.1`; with `Extras::default()` → no `your usual`; with `hide_panel = ["session"]` → no `your usual`.
+- [x] **Step 2: Write the failing watch test** `quality_deviation_reaches_extras`: write `<root>/quality.jsonl` with 5 summaries (`model "claude"`, turns 2, reads 60, edits 10, failed 0, retries 0); `app_on(root, "cur", events)` where events are one prompt, 6 successful `Edit` results and 2 `Read` results; `app.refresh()` → `app.x.quality[0].what == "reads/edit"`. Add `history: Vec::new()` to `app_on`.
+- [x] **Step 3: Run** `cargo test panel:: watch::` — FAIL.
+- [x] **Step 4: Implement.** `panel::session`: after the tokens rows, one row per deviation: `c.span(format!("⚠ {}", d.text()), Style::new().fg(Color::Yellow))` (`⚠` already maps to `!` in `--ascii`). Wire `Extras.quality` and `App.history` as above.
+- [x] **Step 5: Run** `cargo test` (no existing `.snap` may change), `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` — PASS.
+- [x] **Step 6: Run the real thing.** `cargo install --path . --root ~/.local --force` (per the local-install note: `rm` the old binary first if `cp` is killed), use Claude Code for a few sessions, check `~/.local/state/ari/quality.jsonl` gains one line per Stop and contains no prompt text or paths.
+- [x] **Step 7: Commit** `feat(panel): show reads per edit, errors and retries against your usual`.
+- [x] **Step 8: Docs.** README: one sentence in "What you get" after the git-section sentence: when a session reads less before editing, or fails and retries more, than your usual on that model, the session section says so (e.g. `⚠ reads/edit 2.0 · your usual 6.1`); it needs 5 earlier sessions with at least 5 edits. FAQ "Where does my data go?": add that `quality.jsonl` keeps per-session counts only (no prompts, paths or output), pruned with `retention_days`. DECISIONS.md: a new entry (next free D-number) with the bullets from "Decisions this plan makes". CHANGELOG `## Unreleased`: one line, **Your usual, as a baseline.** … Commit `docs: quality baseline`.
+- [x] **Step 9: Version bump.** Next patch after the version on `main` (e.g. `0.3.1` → `0.3.2`) in `Cargo.toml`, `.claude-plugin/plugin.json`, and `Cargo.lock` (`cargo build` refreshes it). Commit `chore: bump version to <x.y.z>`.
+- [x] **Step 10: Finish.** Full CI commands pass; PR with a bullet body.

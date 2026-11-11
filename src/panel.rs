@@ -1543,6 +1543,11 @@ fn session(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -
             )]);
         }
     }
+    for d in &x.quality {
+        rows.push(vec![
+            c.span(format!("⚠ {}", d.text()), Style::new().fg(Color::Yellow)),
+        ]);
+    }
     if let Some(last) = st.headline_run() {
         let mut row = vec![
             c.dim("tests   "),
@@ -2635,6 +2640,25 @@ pub(crate) mod tests {
         assert!(l("cargo fmt") < l("cargo build"), "{out}");
         let hid = render_cfg(&st, &u, &Extras::default(), &hiding(&["calls"]));
         assert!(!hid.contains("├─ calls"), "{hid}");
+    }
+
+    #[test]
+    fn quality_rows_only_when_deviating() {
+        let (st, u) = multi();
+        let x = Extras {
+            quality: vec![crate::quality::Deviation {
+                what: "reads/edit",
+                now: 2.0,
+                usual: 6.1,
+            }],
+            ..Extras::default()
+        };
+        let out = render_cfg(&st, &u, &x, &Config::default());
+        assert!(out.contains("⚠ reads/edit 2.0 · your usual 6.1"), "{out}");
+        let none = render_cfg(&st, &u, &Extras::default(), &Config::default());
+        assert!(!none.contains("your usual"), "{none}");
+        let hid = render_cfg(&st, &u, &x, &hiding(&["session"]));
+        assert!(!hid.contains("your usual"), "{hid}");
     }
 
     fn hiding(ids: &[&str]) -> Config {

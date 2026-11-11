@@ -15,6 +15,7 @@ pub mod hub;
 pub mod notify;
 pub mod panel;
 pub mod paths;
+pub mod quality;
 pub mod recap;
 pub mod replay;
 pub mod risky;

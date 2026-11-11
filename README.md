@@ -50,7 +50,7 @@ When the week's pace would run out the 7d limit before it resets, the 7d segment
 
 **Notifications** when a session needs you: one desktop notification (and, if you set `notify.ntfy`, one push) each time a session flips to NEEDS YOU, STUCK, BLOCKED or DONE. They fire once per flip, from the hooks, so they work with no `ari watch` open. On macOS you may be asked once to allow notifications from Script Editor. Turn them off with `desktop = false` in `[notify]` or in settings; clear `ntfy` to stop pushes.
 
-Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below), `v` the next view (full, Calm, Constellation; see Simple views below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The calls section lists main's recent tool calls, newest first (age, tool, target, ✓/✗ and duration); turns sit below it and shrink first when space is short. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). Subagents that went quiet for 5 min without finishing can be hidden with `hide_stale` (settings → PANEL). `--ascii` for terminals without Unicode.
+Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below), `v` the next view (full, Calm, Constellation; see Simple views below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The calls section lists main's recent tool calls, newest first (age, tool, target, ✓/✗ and duration); turns sit below it and shrink first when space is short. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). When a session reads less before editing, or fails and retries more, than your usual on that model, the session section says so (e.g. `⚠ reads/edit 2.0 · your usual 6.1`); it needs 5 earlier sessions with at least 5 edits. Subagents that went quiet for 5 min without finishing can be hidden with `hide_stale` (settings → PANEL). `--ascii` for terminals without Unicode.
 
 ### Every agent at once: the hub
 
@@ -243,11 +243,11 @@ Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR
 
 **Does it cost tokens?** No. Hooks only append to a local log and print nothing; the statusline is never sent to the model.
 
-**Does it slow Claude down?** Hooks take about 3 ms (p95) and never block; the statusline renders in about 3–6 ms.
+**Does it slow Claude down?** Hooks take about 3 ms (p95; Stop, once per turn: about 4 ms) and never block; the statusline renders in about 3–6 ms.
 
 **Will it break my statusline?** No. Your command runs with the same input and its output is printed untouched. If it fails or takes longer than 300 ms, only it is skipped. `ari uninstall` puts your settings back exactly.
 
-**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. No telemetry.
+**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. `quality.jsonl` there keeps per-session counts only (reads, edits, failed calls, retries, prompts and the model name; no prompts, paths or output), pruned with `retention_days`. No telemetry.
 
 **Windows?** Not yet; planned for 1.1.
 
