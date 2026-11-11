@@ -117,6 +117,47 @@ pub fn local_hhmm(ms: u64) -> String {
     format!("{:02}:{:02}", s / 3600 % 24, s / 60 % 60)
 }
 
+/// Local `YYYY-MM-DD HH:MM`.
+pub fn local_date(ms: u64) -> String {
+    #[cfg(unix)]
+    {
+        let t = (ms / 1000) as libc::time_t;
+        // SAFETY: localtime_r only writes into the tm we own.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if !unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+            return format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday,
+                tm.tm_hour,
+                tm.tm_min
+            );
+        }
+    }
+    utc_date(ms)
+}
+
+/// UTC `YYYY-MM-DD HH:MM`, civil-from-days (Howard Hinnant).
+fn utc_date(ms: u64) -> String {
+    let z = (ms / 86_400_000) as i64 + 719_468;
+    let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (
+        doy - (153 * mp + 2) / 5 + 1,
+        if mp < 10 { mp + 3 } else { mp - 9 },
+    );
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let s = ms / 1000;
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        s / 3600 % 24,
+        s / 60 % 60
+    )
+}
+
 /// Local weekday, `Sun`…`Sat`.
 pub fn local_weekday(ms: u64) -> &'static str {
     const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1338,6 +1379,22 @@ fn meter(name: &str, pct: Option<f64>, tail: String, cfg: &Config, c: &Ctx) -> O
 }
 
 const TREND_MS: u64 = 30 * 60_000;
+/// Context already used at start, as a percent of the window, that earns the `▲` warning.
+pub const START_LARGE_PCT: f64 = 20.0;
+
+/// `at start 31k (16%)`: the first request's input side; `None` when unknown.
+pub(crate) fn start_note(start: u64, window: u64) -> Option<(String, bool)> {
+    if start == 0 {
+        return None;
+    }
+    let pct = start as f64 * 100.0 / window.max(1) as f64;
+    let n = format!("at start {} ({pct:.0}%)", fmt_tokens(start));
+    Some(if pct >= START_LARGE_PCT {
+        (format!("▲ {n} · system, tools, MCP, CLAUDE.md"), true)
+    } else {
+        (n, false)
+    })
+}
 
 /// Samples from the 30 min before the newest one that carry a value, as (t, value).
 fn recent(
@@ -1409,6 +1466,20 @@ fn usage(st: &State, u: &Usage, x: &Extras, cfg: &Config, c: &Ctx, now: u64) -> 
         )]);
     }
     rows.extend(meter("ctx", u.ctx_pct, ctx_tail, cfg, c));
+    // Only under a ctx meter: without the statusline it would hang under another row.
+    let start = x
+        .tokens
+        .as_ref()
+        .filter(|_| u.ctx_pct.is_some())
+        .map_or(0, |t| t.main.start);
+    if let Some((text, large)) = start_note(start, u.ctx_size.unwrap_or(200_000)) {
+        let text = format!("    {text}");
+        rows.push(vec![if large {
+            c.span(text, Style::new().fg(Color::Yellow))
+        } else {
+            c.dim(text)
+        }]);
+    }
     if let Some(n) = x.compacts_in.filter(|n| *n <= crate::bar::COMPACT_SOON) {
         let s = if n == 1 { "" } else { "s" };
         rows.push(vec![c.span(
@@ -2386,6 +2457,73 @@ pub(crate) mod tests {
             out.contains("↻ edit lib.rs failed 4× in a row") && !out.contains("while stuck"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn start_note_copy() {
+        assert_eq!(
+            start_note(31_000, 200_000),
+            Some(("at start 31k (16%)".into(), false))
+        );
+        assert_eq!(
+            start_note(46_000, 200_000),
+            Some((
+                "▲ at start 46k (23%) · system, tools, MCP, CLAUDE.md".into(),
+                true
+            ))
+        );
+        assert!(start_note(40_000, 200_000).unwrap().1);
+        assert_eq!(
+            start_note(46_000, 1_000_000).unwrap(),
+            ("at start 46k (5%)".into(), false)
+        );
+        assert_eq!(start_note(0, 200_000), None);
+    }
+
+    #[test]
+    fn ctx_at_start_row() {
+        let (st, mut u) = multi();
+        u.ctx_pct = Some(40.0);
+        u.ctx_size = Some(200_000);
+        let at = |u: &Usage, start: u64, w: u16| {
+            let x = Extras {
+                tokens: Some(crate::tokens::TokenCache {
+                    main: crate::tokens::Ledger {
+                        start,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let out = lines(
+                &st,
+                u,
+                &x,
+                &Config::default(),
+                View::default(),
+                NOW,
+                "12:41",
+                w,
+                60,
+                false,
+            );
+            for l in &out {
+                assert!(l.width() <= w as usize, "line wider than {w}");
+            }
+            to_plain(&out)
+        };
+        let out = at(&u, 46_000, 80);
+        let l = |k: &str| out.lines().position(|l| l.contains(k)).unwrap_or(999);
+        assert!(l("▲ at start 46k (23%)") < 999, "{out}");
+        assert!(l("ctx ") < l("▲ at start 46k (23%)"), "{out}");
+        assert!(!at(&u, 0, 80).contains("at start"));
+        u.ctx_pct = None;
+        assert!(
+            !at(&u, 46_000, 80).contains("at start"),
+            "no ctx meter, no row"
+        );
+        at(&u, 46_000, 40);
     }
 
     #[test]
@@ -3422,6 +3560,13 @@ pub(crate) mod tests {
         assert_eq!(sig_words(&e("StopFailure:rate_limit")), "api rate_limit");
         assert_eq!(sig_words(&e("WebFetch")), "webfetch");
         assert_eq!(local_hhmm(NOW).len(), 5);
+        let d = local_date(1_793_901_768_682);
+        assert_eq!(
+            (d.len(), &d[4..5], &d[10..11], &d[13..14]),
+            (16, "-", " ", ":")
+        );
+        assert_eq!(utc_date(1_793_901_768_682), "2026-11-05 18:02");
+        assert_eq!(utc_date(951_782_400_000), "2000-02-29 00:00");
         let home = std::env::var("HOME").unwrap();
         assert_eq!(tilde(&format!("{home}/ari/")), "~/ari");
         assert_eq!(tilde(&format!("{home}x/ari")), format!("{home}x/ari"));

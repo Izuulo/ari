@@ -361,6 +361,19 @@ fn context(buf: &mut Buffer, r: Rect, i: &Input, a: &Agent) {
         note = "finished; its context was freed when it returned".into();
     }
     put(buf, x, inner.y + 1, &note, w, dim());
+    let start = ledger(i, a).map_or(0, |l| l.start);
+    if let Some((text, large)) = crate::panel::start_note(start, size)
+        && inner.y + 2 < inner.bottom().saturating_sub(2)
+    {
+        put(
+            buf,
+            x,
+            inner.y + 2,
+            &text,
+            w,
+            if large { warn() } else { dim() },
+        );
+    }
     let Some(l) = ledger(i, a).filter(|l| !l.fill.is_empty()) else {
         return;
     };
@@ -758,5 +771,45 @@ mod tests {
         );
         assert!(out.contains("estimate"), "{out}");
         assert!(out.contains("30%"), "{out}");
+    }
+
+    fn with_ledger(id: &str, ctx: u64, start: u64) -> crate::bar::Extras {
+        let l = crate::tokens::Ledger {
+            ctx,
+            start,
+            ..Default::default()
+        };
+        let mut t = crate::tokens::TokenCache::default();
+        if id == "main" {
+            t.main = l;
+        } else {
+            t.agents.insert(id.into(), l);
+        }
+        crate::bar::Extras {
+            tokens: Some(t),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn zoom_shows_start_context() {
+        let st = with_main(vec![kid("a1", "main", 1)]);
+        let out = show(&st, &with_ledger("main", 60_000, 46_000), 0, 0).join("\n");
+        assert!(out.contains("▲ at start 46k (23%)"), "{out}");
+    }
+
+    #[test]
+    fn zoom_start_for_a_subagent() {
+        let st = with_main(vec![kid("a1", "main", 1)]);
+        let out = show(&st, &with_ledger("a1", 30_000, 12_000), 1, 0).join("\n");
+        assert!(out.contains("at start 12k (6%)"), "{out}");
+        assert!(!out.contains('▲'), "{out}");
+    }
+
+    #[test]
+    fn zoom_no_start_no_line() {
+        let st = with_main(vec![kid("a1", "main", 1)]);
+        let out = show(&st, &with_ledger("a1", 60_000, 0), 1, 0).join("\n");
+        assert!(!out.contains("at start"), "{out}");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ari-cli"
-version = "0.4.5"
+version = "0.4.7"
 edition = "2024"
 description = "A zero-token status panel for Claude Code"
 license = "MIT"

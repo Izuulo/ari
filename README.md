@@ -50,7 +50,7 @@ When the week's pace would run out the 7d limit before it resets, the 7d segment
 
 **Notifications** when a session needs you: one desktop notification (and, if you set `notify.ntfy`, one push) each time a session flips to NEEDS YOU, STUCK, BLOCKED or DONE. They fire once per flip, from the hooks, so they work with no `ari watch` open. On macOS you may be asked once to allow notifications from Script Editor. Turn them off with `desktop = false` in `[notify]` or in settings; clear `ntfy` to stop pushes.
 
-Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below), `v` the next view (full, Calm, Constellation; see Simple views below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. The calls section lists main's recent tool calls, newest first (age, tool, target, ✓/✗ and duration); turns sit below it and shrink first when space is short. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). When a session reads less before editing, or fails and retries more, than your usual on that model, the session section says so (e.g. `⚠ reads/edit 2.0 · your usual 6.1`); it needs 5 earlier sessions with at least 5 edits. Subagents that went quiet for 5 min without finishing can be hidden with `hide_stale` (settings → PANEL). `--ascii` for terminals without Unicode.
+Keys (listed under the live panel): `q` quit, `e` fixed errors too, `a` all agents, `c` clear finished agents, `r` recap since your last prompt (`esc` closes it), `tab` next session, `x` the hub (below), `v` the next view (full, Calm, Constellation; see Simple views below). `ari watch --all` lists every live session: `↑`/`↓` or `k`/`j` select, `enter` opens that session's panel, `esc` goes back to the list from an opened session and quits from the list. A stale agent (no activity for a while, maybe stuck) shows `?`; a session ARI has no hook events for shows `– not tracked`. Under the verdict a badges row shows model, effort, fast mode, permission mode, worktree, pull request and lines changed. Under the ctx bar, `at start 31k (16%)` is the context already used before Claude's first reply (system prompt, tools, MCP servers, CLAUDE.md and your first message), marked `▲` from 20% of the window. The calls section lists main's recent tool calls, newest first (age, tool, target, ✓/✗ and duration); turns sit below it and shrink first when space is short. The git section shows branch, changed files, the last commits and the last GitHub PRs (PRs need `gh`, logged in). When a session reads less before editing, or fails and retries more, than your usual on that model, the session section says so (e.g. `⚠ reads/edit 2.0 · your usual 6.1`); it needs 5 earlier sessions with at least 5 edits. Subagents that went quiet for 5 min without finishing can be hidden with `hide_stale` (settings → PANEL). `--ascii` for terminals without Unicode.
 
 ### Every agent at once: the hub
 
@@ -69,7 +69,7 @@ Press `x` in `ari watch` (or run `ari hub`) and the panel takes the whole termin
 </tr>
 </table>
 
-`↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, even with `auto_clear` on (one or two windows fill the row, with a preview of their zoom view beside them), `c` clears finished agents off the screen, `a` switches to every live session and back, `b` swaps the messages and activity panes for git (recent commits and PRs, and which agent's edits are still uncommitted; in a zoom, the agent's files are marked ● uncommitted or ✓ committed), `esc` goes back one level, `v` cycles the hub's view (below) and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call. Main's zoom timeline and activity lane mark each compaction with `⟲`.
+`↑`/`↓` select an agent, `⏎` zooms into it (its timeline, what filled its context, files, tasks and errors), `g` opens the graph full size with the task list under it, `z` shows finished agents' windows, even with `auto_clear` on (one or two windows fill the row, with a preview of their zoom view beside them), `c` clears finished agents off the screen, `a` switches to every live session and back, `b` swaps the messages and activity panes for git (recent commits and PRs, and which agent's edits are still uncommitted; in a zoom, the agent's files are marked ● uncommitted or ✓ committed), `esc` goes back one level, `v` cycles the hub's view (below) and `x` returns to the panel. An agent waiting on a permission prompt shows the exact call and how long it has waited. ARI never answers it for you. The hub needs a 120×30 window (160×45 for everything); smaller, the panel says so and keeps going. "What filled it" is an estimate: each tool result is credited with the jump in input tokens on the next call. The zoom's context box also shows how much was used at start. Main's zoom timeline and activity lane mark each compaction with `⟲`.
 
 ### Simple views: Calm and Constellation
 
@@ -104,6 +104,18 @@ models    opus-5-5 (main), haiku-5-5 (2 agents)
 Changed files are grouped by the task in progress when they were edited, else by the prompt you typed. Files to look at hard (outside the repo, migrations, CI, lockfiles, tests, config) are flagged and come first in the review order, then the biggest changes. Only file-tool edits count (not `sed -i`, `mv`, formatters or codegen); with several tasks in progress at once, edits go to the first; a background subagent that edits after your next prompt is credited to that prompt.
 
 `--since prompt` covers only what happened since your last message; `--since 30m` the last half hour. `--md` prints Markdown bullets to paste into a PR. Built from ARI's own records, so it costs no tokens.
+
+### Lost a session? `ari find`
+
+```
+$ ari find token refresh
+2026-11-09 17:36  ~/proj  · auth refactor
+  you    fix the login loop
+  match  …the token refresh now retries once before logging you out…
+  cd /Users/me/proj && claude --resume df0da5f4-20ac-45f6-84c5-2efbfa63b576
+```
+
+Searches every Claude Code transcript, newest first, and prints the line that resumes the session from its own folder. It searches what you and Claude wrote (prompts, replies, titles), not tool output. Claude Code only; the newest 10 unless `--limit`; `--here` keeps this folder's sessions.
 
 **Risky commands.** ARI flags Bash commands that ran and could lose work: a delete outside the repo, a recursive delete, `git reset --hard` and other ways of discarding uncommitted work, a force push, a deleted branch, an SQL drop or truncate, and a raw disk write. The latest shows under the verdict in `ari watch` (`⚠ ran git push --force · rewrites remote history · 2m`), and `ari recap` lists every one in a `risky` section. ARI never blocks a command; a command you denied at the prompt never ran and isn't flagged. Matching is by text, so it can't see:
 
@@ -179,6 +191,7 @@ Progress comes only from Claude Code's own task list. When there isn't one, a Ma
 | `ari watch [--all] [--session <id>] [--once] [--ascii] [--hub]` | Full panel for this directory's session, or every live session |
 | `ari hub [--session <id> \| --all] [--ascii]` | The hub: every agent, its messages and context |
 | `ari recap [--session <id>] [--since start\|prompt\|30m] [--md]` | What a session got done |
+| `ari find <text> [--here] [--limit <n>]` | Search every Claude Code transcript; prints each match's folder, date, first prompt and the `claude --resume` command |
 | `ari demo [--team \| --codex \| --deepseek] [--speed <x>] [--ascii] [--once]` | Replay a bundled real session, no Claude needed, starting in the Constellation view (`v` cycles views, nothing is saved); `--team` replays a session with helpers and messages; `--codex` and `--deepseek` show the stuck session as that app reports it |
 | `ari doctor` | Check binary, plugin, statusline and hooks, with a fix for each problem |
 | `ari replay <dir>` | Print a recorded session as a timeline |
@@ -254,7 +267,7 @@ Without `[prices]`, savings are estimated from the session's own cost. `NO_COLOR
 
 **Will it break my statusline?** No. Your command runs with the same input and its output is printed untouched. If it fails or takes longer than 300 ms, only it is skipped. `ari uninstall` puts your settings back exactly.
 
-**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. `quality.jsonl` there keeps per-session counts only (reads, edits, failed calls, retries, prompts and the model name; no prompts, paths or output), pruned with `retention_days`. No telemetry.
+**Where does my data go?** Nowhere, unless you set `notify.ntfy`: then the notification text goes to that URL. Everything else stays in `~/.local/state/ari/` and is pruned after 7 days. `quality.jsonl` there keeps per-session counts only (reads, edits, failed calls, retries, prompts and the model name; no prompts, paths or output), pruned with `retention_days`. `ari find` only reads `~/.claude/projects`. No telemetry.
 
 **Windows?** Not yet; planned for 1.1.
 
