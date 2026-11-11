@@ -2,11 +2,25 @@
 //! and print how to resume each match.
 
 use serde_json::Value;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 pub const FIND_LIMIT: usize = 10;
 pub const MAX_LIMIT: usize = 500;
 const SNIPPET: usize = 100;
 const SNIPPET_BEFORE: usize = 30;
+const PROMPT_CHARS: usize = 80;
+
+#[derive(Debug, PartialEq)]
+pub struct Hit {
+    pub id: String,
+    pub cwd: String,
+    pub mtime_ms: u64,
+    pub title: Option<String>,
+    pub prompt: Option<String>,
+    pub snippet: String,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Opts {
@@ -112,9 +126,207 @@ fn texts(v: &Value) -> Vec<&str> {
     }
 }
 
+fn has(hay: &[u8], key: &[u8]) -> bool {
+    hay.windows(key.len()).any(|w| w == key)
+}
+
+/// One transcript, streamed line by line. A line is parsed only when it can
+/// hold the match, the first prompt, the title or the cwd; reading stops once
+/// the match and the first prompt are known.
+fn scan(path: &Path, mtime_ms: u64, needle: &str, here: Option<&str>) -> Option<Hit> {
+    let id = path.file_stem()?.to_str()?;
+    if !crate::paths::valid_session_id(id) {
+        return None; // the id goes into a command the user pastes
+    }
+    // Matched against raw JSON, so `"` and `\` must be in their escaped form.
+    let raw = serde_json::to_string(needle).ok()?;
+    let raw = &raw[1..raw.len() - 1];
+    let mut r = BufReader::with_capacity(1 << 16, File::open(path).ok()?);
+    let (mut line, mut lower) = (Vec::new(), Vec::new());
+    let (mut cwd, mut title, mut custom) = (None::<String>, None::<String>, false);
+    let (mut prompt, mut snip) = (None::<String>, None::<String>);
+    loop {
+        line.clear();
+        match r.read_until(b'\n', &mut line) {
+            // A last line without '\n' is still being written: skip it.
+            Ok(_) if line.ends_with(b"\n") => {}
+            _ => break,
+        }
+        let hit = snip.is_none() && {
+            lower.clear();
+            lower.extend(line.iter().map(u8::to_ascii_lowercase));
+            std::str::from_utf8(&lower).is_ok_and(|l| l.contains(raw))
+        };
+        let want = hit
+            || (cwd.is_none() && has(&line, b"\"cwd\":\""))
+            || (prompt.is_none() && has(&line, b"\"type\":\"user\""))
+            || (!custom && has(&line, b"\"type\":\"custom-title\""))
+            || (title.is_none()
+                && (has(&line, b"\"type\":\"ai-title\"") || has(&line, b"\"type\":\"summary\"")));
+        if !want {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if cwd.is_none()
+            && let Some(c) = v.get("cwd").and_then(Value::as_str)
+        {
+            if here.is_some_and(|h| h != c) {
+                return None;
+            }
+            cwd = Some(c.to_string());
+        }
+        let ty = v.get("type").and_then(Value::as_str);
+        let first = texts(&v).first().map(|t| t.to_string());
+        match ty {
+            Some("custom-title") if first.is_some() => (title, custom) = (first.clone(), true),
+            Some("ai-title" | "summary") if title.is_none() => title = first.clone(),
+            _ => {}
+        }
+        let flag = |k: &str| v.get(k).and_then(Value::as_bool) == Some(true);
+        if prompt.is_none() && ty == Some("user") && !flag("isMeta") && !flag("isSidechain") {
+            prompt = first
+                .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|t| !t.is_empty() && !t.starts_with('<'))
+                .map(|t| crate::event::truncate(&t, PROMPT_CHARS));
+        }
+        if hit {
+            snip = texts(&v).into_iter().find_map(|t| snippet(t, needle));
+        }
+        if snip.is_some() && prompt.is_some() {
+            break;
+        }
+    }
+    if here.is_some_and(|h| cwd.as_deref() != Some(h)) {
+        return None;
+    }
+    Some(Hit {
+        id: id.to_string(),
+        cwd: cwd.unwrap_or_default(),
+        mtime_ms,
+        title,
+        prompt,
+        snippet: snip?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("ari-find-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn line(ty: &str, cwd: &str, content: Value, meta: bool) -> Value {
+        json!({"parentUuid":null,"isSidechain":false,"isMeta":meta,"type":ty,
+            "message":{"role":ty,"content":content},"cwd":cwd,"sessionId":"s",
+            "timestamp":"2026-11-07T10:00:00Z"})
+    }
+    fn user(cwd: &str, text: &str) -> Value {
+        line("user", cwd, json!(text), false)
+    }
+    fn meta_user(cwd: &str, text: &str) -> Value {
+        line("user", cwd, json!(text), true)
+    }
+    fn asst(text: &str) -> Value {
+        line(
+            "assistant",
+            "/p",
+            json!([{"type":"text","text":text}]),
+            false,
+        )
+    }
+    fn tool_result(text: &str) -> Value {
+        line(
+            "user",
+            "/p",
+            json!([{"type":"tool_result","content":text}]),
+            false,
+        )
+    }
+    fn title(t: &str) -> Value {
+        json!({"type":"custom-title","customTitle":t,"sessionId":"s"})
+    }
+
+    /// Writes `root/dir/id.jsonl` with mtime `mtime_s`.
+    fn project(root: &Path, dir: &str, id: &str, lines: &[Value], mtime_s: u64) -> PathBuf {
+        let d = root.join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join(format!("{id}.jsonl"));
+        let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&p, body).unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime_s);
+        File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        p
+    }
+
+    fn scan_one(name: &str, lines: &[Value], query: &str) -> Option<Hit> {
+        let p = project(&tmp(name), "d", "abc", lines, 1);
+        scan(&p, 0, &query.to_ascii_lowercase(), None)
+    }
+
+    #[test]
+    fn skips_meta_and_command_prompts() {
+        let h = scan_one(
+            "meta",
+            &[
+                meta_user("/p", "<local-command-caveat>caching</local-command-caveat>"),
+                user("/p", "<command-name>/clear</command-name>"),
+                user("/p", "real question about   caching"),
+            ],
+            "caching",
+        )
+        .unwrap();
+        assert_eq!(h.prompt.as_deref(), Some("real question about caching"));
+        assert_eq!(h.cwd, "/p");
+    }
+
+    #[test]
+    fn quotes_backslashes_and_case() {
+        let l = [user("/p", r#"say "hi" from C:\temp"#)];
+        for q in [r#"say "hi""#, r"C:\temp", "SAY"] {
+            assert!(scan_one("quotes", &l, q).is_some(), "{q}");
+        }
+    }
+
+    #[test]
+    fn only_prompts_replies_and_titles() {
+        assert_eq!(
+            scan_one("tool", &[user("/p", "hi"), tool_result("zebra")], "zebra"),
+            None
+        );
+        assert_eq!(scan_one("keys", &[user("/p", "hi")], "parentuuid"), None);
+        let h = scan_one("title", &[user("/p", "hi"), title("zebra notes")], "zebra").unwrap();
+        assert_eq!(h.title.as_deref(), Some("zebra notes"));
+        let h = scan_one("reply", &[user("/p", "hi"), asst("a zebra")], "zebra").unwrap();
+        assert_eq!(
+            (h.prompt.as_deref(), h.snippet.as_str()),
+            (Some("hi"), "a zebra")
+        );
+    }
+
+    #[test]
+    fn partial_last_line_is_skipped() {
+        let d = tmp("partial");
+        let p = d.join("abc.jsonl");
+        let cut = r#"{"type":"user","message":{"content":"zeb"#;
+        std::fs::write(&p, format!("{}\n{cut}", user("/p", "zebra"))).unwrap();
+        assert!(scan(&p, 0, "zeb", None).is_some());
+        std::fs::write(&p, cut).unwrap();
+        assert_eq!(scan(&p, 0, "zeb", None), None);
+    }
 
     #[test]
     fn parses_flags_and_joins_words() {
